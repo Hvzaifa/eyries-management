@@ -1,0 +1,149 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model License {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String   @unique
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  pnrs      Pnr[]
+
+  @@map("licenses")
+}
+
+model Branch {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String   @unique
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  pnrs      Pnr[]
+
+  @@map("branches")
+}
+
+model Airline {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code          String   @unique
+  name          String
+  contactEmails String[] @map("contact_emails")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+  pnrs          Pnr[]
+
+  @@map("airlines")
+}
+
+model Pnr {
+  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  srNo            Int         @default(autoincrement()) @map("sr_no")
+  requestDate     DateTime    @map("request_date") @db.Date
+  investorCompany String      @map("investor_company")
+  licenseId       String?     @map("license_id") @db.Uuid
+  license         License?    @relation(fields: [licenseId], references: [id])
+  branchId        String?     @map("branch_id") @db.Uuid
+  branch          Branch?     @relation(fields: [branchId], references: [id])
+  parentPnrId     String?     @map("parent_pnr_id") @db.Uuid
+  parentPnr       Pnr?        @relation("PnrParentChild", fields: [parentPnrId], references: [id])
+  childPnrs       Pnr[]       @relation("PnrParentChild")
+  pnr             String
+  gdsPnr          String?     @map("gds_pnr")
+  segment         String?
+  airlineId       String?     @map("airline_id") @db.Uuid
+  airline         Airline?    @relation(fields: [airlineId], references: [id])
+  seats           Int
+  outboundDate    DateTime?   @map("outbound_date") @db.Date
+  inboundDate     DateTime?   @map("inbound_date") @db.Date
+  sector          String?
+  pnrTlDate       DateTime?   @map("pnr_tl_date") @db.Date
+  dealPct         Decimal?    @map("deal_pct") @db.Decimal(5, 2)
+  issuedStatus    String      @default("unissued") @map("issued_status")
+  airlineTaxes    Decimal?    @map("airline_taxes") @db.Decimal(12, 2)
+  psf             Decimal?    @map("psf") @db.Decimal(12, 2)
+  fare            Decimal     @db.Decimal(12, 2)
+  totalEmdValue   Decimal?    @map("total_emd_value") @db.Decimal(14, 2)
+  status          String      @default("active")
+  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  createdBy       String?     @map("created_by") @db.Uuid
+
+  emdRounds        EmdRound[]
+  ticketing        Ticketing?
+  parentAllocations Allocation[] @relation("ParentAllocations")
+  childAllocations  Allocation[] @relation("ChildAllocations")
+
+  @@index([parentPnrId], map: "idx_pnrs_parent")
+  @@index([status], map: "idx_pnrs_status")
+  @@index([pnr], map: "idx_pnrs_pnr")
+  @@map("pnrs")
+}
+
+model EmdRound {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  pnrId        String    @map("pnr_id") @db.Uuid
+  pnr          Pnr       @relation(fields: [pnrId], references: [id], onDelete: Cascade)
+  roundNumber  Int       @map("round_number")
+  issuanceDate DateTime  @map("issuance_date") @db.Date
+  paymentPct   Decimal   @map("payment_pct") @db.Decimal(5, 2)
+  emdNumber    String?   @map("emd_number")
+  emdAmount    Decimal   @map("emd_amount") @db.Decimal(14, 2)
+  deadlineDate DateTime  @map("deadline_date") @db.Date
+  deadlineTime DateTime? @map("deadline_time") @db.Time
+  status       String    @default("pending")
+  refundAmount Decimal?  @map("refund_amount") @db.Decimal(14, 2)
+  refundDate   DateTime? @map("refund_date") @db.Date
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([pnrId, roundNumber])
+  @@index([pnrId], map: "idx_emd_rounds_pnr")
+  @@index([deadlineDate], map: "idx_emd_rounds_deadline")
+  @@index([status], map: "idx_emd_rounds_status")
+  @@map("emd_rounds")
+}
+
+model Ticketing {
+  pnrId                  String    @id @map("pnr_id") @db.Uuid
+  pnr                    Pnr       @relation(fields: [pnrId], references: [id], onDelete: Cascade)
+  nameUpdateDeadline     DateTime? @map("name_update_deadline") @db.Date
+  ticketIssuanceDeadline DateTime? @map("ticket_issuance_deadline") @db.Date
+  status                 String?
+  ticketsIssued          Int?      @map("tickets_issued")
+  balanceTickets         Int?      @map("balance_tickets")
+
+  @@map("ticketing")
+}
+
+model Allocation {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  parentPnrId    String   @map("parent_pnr_id") @db.Uuid
+  parentPnr      Pnr      @relation("ParentAllocations", fields: [parentPnrId], references: [id], onDelete: Cascade)
+  childPnrId     String   @map("child_pnr_id") @db.Uuid
+  childPnr       Pnr      @relation("ChildAllocations", fields: [childPnrId], references: [id], onDelete: Cascade)
+  seatsAllocated Int      @map("seats_allocated")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([parentPnrId], map: "idx_allocations_parent")
+  @@index([childPnrId], map: "idx_allocations_child")
+  @@map("allocations")
+}
+
+model ActivityLog {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tableName String   @map("table_name")
+  recordId  String   @map("record_id") @db.Uuid
+  fieldName String?  @map("field_name")
+  oldValue  String?  @map("old_value")
+  newValue  String?  @map("new_value")
+  changedBy String?  @map("changed_by") @db.Uuid
+  changedAt DateTime @default(now()) @map("changed_at") @db.Timestamptz
+
+  @@index([tableName, recordId], map: "idx_activity_log_record")
+  @@map("activity_log")
+}
