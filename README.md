@@ -1,36 +1,44 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Eyries — EMD Group Booking Management System
 
-## Getting Started
+Internal tool that replaces the manual spreadsheet used to track group airline seat
+bookings (PNRs) bought against EMD guarantee deposits, paid in one or more rounds
+until ticketing.
 
-First, run the development server:
+See `docs/` for the locked architecture (`architecture.md`), data model
+(`data-model.md`), business rules (`business-rules.md`), decision log
+(`decisions.md`), and the current build phase (`docs/phases/`). `PROGRESS.md`
+tracks exactly where the build stands — read it first.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## Stack
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Next.js + TypeScript (App Router) · PostgreSQL via Supabase · Prisma for data
+access · Supabase Auth · TanStack Table · Resend · Vercel hosting.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Setup
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. `npm install`
+2. `cp .env.example .env` and fill in all values (Supabase dashboard → Project
+   Settings → API; the service role key is only needed for `db:seed:users`).
+3. `npx prisma generate` — generate the Prisma client.
+4. `npm run db:apply` — apply `db/schema.sql` (idempotent; safe to re-run).
+5. `npm run db:seed` — seed lookup tables (licenses, branches, airlines).
+6. `npm run db:seed:users` — create sample users (admin/staff/viewer).
+7. `npm run dev` — http://localhost:3000
 
-## Learn More
+## Scripts
 
-To learn more about Next.js, take a look at the following resources:
+| Command | Purpose |
+|---|---|
+| `npm run dev` | Dev server |
+| `npm run lint` | ESLint |
+| `npm run typecheck` | TypeScript, no emit |
+| `npm run db:apply` | Apply `db/schema.sql` to the database |
+| `npm run db:seed` | Seed lookup tables |
+| `npm run db:seed:users` | Create/reset sample auth users (needs service role key) |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Conventions
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- One phase step per session; update `PROGRESS.md` after each confirmed step.
+- Never guess business or money logic — check `docs/business-rules.md` and
+  `docs/decisions.md`, otherwise stop and ask.
+- Secrets live in `.env` (gitignored); `.env.example` documents required keys.

@@ -1,4 +1,4 @@
-import { getUserRole, canEdit, isAdmin, isStaff, isViewer, type UserRole } from '../src/lib/types/auth';
+import { getUserRole, canEdit, isAdmin, isStaff, isViewer } from '../src/lib/types/auth';
 import type { User } from '@supabase/supabase-js';
 
 function assert(condition: boolean, message: string) {

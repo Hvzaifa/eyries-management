@@ -11,7 +11,6 @@ import {
   PlusCircle, 
   Settings, 
   CheckCircle2, 
-  FileSpreadsheet,
   Calendar,
   Layers
 } from 'lucide-react';
@@ -221,14 +220,14 @@ export default async function HomePage() {
                 <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
                 <span>Step 1: DB Schema & Seeding (Complete)</span>
               </li>
+              <li className="flex items-center gap-2 text-emerald-400">
+                <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+                <span>Step 2: Authentication & Roles (Complete)</span>
+              </li>
               <li className="flex items-center gap-2 text-indigo-400 font-medium">
                 <div className="w-4 h-4 rounded-full border-2 border-indigo-400 flex items-center justify-center">
                   <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
                 </div>
-                <span>Step 2: Authentication & Roles (Under Review)</span>
-              </li>
-              <li className="flex items-center gap-2 text-slate-500">
-                <FileSpreadsheet className="w-4 h-4 flex-shrink-0" />
                 <span>Step 3: PNR list (dashboard) with TanStack Table</span>
               </li>
               <li className="flex items-center gap-2 text-slate-500">

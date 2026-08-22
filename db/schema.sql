@@ -1,22 +1,23 @@
 -- EMD Group Booking Management System — schema
 -- Source of truth for TYPES. See docs/data-model.md for the source of truth on MEANING.
 -- Claude Code: review this against docs/data-model.md before running any migration based on it.
+-- Idempotent: safe to re-run via `npm run db:apply`.
 
 create extension if not exists "pgcrypto";
 
-create table licenses (
+create table if not exists licenses (
   id uuid primary key default gen_random_uuid(),
   name text not null unique,
   created_at timestamptz not null default now()
 );
 
-create table branches (
+create table if not exists branches (
   id uuid primary key default gen_random_uuid(),
   name text not null unique,
   created_at timestamptz not null default now()
 );
 
-create table airlines (
+create table if not exists airlines (
   id uuid primary key default gen_random_uuid(),
   code text not null unique,
   name text not null,
@@ -24,7 +25,7 @@ create table airlines (
   created_at timestamptz not null default now()
 );
 
-create table pnrs (
+create table if not exists pnrs (
   id uuid primary key default gen_random_uuid(),
   sr_no serial not null,
   request_date date not null,
@@ -53,11 +54,11 @@ create table pnrs (
   created_by uuid
 );
 
-create index idx_pnrs_parent on pnrs(parent_pnr_id);
-create index idx_pnrs_status on pnrs(status);
-create index idx_pnrs_pnr on pnrs(pnr);
+create index if not exists idx_pnrs_parent on pnrs(parent_pnr_id);
+create index if not exists idx_pnrs_status on pnrs(status);
+create index if not exists idx_pnrs_pnr on pnrs(pnr);
 
-create table emd_rounds (
+create table if not exists emd_rounds (
   id uuid primary key default gen_random_uuid(),
   pnr_id uuid not null references pnrs(id) on delete cascade,
   round_number integer not null check (round_number >= 1),
@@ -75,11 +76,11 @@ create table emd_rounds (
   unique (pnr_id, round_number)
 );
 
-create index idx_emd_rounds_pnr on emd_rounds(pnr_id);
-create index idx_emd_rounds_deadline on emd_rounds(deadline_date) where status = 'pending';
-create index idx_emd_rounds_status on emd_rounds(status);
+create index if not exists idx_emd_rounds_pnr on emd_rounds(pnr_id);
+create index if not exists idx_emd_rounds_deadline on emd_rounds(deadline_date) where status = 'pending';
+create index if not exists idx_emd_rounds_status on emd_rounds(status);
 
-create table ticketing (
+create table if not exists ticketing (
   pnr_id uuid primary key references pnrs(id) on delete cascade,
   name_update_deadline date,
   ticket_issuance_deadline date,
@@ -88,7 +89,7 @@ create table ticketing (
   balance_tickets integer
 );
 
-create table allocations (
+create table if not exists allocations (
   id uuid primary key default gen_random_uuid(),
   parent_pnr_id uuid not null references pnrs(id) on delete cascade,
   child_pnr_id uuid not null references pnrs(id) on delete cascade,
@@ -97,10 +98,10 @@ create table allocations (
   check (parent_pnr_id <> child_pnr_id)
 );
 
-create index idx_allocations_parent on allocations(parent_pnr_id);
-create index idx_allocations_child on allocations(child_pnr_id);
+create index if not exists idx_allocations_parent on allocations(parent_pnr_id);
+create index if not exists idx_allocations_child on allocations(child_pnr_id);
 
-create table activity_log (
+create table if not exists activity_log (
   id uuid primary key default gen_random_uuid(),
   table_name text not null,
   record_id uuid not null,
@@ -111,10 +112,10 @@ create table activity_log (
   changed_at timestamptz not null default now()
 );
 
-create index idx_activity_log_record on activity_log(table_name, record_id);
+create index if not exists idx_activity_log_record on activity_log(table_name, record_id);
 
 -- Refund log view — NOT a separate table (see docs/decisions.md, 2026-08-21 entry)
-create view refunded_emd_rounds as
+create or replace view refunded_emd_rounds as
 select er.*, p.pnr, p.gds_pnr, p.sector, p.seats, p.outbound_date, a.code as airline_code, b.name as branch_name
 from emd_rounds er
 join pnrs p on p.id = er.pnr_id
@@ -122,10 +123,19 @@ left join airlines a on a.id = p.airline_id
 left join branches b on b.id = p.branch_id
 where er.status = 'refunded';
 
--- Dashboard totals view (mirrors the totals row at the top of the old sheet)
-create view dashboard_totals as
+-- Dashboard totals view (mirrors the totals row at the top of the old sheet).
+-- Scoped to active PNRs, matching the other columns.
+-- total_paid = EMD amounts actually paid out (gross, incl. rounds later refunded);
+-- total_refunded = amounts returned by the airline. Recorded as separate facts,
+-- never netted (see docs/business-rules.md).
+create or replace view dashboard_totals as
 select
-  count(*) filter (where status = 'active') as active_pnrs,
-  coalesce(sum(seats) filter (where status = 'active'), 0) as total_seats,
-  coalesce(sum(total_emd_value) filter (where status = 'active'), 0) as total_emd_value
-from pnrs;
+  (select count(*) from pnrs where status = 'active') as active_pnrs,
+  (select coalesce(sum(seats), 0) from pnrs where status = 'active') as total_seats,
+  (select coalesce(sum(total_emd_value), 0) from pnrs where status = 'active') as total_emd_value,
+  (select coalesce(sum(er.emd_amount), 0)
+     from emd_rounds er join pnrs p on p.id = er.pnr_id
+    where p.status = 'active' and er.status in ('paid', 'refund_requested', 'refunded')) as total_paid,
+  (select coalesce(sum(er.refund_amount), 0)
+     from emd_rounds er join pnrs p on p.id = er.pnr_id
+    where p.status = 'active' and er.status = 'refunded') as total_refunded;

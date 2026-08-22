@@ -7,7 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "db:seed": "npx tsx prisma/seed.ts"
+    "typecheck": "tsc --noEmit",
+    "db:apply": "npx tsx db/apply-schema.ts",
+    "db:seed": "npx tsx prisma/seed.ts",
+    "db:seed:users": "npx tsx scripts/seed-users.ts"
   },
   "prisma": {
     "seed": "npx tsx prisma/seed.ts"

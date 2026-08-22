@@ -1,10 +1,7 @@
+import 'dotenv/config';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Client } from 'pg';
-import dotenv from 'dotenv';
-
-dotenv.config({ path: '.env.local' });
-dotenv.config({ path: '.env' });
 
 async function main() {
   const connectionString = process.env.DIRECT_URL || process.env.DATABASE_URL;
