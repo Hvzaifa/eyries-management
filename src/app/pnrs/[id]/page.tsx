@@ -205,7 +205,9 @@ export default async function PnrDetailPage({
             <ol className="space-y-3">
               {detail.rounds.map((round) => {
                 const overdue =
-                  round.status === 'pending' && round.deadlineDate < today;
+                  round.status === 'pending' &&
+                  round.deadlineDate !== null &&
+                  round.deadlineDate < today;
                 return (
                   <li
                     key={round.id}
@@ -234,7 +236,7 @@ export default async function PnrDetailPage({
                     <div className="mt-3 grid grid-cols-2 sm:grid-cols-5 gap-x-4 gap-y-2 text-xs text-stone-600">
                       <div><span className="text-stone-400">Issued</span> {round.issuanceDate}</div>
                       <div><span className="text-stone-400">Payment %</span> {round.paymentPct}%</div>
-                      <div><span className="text-stone-400">Deadline</span> {round.deadlineDate}{round.deadlineTime ? ` ${round.deadlineTime}` : ''}</div>
+                      <div><span className="text-stone-400">Deadline</span> {round.deadlineDate ?? '—'}{round.deadlineTime ? ` ${round.deadlineTime}` : ''}</div>
                       <div><span className="text-stone-400">EMD #</span> {round.emdNumber ?? '—'}</div>
                       <div><span className="text-stone-400">Refund</span> {round.refundAmount !== null ? `${formatPkr(round.refundAmount)} on ${round.refundDate}` : '—'}</div>
                     </div>

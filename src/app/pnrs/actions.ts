@@ -89,40 +89,53 @@ export async function createPnr(formData: FormData) {
   const roundAmount = numVal(formData, 'round_emd_amount');
   const roundDeadline = dateVal(formData, 'round_deadline_date');
 
-  if (roundIssuance && roundDeadline && roundPct !== null && !Number.isNaN(roundPct) && roundAmount !== null && !Number.isNaN(roundAmount)) {
-    const maxRound = await prisma.emdRound.aggregate({
-      where: { pnrId: created.id },
-      _max: { roundNumber: true },
-    });
-    const roundNumber = (maxRound._max.roundNumber ?? 0) + 1;
+  const roundTouched =
+    roundIssuance !== null || roundPct !== null || roundAmount !== null || roundDeadline !== null;
 
-    const round = await prisma.emdRound.create({
-      data: {
-        pnrId: created.id,
-        roundNumber,
-        issuanceDate: roundIssuance,
-        paymentPct: roundPct,
-        emdNumber: str(formData, 'round_emd_number'),
-        emdAmount: roundAmount,
-        deadlineDate: roundDeadline,
-        deadlineTime: str(formData, 'round_deadline_time')
-          ? new Date(`1970-01-01T${str(formData, 'round_deadline_time')}:00.000Z`)
-          : null,
-        status: 'pending',
-      },
-    });
-
-    await prisma.activityLog.create({
-      data: {
-        tableName: 'emd_rounds',
-        recordId: round.id,
-        fieldName: null,
-        oldValue: null,
-        newValue: `round ${roundNumber} created`,
-        changedBy: createdBy,
-      },
-    });
+  if (roundTouched) {
+    if (!roundIssuance || !roundDeadline || roundPct === null || Number.isNaN(roundPct) || roundAmount === null || Number.isNaN(roundAmount)) {
+      return {
+        error:
+          'The EMD round is incomplete. For new bookings the EMD time limit (deadline date), payment %, amount and issuance date are all required.',
+      };
+    }
+  } else {
+    revalidatePath('/');
+    redirect(`/pnrs/${created.id}`);
   }
+
+  const maxRound = await prisma.emdRound.aggregate({
+    where: { pnrId: created.id },
+    _max: { roundNumber: true },
+  });
+  const roundNumber = (maxRound._max.roundNumber ?? 0) + 1;
+
+  const round = await prisma.emdRound.create({
+    data: {
+      pnrId: created.id,
+      roundNumber,
+      issuanceDate: roundIssuance,
+      paymentPct: roundPct,
+      emdNumber: str(formData, 'round_emd_number'),
+      emdAmount: roundAmount,
+      deadlineDate: roundDeadline,
+      deadlineTime: str(formData, 'round_deadline_time')
+        ? new Date(`1970-01-01T${str(formData, 'round_deadline_time')}:00.000Z`)
+        : null,
+      status: 'pending',
+    },
+  });
+
+  await prisma.activityLog.create({
+    data: {
+      tableName: 'emd_rounds',
+      recordId: round.id,
+      fieldName: null,
+      oldValue: null,
+      newValue: `round ${roundNumber} created`,
+      changedBy: createdBy,
+    },
+  });
 
   revalidatePath('/');
   redirect(`/pnrs/${created.id}`);

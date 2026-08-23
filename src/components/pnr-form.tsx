@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from 'react';
 import { AlertTriangle, Save, Sparkles } from 'lucide-react';
-import { suggestEmd1 } from '@/lib/emd';
+import { suggestEmdPlan } from '@/lib/emd';
 import type { PnrFormOptions } from '@/lib/pnrs';
 
 export interface PnrFormValues {
@@ -105,23 +105,40 @@ export default function PnrForm({
   const [values, setValues] = useState<PnrFormValues>(initial);
   const [roundPct, setRoundPct] = useState<string>('');
   const [roundPctTouched, setRoundPctTouched] = useState(false);
-  const [showRound, setShowRound] = useState(mode === 'create');
+  const [roundDeadline, setRoundDeadline] = useState<string>('');
+  const [roundDeadlineTouched, setRoundDeadlineTouched] = useState(false);
+  const [showRound] = useState(mode === 'create');
   const [duplicateWarning, setDuplicateWarning] = useState(false);
   const [confirmedDuplicate, setConfirmedDuplicate] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  const suggestion = useMemo(
-    () => suggestEmd1(values.requestDate || null, values.outboundDate || null),
-    [values.requestDate, values.outboundDate]
+  const airlineCode = useMemo(
+    () => options.airlines.find((a) => a.id === values.airlineId)?.code ?? null,
+    [options.airlines, values.airlineId]
   );
 
-  const hideRound = mode === 'create' && suggestion.kind === 'no-round';
+  const suggestion = useMemo(
+    () =>
+      suggestEmdPlan({
+        airlineCode,
+        segment: values.segment,
+        requestDateIso: values.requestDate || null,
+        outboundDateIso: values.outboundDate || null,
+      }),
+    [airlineCode, values.segment, values.requestDate, values.outboundDate]
+  );
 
   const autoRoundPct =
-    mode === 'create' && !roundPctTouched && suggestion.kind === 'suggested' && suggestion.pct !== null
-      ? String(suggestion.pct)
+    mode === 'create' && !roundPctTouched && suggestion.applicable && suggestion.emd1Pct !== null
+      ? String(suggestion.emd1Pct)
       : roundPct;
+
+  // PNR TL is the EMD-1 deadline until the deposit confirmation email is sent.
+  const autoRoundDeadline =
+    mode === 'create' && !roundDeadlineTouched && values.pnrTlDate
+      ? values.pnrTlDate
+      : roundDeadline;
 
   const duplicate =
     values.pnr.trim() !== '' &&
@@ -280,40 +297,33 @@ export default function PnrForm({
       </SectionCard>
 
       {mode === 'create' && (
-        hideRound ? (
-          <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
-            <p className="text-xs text-amber-800 leading-relaxed">
-              <strong>Under 7 days to departure:</strong> per business rules, this booking expects
-              full ticket payment with no EMD round, so the deposit section is hidden. If reality
-              differs, create the booking first and record rounds from its detail page later.
-            </p>
-          </section>
-        ) : (
-          <section className="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
-              <h2 className="text-sm font-semibold text-stone-900">First EMD round</h2>
-              {!hideRound && (
-                <button
-                  type="button"
-                  onClick={() => setShowRound((v) => !v)}
-                  className="text-[11px] font-medium text-indigo-600 hover:text-indigo-800 cursor-pointer"
-                >
-                  {showRound ? 'Hide' : 'Add first round'}
-                </button>
-              )}
-            </div>
+        <section className="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+            <h2 className="text-sm font-semibold text-stone-900">First EMD round</h2>
+          </div>
 
-            {showRound ? (
-              <>
-                <div className="flex items-center gap-2 mb-4 text-[11px] text-indigo-700">
-                  <Sparkles className="w-3.5 h-3.5" />
-                  {suggestion.kind === 'none' && (
-                    <span>Pick both a request date and an outbound date to get an EMD-1 % suggestion.</span>
-                  )}
-                  {suggestion.kind === 'suggested' && suggestion.pct !== null && (
-                    <span>Suggested EMD-1: <strong>{suggestion.pct}%</strong> — pre-filled below, editable.</span>
-                  )}
-                </div>
+          {showRound ? (
+            <>
+              <div className="flex items-center gap-2 mb-4 text-[11px] text-indigo-700">
+                <Sparkles className="w-3.5 h-3.5 flex-shrink-0" />
+                {!suggestion.applicable && suggestion.reason === 'non-sv-airline' && (
+                  <span>No policy stored for this airline yet — set the % manually. Policies can be added per airline later.</span>
+                )}
+                {!suggestion.applicable && suggestion.reason === 'non-umrah-segment' && (
+                  <span>Only SV Umrah bookings get automatic % suggestions right now — set this one manually.</span>
+                )}
+                {!suggestion.applicable && suggestion.reason === 'missing-dates' && (
+                  <span>Pick the request date, outbound date and airline to check for a policy suggestion.</span>
+                )}
+                {suggestion.applicable && (
+                  <span>
+                    SV Umrah policy ({suggestion.bandLabel}): 1st EMD{' '}
+                    <strong>{suggestion.emd1Pct}%</strong> pre-filled below, editable · balance{' '}
+                    {suggestion.emd2Pct !== null ? `${suggestion.emd2Pct}%` : '—'} recorded as the
+                    2nd round when paid.
+                  </span>
+                )}
+              </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-4">
                   <Field label="Issuance date" required>
                     <input type="date" name="round_issuance_date" className={inputCls} />
@@ -337,8 +347,22 @@ export default function PnrForm({
                   <Field label="EMD amount (PKR)" required hint="Type the agreed amount — never auto-calculated.">
                     <input type="number" name="round_emd_amount" step="0.01" min="0" className={inputCls} />
                   </Field>
-                  <Field label="Deadline date" required>
-                    <input type="date" name="round_deadline_date" className={inputCls} />
+                  <Field
+                    label="Deadline date"
+                    required
+                    hint="Defaults to the PNR TL date — that is the EMD-1 deadline until the deposit email is sent to the airline."
+                  >
+                    <input
+                      type="date"
+                      name="round_deadline_date"
+                      required
+                      value={autoRoundDeadline}
+                      onChange={(e) => {
+                        setRoundDeadline(e.target.value);
+                        setRoundDeadlineTouched(true);
+                      }}
+                      className={inputCls}
+                    />
                   </Field>
                   <Field label="Deadline time">
                     <input type="time" name="round_deadline_time" className={inputCls} />
@@ -350,8 +374,7 @@ export default function PnrForm({
                 No first round will be recorded. You can add rounds later from the detail page.
               </p>
             )}
-          </section>
-        )
+        </section>
       )}
 
       <div className="flex items-center justify-end gap-3 pb-8">

@@ -1,31 +1,55 @@
 import { diffInDays } from './urgency';
 
-export type Emd1Suggestion =
-  | { kind: 'none'; reason: 'missing-dates' }
-  | { kind: 'no-round'; reason: 'under-7-days' }
-  | { kind: 'suggested'; pct: number | null };
+export interface EmdPlanSuggestion {
+  /** true when a stored airline policy applies to this booking */
+  applicable: boolean;
+  reason?: 'non-sv-airline' | 'non-umrah-segment' | 'missing-dates';
+  emd1Pct: number | null;
+  emd2Pct: number | null;
+  bandLabel?: string;
+}
 
 /**
- * EMD-1 % auto-suggestion (docs/business-rules.md + docs/decisions.md):
- *   < 7 days   -> no EMD round at all (form hides the round section)
- *   7–14       -> 100%
- *   15–29      -> 50%
- *   30–59      -> 30%
- *   60–90      -> 15% (exactly-60 gap resolved to the lower band by owner)
- *   > 90       -> 15% (lowest band as starting point)
- * Always a default for the UI — never a validation that blocks saving.
+ * SV Umrah policy — "Umrah Year-round excluding Ramadhan" row of the airline's
+ * Requests-vs-Time-to-Departure table (uploaded 2026-08-23). The deposit %
+ * becomes the suggested 1st EMD and the full-payment % the suggested 2nd EMD.
+ * Hajj, Ramadhan-Umrah and Tour-Operator rows are NOT implemented (owner
+ * instruction: umrah only; no current departures fall in Ramadhan).
+ *
+ *   ≥ 60 days : EMD-1 15% · balance 85% (+20 days before departure)
+ *   30–59     : EMD-1 30% · balance 70% (+10 days)
+ *   15–29     : EMD-1 50% · balance 50% (+7 days)
+ *    7–14     : EMD-1 70% · balance 30% (+5 days)
+ *    2–6      : EMD-1 100% within 1 day · no second round
+ *    ≤ 1      : EMD-1 100% immediate · no second round
+ *
+ * Only Saudia (SV) has a stored policy today. Every other airline gets NO
+ * auto-suggestion — staff set percentages manually until their policies are
+ * uploaded. Suggestions are defaults, never validation.
  */
-export function suggestEmd1(
-  requestDateIso: string | null | undefined,
-  outboundDateIso: string | null | undefined
-): Emd1Suggestion {
-  if (!requestDateIso || !outboundDateIso) {
-    return { kind: 'none', reason: 'missing-dates' };
+export function suggestEmdPlan(input: {
+  airlineCode: string | null | undefined;
+  segment: string | null | undefined;
+  requestDateIso: string | null | undefined;
+  outboundDateIso: string | null | undefined;
+}): EmdPlanSuggestion {
+  const { airlineCode, segment, requestDateIso, outboundDateIso } = input;
+
+  if (!airlineCode || airlineCode.trim().toUpperCase() !== 'SV') {
+    return { applicable: false, reason: 'non-sv-airline', emd1Pct: null, emd2Pct: null };
   }
+  if (!segment || !segment.trim().toLowerCase().includes('umrah')) {
+    return { applicable: false, reason: 'non-umrah-segment', emd1Pct: null, emd2Pct: null };
+  }
+  if (!requestDateIso || !outboundDateIso) {
+    return { applicable: false, reason: 'missing-dates', emd1Pct: null, emd2Pct: null };
+  }
+
   const days = diffInDays(requestDateIso, outboundDateIso);
-  if (days < 7) return { kind: 'no-round', reason: 'under-7-days' };
-  if (days <= 14) return { kind: 'suggested', pct: 100 };
-  if (days <= 29) return { kind: 'suggested', pct: 50 };
-  if (days <= 59) return { kind: 'suggested', pct: 30 };
-  return { kind: 'suggested', pct: 15 };
+  if (days >= 60) return { applicable: true, emd1Pct: 15, emd2Pct: 85, bandLabel: '60+ days out' };
+  if (days >= 30) return { applicable: true, emd1Pct: 30, emd2Pct: 70, bandLabel: '30–59 days out' };
+  if (days >= 15) return { applicable: true, emd1Pct: 50, emd2Pct: 50, bandLabel: '15–29 days out' };
+  if (days >= 7) return { applicable: true, emd1Pct: 70, emd2Pct: 30, bandLabel: '7–14 days out' };
+  if (days >= 2) return { applicable: true, emd1Pct: 100, emd2Pct: null, bandLabel: '2–6 days out' };
+  return { applicable: true, emd1Pct: 100, emd2Pct: null, bandLabel: 'under 2 days out' };
 }

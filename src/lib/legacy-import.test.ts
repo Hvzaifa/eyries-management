@@ -121,4 +121,11 @@ describe('parsePercent', () => {
     expect(parsePercent('30')).toBe(30);
     expect(parsePercent('')).toBeNull();
   });
+
+  it('treats the legacy-sheet fraction convention: 1 means 100%', () => {
+    expect(parsePercent(1)).toBe(100);
+    expect(parsePercent(0.5)).toBe(50);
+    expect(parsePercent(0.7)).toBe(70);
+    expect(parsePercent(0)).toBe(0);
+  });
 });

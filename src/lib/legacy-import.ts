@@ -122,14 +122,21 @@ export function parseAmount(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** "15%", "0.15" (percent-formatted cell), 15 -> number as written by staff. */
+/**
+ * Staff-style values ("30%", 30) and Excel fraction cells alike.
+ * Fractions are the legacy-sheet convention: 0.15 -> 15, 1 -> 100.
+ */
 export function parsePercent(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
   if (typeof value === 'number') {
-    if (value > 0 && value < 1) return Math.round(value * 10000) / 100;
-    return Number.isFinite(value) ? value : null;
+    if (!Number.isFinite(value)) return null;
+    if (value > 0 && value <= 1) return Math.round(value * 10000) / 100;
+    return value;
   }
   const s = String(value).replace('%', '').trim();
+  if (s === '') return null;
   const n = Number(s);
-  return Number.isFinite(n) ? n : null;
+  if (!Number.isFinite(n)) return null;
+  if (n > 0 && n <= 1 && s.includes('.')) return Math.round(n * 10000) / 100;
+  return n;
 }

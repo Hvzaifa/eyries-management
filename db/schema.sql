@@ -66,7 +66,8 @@ create table if not exists emd_rounds (
   payment_pct numeric(5,2) not null,
   emd_number text,
   emd_amount numeric(14,2) not null,
-  deadline_date date not null,
+  -- nullable: legacy imports have no time limits; the UI enforces it for new rounds
+  deadline_date date,
   deadline_time time,
   status text not null default 'pending' check (status in ('pending','paid','refund_requested','refunded','expired')),
   refund_amount numeric(14,2),

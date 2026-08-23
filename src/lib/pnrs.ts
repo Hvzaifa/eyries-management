@@ -25,6 +25,8 @@ export interface PnrListRow {
   status: string;
   /** Earliest deadline among pending rounds (the only "unresolved" ones). */
   nextPendingDeadline: string | null;
+  /** True when any pending round exists, even without a recorded deadline. */
+  hasPendingRound: boolean;
 }
 
 function iso(d: Date | null): string | null {
@@ -72,6 +74,7 @@ export async function listPnrs(): Promise<PnrListRow[]> {
     totalEmdValue: r.totalEmdValue === null ? null : Number(r.totalEmdValue),
     status: r.status,
     nextPendingDeadline: iso(r.emdRounds[0]?.deadlineDate ?? null),
+    hasPendingRound: r.emdRounds.length > 0,
   }));
 }
 
@@ -116,7 +119,7 @@ export interface EmdRoundView {
   paymentPct: number;
   emdNumber: string | null;
   emdAmount: number;
-  deadlineDate: string;
+  deadlineDate: string | null;
   deadlineTime: string | null;
   status: string;
   refundAmount: number | null;
@@ -250,7 +253,7 @@ export async function getPnrDetail(id: string): Promise<PnrDetail | null> {
       paymentPct: Number(x.paymentPct),
       emdNumber: x.emdNumber,
       emdAmount: Number(x.emdAmount),
-      deadlineDate: isoOrNull(x.deadlineDate)!,
+      deadlineDate: isoOrNull(x.deadlineDate),
       deadlineTime: x.deadlineTime ? x.deadlineTime.toISOString().slice(11, 16) : null,
       status: x.status,
       refundAmount: x.refundAmount === null ? null : Number(x.refundAmount),

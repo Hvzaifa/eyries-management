@@ -1,51 +1,71 @@
 import { describe, expect, it } from 'vitest';
-import { suggestEmd1, type Emd1Suggestion } from './emd';
+import { suggestEmdPlan } from './emd';
 
-function pctOf(s: Emd1Suggestion): number | null {
-  return s.kind === 'suggested' ? s.pct : null;
-}
+const svUmrah = {
+  airlineCode: 'SV',
+  segment: 'UMRAH',
+  requestDateIso: '2026-08-23',
+};
 
-describe('suggestEmd1', () => {
-  it('returns none when either date is missing', () => {
-    expect(suggestEmd1(null, '2026-10-01')).toEqual({ kind: 'none', reason: 'missing-dates' });
-    expect(suggestEmd1('2026-08-01', undefined)).toEqual({ kind: 'none', reason: 'missing-dates' });
-  });
-
-  it('says no round under 7 days (boundary: 6)', () => {
-    expect(suggestEmd1('2026-08-23', '2026-08-29')).toEqual({
-      kind: 'no-round',
-      reason: 'under-7-days',
+describe('suggestEmdPlan (SV Umrah year-round policy)', () => {
+  it('suggests 15/85 at exactly 60 days and beyond', () => {
+    expect(suggestEmdPlan({ ...svUmrah, outboundDateIso: '2026-10-22' })).toMatchObject({
+      applicable: true,
+      emd1Pct: 15,
+      emd2Pct: 85,
     });
+    expect(suggestEmdPlan({ ...svUmrah, outboundDateIso: '2027-01-01' }).emd1Pct).toBe(15);
   });
 
-  it('suggests 100% for exactly 7 through 14 days (boundaries)', () => {
-    expect(pctOf(suggestEmd1('2026-08-23', '2026-08-30'))).toBe(100);
-    expect(pctOf(suggestEmd1('2026-08-23', '2026-09-06'))).toBe(100);
+  it('suggests 30/70 for 30 through 59 days (boundaries)', () => {
+    expect(suggestEmdPlan({ ...svUmrah, outboundDateIso: '2026-09-22' }).emd1Pct).toBe(30);
+    expect(suggestEmdPlan({ ...svUmrah, outboundDateIso: '2026-10-21' }).emd1Pct).toBe(30);
   });
 
-  it('suggests 50% for exactly 15 through 29 days (boundaries)', () => {
-    expect(pctOf(suggestEmd1('2026-08-23', '2026-09-07'))).toBe(50);
-    expect(pctOf(suggestEmd1('2026-08-23', '2026-09-21'))).toBe(50);
+  it('suggests 50/50 for 15 through 29 days (boundaries)', () => {
+    expect(suggestEmdPlan({ ...svUmrah, outboundDateIso: '2026-09-07' }).emd1Pct).toBe(50);
+    expect(suggestEmdPlan({ ...svUmrah, outboundDateIso: '2026-09-21' }).emd2Pct).toBe(50);
   });
 
-  it('suggests 30% for exactly 30 through 59 days (boundaries)', () => {
-    expect(pctOf(suggestEmd1('2026-08-23', '2026-09-22'))).toBe(30);
-    expect(pctOf(suggestEmd1('2026-08-23', '2026-10-21'))).toBe(30);
+  it('suggests 70/30 for 7 through 14 days (boundaries)', () => {
+    expect(suggestEmdPlan({ ...svUmrah, outboundDateIso: '2026-08-30' }).emd1Pct).toBe(70);
+    expect(suggestEmdPlan({ ...svUmrah, outboundDateIso: '2026-09-06' }).emd2Pct).toBe(30);
   });
 
-  it('suggests 15% at exactly 60 days through exactly 90 days (boundaries)', () => {
-    expect(pctOf(suggestEmd1('2026-08-23', '2026-10-22'))).toBe(15);
-    expect(pctOf(suggestEmd1('2026-08-23', '2026-10-23'))).toBe(15);
-    expect(pctOf(suggestEmd1('2026-08-23', '2026-11-21'))).toBe(15);
+  it('suggests 100% single deposit for 2 through 6 days (boundaries)', () => {
+    const s = suggestEmdPlan({ ...svUmrah, outboundDateIso: '2026-08-25' });
+    expect(s.emd1Pct).toBe(100);
+    expect(s.emd2Pct).toBeNull();
+    expect(suggestEmdPlan({ ...svUmrah, outboundDateIso: '2026-08-29' }).bandLabel).toBe('2–6 days out');
   });
 
-  it('still suggests the lowest band beyond 90 days', () => {
-    expect(pctOf(suggestEmd1('2026-08-23', '2026-11-22'))).toBe(15);
-    expect(pctOf(suggestEmd1('2026-01-01', '2027-01-01'))).toBe(15);
+  it('suggests immediate 100% under 2 days out', () => {
+    const s = suggestEmdPlan({ ...svUmrah, outboundDateIso: '2026-08-24' });
+    expect(s.emd1Pct).toBe(100);
+    expect(s.emd2Pct).toBeNull();
+    expect(s.bandLabel).toBe('under 2 days out');
+  });
+});
+
+describe('suggestEmdPlan scoping', () => {
+  it('does not apply to non-SV airlines — manual entry until policies arrive', () => {
+    for (const code of ['PK', 'EK', 'QR', null]) {
+      const s = suggestEmdPlan({ ...svUmrah, airlineCode: code, outboundDateIso: '2026-10-22' });
+      expect(s).toMatchObject({ applicable: false, reason: 'non-sv-airline', emd1Pct: null });
+    }
   });
 
-  it('handles month and year rollovers in day counting', () => {
-    expect(pctOf(suggestEmd1('2026-12-31', '2027-01-07'))).toBe(100);
-    expect(pctOf(suggestEmd1('2028-02-28', '2028-03-06'))).toBe(100);
+  it('does not apply to SV bookings that are not Umrah (no hajj/tour policy)', () => {
+    for (const segment of ['EMPLOYMENT', 'TOUR', 'Hajj', null]) {
+      const s = suggestEmdPlan({ ...svUmrah, segment, outboundDateIso: '2026-10-22' });
+      expect(s).toMatchObject({ applicable: false, reason: 'non-umrah-segment' });
+    }
+  });
+
+  it('needs both dates to compute a band', () => {
+    expect(
+      suggestEmdPlan({ ...svUmrah, requestDateIso: null, outboundDateIso: '2026-10-22' }).reason
+    ).toBe('missing-dates');
+    expect(suggestEmdPlan({ ...svUmrah, outboundDateIso: null }).reason).toBe('missing-dates');
   });
 });

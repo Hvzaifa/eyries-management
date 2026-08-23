@@ -137,6 +137,8 @@ export default function PnrTable({ rows, todayIso }: { rows: PnrListRow[]; today
             label = row.nextPendingDeadline < todayIso
               ? `Overdue since ${row.nextPendingDeadline}`
               : `Due ${row.nextPendingDeadline}`;
+          } else if (row.hasPendingRound) {
+            label = 'Pending — no deadline yet';
           }
           return (
             <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[11px] whitespace-nowrap font-medium ${s.badge}`}>

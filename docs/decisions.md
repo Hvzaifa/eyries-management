@@ -64,6 +64,34 @@ Every time an ambiguous field, rule, or edge case gets resolved — by the proje
 **Question:** How strictly should the create form enforce "< 7 days = full ticket payment, no EMD round"?
 **Answer:** Strictly for the default flow — the inline first-round section is hidden and replaced with an explanatory note; a round cannot be added from the create form in that case. Decided by project owner during Step 5.
 
+### 2026-08-23 — EMD suggestions now airline-scoped (SV only)
+**Question:** The owner uploaded SV's updated policy (1st + 2nd EMD) and instructed that the suggestion rule apply to SV only, with other airlines set manually until their policies arrive.
+**Answer:** `suggestEmd1` replaced by `suggestEmdPlan({airlineCode, segment, requestDate, outboundDate})`. Non-SV airlines → no prefill, manual entry. This supersedes the earlier "exactly 60 days → 15%" generic ruling and the old under-7-days "hide round section" behavior (the SV table covers every band; non-SV bookings simply get no suggestion).
+
+### 2026-08-23 — SV policy: which Umrah variant
+**Question:** SV's sheet has separate rows for "Umrah (Ramadhan)" and "Umrah Year-round excluding Ramadhan".
+**Answer:** Year-round-excluding-Ramadhan implemented. Owner said "umrah only, no hajj or tour"; the imported data has zero Ramadhan-window departures (outbounds Jun–Oct 2026), so nothing is affected today. Ramadhan variant deferred until the owner asks.
+
+### 2026-08-23 — 2nd EMD = full-payment percentage of SV policy
+**Question:** Does SV's "X% full payment (+N days)" map onto `emd_rounds`?
+**Answer:** Yes — recorded as `round_number = 2` when staff add it (Phase 3 screen). At creation time the form only *displays* the suggested pair (e.g. 15% / 85%) as guidance. Consistent with the open-ended rounds model; EMD-vs-ticket-payment separation in business-rules.md is unaffected.
+
+### 2026-08-23 — Legacy import conventions ("OB 01JUN26 Onward")
+**Question:** How should ambiguous legacy-sheet values be interpreted?
+**Answer:** (a) PAYMENT %AGE cells are fractions (`0.15`=15%, `1`=100%). (b) Airline code `PK` maps to the existing PIA lookup entry (IATA equivalence); other unknown airline/license/branch values are auto-created as lookup rows named after their code/text and listed in the import report for the owner to rename. (c) A round is imported when its number/amount/time-limit present; status becomes `refunded` when a refund amount/date exists, otherwise `pending`. (d) Child rows (`PARENT PNR` set) link to parents that exist in the sheet and get an `allocations` row sized by the child's own seats; parents without their own row stay unlinked and are reported. (e) Selling-side columns (cancelled tickets, ticket loss, penalty EMD) are ignored per scope.
+
+### 2026-08-24 — deadline_date becomes optional (legacy import reality)
+**Question:** The legacy sheet has zero EMD time-limit dates (0 of 2,057 rounds) but `emd_rounds.deadline_date` was NOT NULL.
+**Answer:** Column made nullable so legacy rounds import with "no deadline recorded" (urgency shows green until backfilled). Owner rule: **new bookings created through the UI must always have an EMD time limit** — the create form requires it and pre-fills it from the PNR TL date. Decided by project owner.
+
+### 2026-08-24 — 0-seat rows are dropped at import
+**Question:** 96 sheet rows carry `NO OF SEATS = 0` (many being the duplicate/continuation rows).
+**Answer:** Owner instruction: rows with 0 seats are removed and never inserted — they are counted in the import report, not flagged for review. Rows with a missing seats value remain flagged as errors.
+
+### 2026-08-24 — PNR TL = EMD-1 deadline; EMD-2 gated on verified airline email
+**Question:** How do deadlines and the 2nd EMD relate to the airline confirmation workflow?
+**Answer:** (1) `pnr_tl_date` serves as the EMD-1 deadline until the deposit-confirmation email is sent to the airline — the booking form auto-fills the round deadline from it. (2) The 2nd EMD auto-generates from the SV policy percentages **only after staff verify the airline's email confirmation**; until the Phase 3 email infrastructure exists, round 2 is entered manually. Logged as a Phase 3 design requirement.
+
 ---
 
 ## Template for new entries

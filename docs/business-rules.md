@@ -2,19 +2,29 @@
 
 These are facts, not implementation choices. If a screen needs logic not described here, stop and ask — do not infer a rule from the shape of the data.
 
-## EMD-1 percentage (auto-suggested, not enforced)
+## Airline EMD policies (auto-suggested, never enforced)
 
-Based on days between `request_date` and `outbound_date`:
+EMD percentage suggestions are **per airline**. Only airlines with an uploaded policy get automatic suggestions; every other airline's percentages are set manually by staff until its policy arrives.
 
-| Days: request → departure | EMD-1 % |
-|---|---|
-| 61–90 | 15% |
-| 30–59 | 30% |
-| 15–29 | 50% |
-| 7–14 | 100% |
-| < 7 | Full ticket payment — no EMD round at all |
+### Saudia (SV) — Umrah, year-round excluding Ramadhan
 
-This only applies to `round_number = 1`. This is a **default the UI suggests**, editable by staff — never a hard validation that blocks saving a different value.
+Based on days between `request_date` and `outbound_date` (uploaded policy sheet, 2026-08-23):
+
+| Time to departure | 1st EMD (deposit) | 2nd EMD (balance / full payment) |
+|---|---|---|
+| 60+ days | 15% within 14 days of confirmation | 85% (+20 days to departure) |
+| 30–59 days | 30% within 10 days | 70% (+10 days) |
+| 15–29 days | 50% within 3 days | 50% (+7 days) |
+| 7–14 days | 70% within 3 days | 30% (+5 days) |
+| 2–6 days | 100% within 1 day | — |
+| under 2 days | 100% immediate | — |
+
+- Exactly 60 days falls in the top band (15%), per the owner's earlier ruling.
+- The Hajj (Intl/Dom), Ramadhan-Umrah, and Tour Operator rows of the airline's table are **not** implemented — owner instruction: umrah only. No imported booking departs during Ramadhan; revisit if that changes.
+- The 2nd EMD % is a suggestion for the *next* deposit round (`round_number = 2`); it is shown as guidance at booking creation and recorded when staff actually add that round.
+- The older generic EMD-1 table that used to live here (61–90→15 … <7→no round) is **superseded** by this airline-scoped policy.
+
+This only applies to suggestions — always a default the UI pre-fills, editable by staff, never a validation that blocks saving a different value.
 
 ## How EMD rounds actually work
 
@@ -24,6 +34,14 @@ A PNR is not limited to a fixed number of rounds. The real cycle:
 2. If the company can't cover the next portion before the deadline, they request a refund from the airline **before** the deadline (the airline does not cancel the PNR at this point).
 3. The next day, the company requests a **date extension**, which becomes round 2 with a new deadline.
 4. This can repeat (round 3, round 4, ...) — there is no hard cap. Build `emd_rounds` as an open-ended list per PNR, not fixed columns.
+
+### PNR TL as the EMD-1 deadline (owner rule, 2026-08-24)
+
+`pnrs.pnr_tl_date` **is** the round-1 deadline until the deposit-confirmation email has been sent to the airline. The booking form pre-fills the round deadline from the PNR TL date; staff can override it.
+
+### EMD-2 auto-generation (owner rule, 2026-08-24 — Phase 3 scope)
+
+The 2nd EMD must only auto-generate **after staff verify the airline's email confirmation** of the 1st EMD, and its percentage then follows the SV policy table above. This is gated on the Phase 3 email infrastructure (sent-log + a verified-confirmation state) — it is intentionally **not** built during Phase 1; until then, round 2 is added manually.
 
 ## What happens if a deadline is missed with no extension requested
 
