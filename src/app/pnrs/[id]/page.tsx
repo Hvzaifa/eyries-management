@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { canEdit, getUserRole } from '@/lib/types/auth';
 import { getPnrDetail } from '@/lib/pnrs';
 import { getUrgency, todayIsoInPkt } from '@/lib/urgency';
 import { formatPkr } from '@/lib/format';
@@ -82,6 +83,14 @@ export default async function PnrDetailPage({
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              {canEdit(getUserRole(user)) && (
+                <Link
+                  href={`/pnrs/${detail.id}/edit`}
+                  className="text-xs font-semibold px-3 py-1.5 rounded-xl text-white bg-gradient-to-tr from-indigo-500 to-violet-500 hover:from-indigo-400 hover:to-violet-400 shadow-md shadow-indigo-500/20 transition-all"
+                >
+                  Edit booking
+                </Link>
+              )}
               <span className={`text-xs px-2.5 py-1 rounded-full border ${PNr_STATUS_STYLES[detail.status] ?? ''}`}>
                 {detail.status}
               </span>

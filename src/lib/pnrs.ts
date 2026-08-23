@@ -53,6 +53,8 @@ export async function listPnrs(): Promise<PnrListRow[]> {
     investorCompany: r.investorCompany,
     licenseName: r.license?.name ?? null,
     branchName: r.branch?.name ?? null,
+    licenseId: r.licenseId,
+    branchId: r.branchId,
     pnr: r.pnr,
     gdsPnr: r.gdsPnr,
     segment: r.segment,
@@ -137,12 +139,15 @@ export interface PnrDetail {
   investorCompany: string;
   licenseName: string | null;
   branchName: string | null;
+  licenseId: string | null;
+  branchId: string | null;
   parentPnrId: string | null;
   pnr: string;
   gdsPnr: string | null;
   segment: string | null;
   airlineCode: string | null;
   airlineName: string | null;
+  airlineId: string | null;
   seats: number;
   outboundDate: string | null;
   inboundDate: string | null;
@@ -215,12 +220,15 @@ export async function getPnrDetail(id: string): Promise<PnrDetail | null> {
     investorCompany: r.investorCompany,
     licenseName: r.license?.name ?? null,
     branchName: r.branch?.name ?? null,
+    licenseId: r.licenseId,
+    branchId: r.branchId,
     parentPnrId: r.parentPnrId,
     pnr: r.pnr,
     gdsPnr: r.gdsPnr,
     segment: r.segment,
     airlineCode: r.airline?.code ?? null,
     airlineName: r.airline?.name ?? null,
+    airlineId: r.airlineId,
     seats: r.seats,
     outboundDate: isoOrNull(r.outboundDate),
     inboundDate: isoOrNull(r.inboundDate),
@@ -272,5 +280,36 @@ export async function getPnrDetail(id: string): Promise<PnrDetail | null> {
       newValue: e.newValue,
       changedAt: e.changedAt.toISOString(),
     })),
+  };
+}
+
+export interface PnrFormOptions {
+  licenses: { id: string; name: string }[];
+  branches: { id: string; name: string }[];
+  airlines: { id: string; code: string; name: string }[];
+  segmentSuggestions: string[];
+  existingPnrCodes: string[];
+}
+
+export async function getPnrFormOptions(): Promise<PnrFormOptions> {
+  const [licenses, branches, airlines, segments, codes] = await Promise.all([
+    prisma.license.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+    prisma.branch.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+    prisma.airline.findMany({ orderBy: { code: 'asc' }, select: { id: true, code: true, name: true } }),
+    prisma.pnr.findMany({
+      where: { segment: { not: null } },
+      distinct: ['segment'],
+      orderBy: { segment: 'asc' },
+      select: { segment: true },
+    }),
+    prisma.pnr.findMany({ select: { pnr: true } }),
+  ]);
+
+  return {
+    licenses,
+    branches,
+    airlines,
+    segmentSuggestions: segments.map((s) => s.segment!).filter(Boolean),
+    existingPnrCodes: codes.map((c) => c.pnr),
   };
 }

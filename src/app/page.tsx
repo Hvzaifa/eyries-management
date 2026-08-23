@@ -1,5 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
+import Link from 'next/link';
+import { canEdit, getUserRole } from '@/lib/types/auth';
 import { getDashboardTotals, listPnrs } from '@/lib/pnrs';
 import { todayIsoInPkt } from '@/lib/urgency';
 import PnrTable from './pnr-table';
@@ -11,6 +13,7 @@ import {
   Wallet,
   ArrowDownToLine,
   RotateCcw,
+  PlusCircle,
 } from 'lucide-react';
 
 export default async function HomePage() {
@@ -22,6 +25,7 @@ export default async function HomePage() {
   }
 
   const [rows, totals] = await Promise.all([listPnrs(), getDashboardTotals()]);
+  const userCanEdit = canEdit(getUserRole(user));
 
   const cards = [
     { label: 'Active PNRs', value: String(totals.activePnrs), icon: FileText, tint: 'bg-indigo-100 text-indigo-600' },
@@ -36,13 +40,24 @@ export default async function HomePage() {
       <AppHeader user={user} />
 
       <main className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-6">
-        <div>
-          <h1 className="text-xl font-bold text-stone-900 tracking-tight">
-            Welcome back
-          </h1>
-          <p className="text-sm text-stone-500 mt-0.5">
-            Here is where every booking stands today.
-          </p>
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h1 className="text-xl font-bold text-stone-900 tracking-tight">
+              Welcome back
+            </h1>
+            <p className="text-sm text-stone-500 mt-0.5">
+              Here is where every booking stands today.
+            </p>
+          </div>
+          {userCanEdit && (
+            <Link
+              href="/pnrs/new"
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-tr from-indigo-500 to-violet-500 hover:from-indigo-400 hover:to-violet-400 shadow-md shadow-indigo-500/25 transition-all"
+            >
+              <PlusCircle className="w-4 h-4" />
+              New booking
+            </Link>
+          )}
         </div>
 
         <section className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">

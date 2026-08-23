@@ -52,6 +52,18 @@ Every time an ambiguous field, rule, or edge case gets resolved — by the proje
 **Question:** No currency is specified anywhere in the docs for fare/taxes/PSF/EMD columns.
 **Answer:** Initially plain numbers with no symbol. **Updated same day at owner review: currency is PKR.** Money columns show `(PKR)` in their headers, totals cards render `PKR x,xxx.xx` via the shared `formatPkr()` helper (`src/lib/format.ts`).
 
+### 2026-08-23 — EMD-1 table gap: exactly 60 days
+**Question:** business-rules.md jumps from 30–59 (30%) to 61–90 (15%); exactly 60 is undefined.
+**Answer:** Initially "no suggestion at 60 days". **Revised same day by project owner: exactly 60 days now suggests the lower band, 15%**, so the full mapping is <7 none / 7–14 → 100% / 15–29 → 50% / 30–59 → 30% / 60–90 → 15% / >90 → 15%. Still only a default, never enforced.
+
+### 2026-08-23 — EMD-1 table gap: more than 90 days
+**Question:** The highest written band ends at 90 days.
+**Answer:** Bookings more than 90 days out get the lowest band (15%) as the starting suggestion, editable as always. Decided by project owner during Step 5.
+
+### 2026-08-23 — Under 7 days: enforcing "no EMD round at all"
+**Question:** How strictly should the create form enforce "< 7 days = full ticket payment, no EMD round"?
+**Answer:** Strictly for the default flow — the inline first-round section is hidden and replaced with an explanatory note; a round cannot be added from the create form in that case. Decided by project owner during Step 5.
+
 ---
 
 ## Template for new entries
