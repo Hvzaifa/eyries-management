@@ -51,7 +51,7 @@ function fmtDate(v: unknown): string {
 }
 
 export default function PnrTable({ rows, todayIso }: { rows: PnrListRow[]; todayIso: string }) {
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'sr_no', desc: false }]);
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'outboundDate', desc: false }]);
   const [globalFilter, setGlobalFilter] = useState('');
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
 
@@ -86,7 +86,14 @@ export default function PnrTable({ rows, todayIso }: { rows: PnrListRow[]; today
       { accessorKey: 'segment', header: 'Segment' },
       { accessorKey: 'airlineCode', header: 'Airline', filterFn: 'equalsString' },
       { accessorKey: 'seats', header: 'Seats' },
-      { accessorKey: 'outboundDate', header: 'Outbound', cell: (c) => fmtDate(c.getValue()) },
+      { accessorKey: 'outboundDate', header: 'Outbound', cell: (c) => fmtDate(c.getValue()), sortingFn: (a, b) => {
+          const av = a.original.outboundDate ?? '';
+          const bv = b.original.outboundDate ?? '';
+          if (!av && !bv) return 0;
+          if (!av) return 1;
+          if (!bv) return -1;
+          return av.localeCompare(bv);
+        } },
       { accessorKey: 'inboundDate', header: 'Inbound', cell: (c) => fmtDate(c.getValue()) },
       { accessorKey: 'sector', header: 'Sector', cell: (c) => (
           <span className="font-mono text-[11px]">{c.getValue<string>() ?? '—'}</span>

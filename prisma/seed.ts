@@ -35,12 +35,16 @@ async function main() {
     }
   }
 
-  // Seed airlines
+  // Seed airlines (names confirmed by project owner 2026-08-24)
   const airlinesData = [
     { code: 'EK', name: 'Emirates', contactEmails: ['groups.ek@emirates.com'] },
     { code: 'QR', name: 'Qatar Airways', contactEmails: ['groups.qr@qatarairways.com'] },
     { code: 'PIA', name: 'Pakistan International Airlines', contactEmails: ['groups@piac.aero'] },
     { code: 'SV', name: 'Saudia', contactEmails: ['groups.sv@saudia.com'] },
+    { code: '9P', name: 'Fly Jinnah', contactEmails: [] },
+    { code: 'FZ', name: 'flydubai', contactEmails: [] },
+    { code: 'PF', name: 'AirSial', contactEmails: [] },
+    { code: 'UL', name: 'Srilankan Airlines', contactEmails: [] },
   ];
 
   for (const airline of airlinesData) {

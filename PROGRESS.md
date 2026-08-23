@@ -4,7 +4,7 @@ Update this file every time a step is reviewed and confirmed working. This is th
 
 **Current phase:** Phase 1 — Foundation + Deadline Engine
 **Current step:** Step 6 — One-time Excel import tool
-**Status:** In progress
+**Status:** In progress — data imported; awaiting owner review of 119 flagged rows (flagged-rows-review.csv)
 
 ---
 
@@ -23,4 +23,5 @@ After a step is built and you've personally checked it against real sample data,
 | 2026-08-23 | Phase 1 | Step 3: PNR List Dashboard | Done | TanStack Table with sorting/filtering, urgency colours (pending-only rounds), dashboard totals from SQL view, PKR formatting, light cream theme, vitest + 12 urgency unit tests |
 | 2026-08-23 | Phase 1 | Step 4: PNR detail page | Done | /pnrs/[id] with all core fields, ordered EMD rounds, ticketing + parent/child sections, activity history; shared AppHeader; rows linked from dashboard |
 | 2026-08-23 | Phase 1 | Step 5: Manual entry / edit form | Done | Create + edit forms with role guards, activity logging per field, duplicate-PNR two-step warning, unit-tested EMD-1 suggestion (60-day gap resolved to 15%, >90 → 15%, <7 hides round section) |
+| 2026-08-24 | Phase 1 | Step 6: Excel import | In progress | Real sheet imported: 972 PNRs / 1727 rounds / 956 ticketing rows; SV-only EMD policy engine live; deadline_date now nullable; 119 rows flagged in flagged-rows-review.csv awaiting owner review |
 (Add a new row every time a step changes status. Keep old rows — this becomes the project history.)

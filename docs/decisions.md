@@ -92,6 +92,18 @@ Every time an ambiguous field, rule, or edge case gets resolved — by the proje
 **Question:** How do deadlines and the 2nd EMD relate to the airline confirmation workflow?
 **Answer:** (1) `pnr_tl_date` serves as the EMD-1 deadline until the deposit-confirmation email is sent to the airline — the booking form auto-fills the round deadline from it. (2) The 2nd EMD auto-generates from the SV policy percentages **only after staff verify the airline's email confirmation**; until the Phase 3 email infrastructure exists, round 2 is entered manually. Logged as a Phase 3 design requirement.
 
+### 2026-08-24 — One-time completion of past trips from the legacy import
+**Question:** What happens to imported PNRs whose travel dates have passed?
+**Answer:** Owner instruction: any PNR whose outbound OR inbound date is before today is marked `completed` (465 rows; 176 of them had only an outbound date recorded — owner confirmed either date counts). No rows were marked `cancelled` — nothing in the imported data explicitly says cancelled; that status stays human-only per business-rules.md. Applied once via script with per-row activity-log entries; **not** standing automation — future completions are manual unless the owner asks for a rule.
+
+### 2026-08-24 — Airline lookup names confirmed
+**Question:** Imported airlines carried bare codes as names (9P, FZ, PF, UL).
+**Answer:** Owner-confirmed names: 9P = Fly Jinnah, FZ = flydubai, PF = AirSial, UL = Srilankan Airlines. `PA` pending owner confirmation (left as code). Seed list updated to match.
+
+### 2026-08-24 — Dashboard default sort
+**Question:** How should the PNR list be ordered by default?
+**Answer:** Outbound date ascending (closest departure first), undated rows last — per owner request so active bookings read in departure order. SR# remains available by clicking the column.
+
 ---
 
 ## Template for new entries
