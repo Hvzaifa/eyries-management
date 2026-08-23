@@ -58,11 +58,19 @@ async function main() {
   console.log('Seeding completed successfully!');
 }
 
-main()
-  .catch((e) => {
-    console.error('Error during seeding:', e);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
+export async function mainWithSamples() {
+  await main();
+  const { seedSamplePnrs } = await import('./seed-sample-pnrs');
+  await seedSamplePnrs();
+}
+
+if (process.argv[1] && process.argv[1].endsWith('seed.ts')) {
+  mainWithSamples()
+    .catch((e) => {
+      console.error('Error during seeding:', e);
+      process.exit(1);
+    })
+    .finally(async () => {
+      await prisma.$disconnect();
+    });
+}

@@ -1,18 +1,16 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
-import { logout } from './login/actions';
-import { getUserRole, canEdit, isAdmin } from '@/lib/types/auth';
-import { 
-  Plane, 
-  Shield, 
-  UserCheck, 
-  Eye, 
-  LogOut, 
-  PlusCircle, 
-  Settings, 
-  CheckCircle2, 
-  Calendar,
-  Layers
+import { getDashboardTotals, listPnrs } from '@/lib/pnrs';
+import { todayIsoInPkt } from '@/lib/urgency';
+import PnrTable from './pnr-table';
+import AppHeader from '@/components/app-header';
+import { formatPkr } from '@/lib/format';
+import {
+  FileText,
+  Users,
+  Wallet,
+  ArrowDownToLine,
+  RotateCcw,
 } from 'lucide-react';
 
 export default async function HomePage() {
@@ -23,225 +21,62 @@ export default async function HomePage() {
     redirect('/login');
   }
 
-  const role = getUserRole(user);
-  const userCanEdit = canEdit(role);
-  const userIsAdmin = isAdmin(role);
+  const [rows, totals] = await Promise.all([listPnrs(), getDashboardTotals()]);
+
+  const cards = [
+    { label: 'Active PNRs', value: String(totals.activePnrs), icon: FileText, tint: 'bg-indigo-100 text-indigo-600' },
+    { label: 'Total Seats', value: String(totals.totalSeats), icon: Users, tint: 'bg-sky-100 text-sky-600' },
+    { label: 'Total EMD Value', value: formatPkr(totals.totalEmdValue), icon: Wallet, tint: 'bg-violet-100 text-violet-600' },
+    { label: 'Total Paid', value: formatPkr(totals.totalPaid), icon: ArrowDownToLine, tint: 'bg-emerald-100 text-emerald-600' },
+    { label: 'Total Refunded', value: formatPkr(totals.totalRefunded), icon: RotateCcw, tint: 'bg-amber-100 text-amber-600' },
+  ];
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col selection:bg-indigo-500 selection:text-white">
-      {/* Top Navigation Bar */}
-      <header className="border-b border-slate-800 bg-slate-900/70 backdrop-blur-md sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center text-white shadow-md shadow-indigo-500/20">
-              <Plane className="w-5 h-5 -rotate-45" />
-            </div>
-            <div>
-              <span className="font-bold text-base text-white tracking-tight">Eyries EMD</span>
-              <span className="hidden sm:inline-block ml-2 text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700 font-mono">
-                Phase 1
-              </span>
-            </div>
-          </div>
+    <div className="min-h-screen flex flex-col">
+      <AppHeader user={user} />
 
-          <div className="flex items-center gap-4">
-            {/* Role Badge */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700 text-xs">
-              {role === 'admin' && (
-                <>
-                  <Shield className="w-3.5 h-3.5 text-indigo-400" />
-                  <span className="font-semibold text-indigo-300">Admin</span>
-                </>
-              )}
-              {role === 'staff' && (
-                <>
-                  <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="font-semibold text-emerald-300">Staff</span>
-                </>
-              )}
-              {role === 'viewer' && (
-                <>
-                  <Eye className="w-3.5 h-3.5 text-amber-400" />
-                  <span className="font-semibold text-amber-300">Viewer (Read-Only)</span>
-                </>
-              )}
-            </div>
-
-            {/* User details */}
-            <span className="text-xs text-slate-400 hidden md:inline-block max-w-[180px] truncate">
-              {user.email}
-            </span>
-
-            {/* Logout button */}
-            <form action={logout}>
-              <button
-                type="submit"
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl transition-colors"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-                <span>Log Out</span>
-              </button>
-            </form>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-8">
-        {/* Welcome Banner */}
-        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 border border-slate-800 p-6 sm:p-8">
-          <div className="relative z-10 max-w-3xl">
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-              Group Airline Booking & EMD Management
-            </h1>
-            <p className="mt-2 text-sm sm:text-base text-slate-300 leading-relaxed">
-              Authenticated as <span className="text-white font-medium">{user.email}</span> with role{' '}
-              <span className="font-semibold uppercase text-indigo-400">{role}</span>.
-            </p>
-          </div>
+      <main className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-6">
+        <div>
+          <h1 className="text-xl font-bold text-stone-900 tracking-tight">
+            Welcome back
+          </h1>
+          <p className="text-sm text-stone-500 mt-0.5">
+            Here is where every booking stands today.
+          </p>
         </div>
 
-        {/* Role-Based Permissions Status Card */}
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6">
-          <h2 className="text-base font-semibold text-white mb-4 flex items-center gap-2">
-            <Shield className="w-4 h-4 text-indigo-400" />
-            Role-Based Access Control Verification
-          </h2>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* View Access */}
-            <div className="p-4 rounded-xl border border-slate-800 bg-slate-950/60">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-semibold text-slate-300">Read & View PNRs</span>
-                <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800">
-                  Allowed
+        <section className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
+          {cards.map((card) => (
+            <div
+              key={card.label}
+              className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm hover:shadow-md transition-shadow"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
+                  {card.label}
+                </p>
+                <span className={`w-7 h-7 rounded-lg flex items-center justify-center ${card.tint}`}>
+                  <card.icon className="w-3.5 h-3.5" />
                 </span>
               </div>
-              <p className="text-xs text-slate-400">
-                All roles (admin, staff, viewer) can view PNRs, deadlines, and reports.
-              </p>
+              <p className="mt-2 text-lg font-bold text-stone-900 tabular-nums">{card.value}</p>
             </div>
+          ))}
+        </section>
+        <p className="text-[11px] text-stone-400 -mt-3">
+          Totals come from the dashboard_totals view, reflect active PNRs only, and do not change
+          with the filters below. Total paid includes rounds later refunded (gross, never netted).
+        </p>
 
-            {/* Edit Access */}
-            <div className={`p-4 rounded-xl border ${
-              userCanEdit 
-                ? 'border-emerald-800/60 bg-emerald-950/20' 
-                : 'border-rose-900/40 bg-rose-950/10'
-            }`}>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-semibold text-slate-300">Create / Edit Data</span>
-                <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full border ${
-                  userCanEdit
-                    ? 'bg-emerald-950 text-emerald-400 border-emerald-800'
-                    : 'bg-rose-950 text-rose-400 border-rose-800'
-                }`}>
-                  {userCanEdit ? 'Active for your role' : 'Blocked (Viewer)'}
-                </span>
-              </div>
-              <p className="text-xs text-slate-400">
-                Restricted to <span className="text-slate-200">staff</span> and <span className="text-slate-200">admin</span>. Viewers are blocked from editing.
-              </p>
-            </div>
-
-            {/* Admin Access */}
-            <div className={`p-4 rounded-xl border ${
-              userIsAdmin 
-                ? 'border-indigo-800/60 bg-indigo-950/20' 
-                : 'border-slate-800 bg-slate-950/60'
-            }`}>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-semibold text-slate-300">Admin Management</span>
-                <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full border ${
-                  userIsAdmin
-                    ? 'bg-indigo-950 text-indigo-400 border-indigo-800'
-                    : 'bg-slate-800 text-slate-400 border-slate-700'
-                }`}>
-                  {userIsAdmin ? 'Active for your role' : 'Admin only'}
-                </span>
-              </div>
-              <p className="text-xs text-slate-400">
-                Manage system lookup tables (licenses, branches, airlines) and user roles.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Action Controls & Next Steps */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Quick Actions (Demonstrating Role-Based Guard) */}
-          <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 space-y-4">
-            <h3 className="text-sm font-semibold text-slate-200">Interactive Action Controls</h3>
-            <p className="text-xs text-slate-400">
-              Interactive test buttons showing role-based permission enforcement:
-            </p>
-
-            <div className="space-y-3 pt-2">
-              <button
-                disabled={!userCanEdit}
-                className={`w-full flex items-center justify-between px-4 py-3 rounded-xl text-xs font-semibold border transition-all ${
-                  userCanEdit
-                    ? 'bg-indigo-600 hover:bg-indigo-500 text-white border-indigo-500 shadow-md shadow-indigo-600/20 cursor-pointer'
-                    : 'bg-slate-950/80 text-slate-500 border-slate-800 cursor-not-allowed'
-                }`}
-              >
-                <span className="flex items-center gap-2">
-                  <PlusCircle className="w-4 h-4" />
-                  <span>Create / Edit PNR (Step 5)</span>
-                </span>
-                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-black/30">
-                  {userCanEdit ? 'Enabled' : 'Disabled for Viewer'}
-                </span>
-              </button>
-
-              <button
-                disabled={!userIsAdmin}
-                className={`w-full flex items-center justify-between px-4 py-3 rounded-xl text-xs font-semibold border transition-all ${
-                  userIsAdmin
-                    ? 'bg-slate-800 hover:bg-slate-700 text-white border-slate-700 cursor-pointer'
-                    : 'bg-slate-950/80 text-slate-500 border-slate-800 cursor-not-allowed'
-                }`}
-              >
-                <span className="flex items-center gap-2">
-                  <Settings className="w-4 h-4" />
-                  <span>Manage System Lookups & Roles</span>
-                </span>
-                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-black/30">
-                  {userIsAdmin ? 'Admin Only' : 'Locked'}
-                </span>
-              </button>
-            </div>
-          </div>
-
-          {/* Phase 1 Roadmap Status */}
-          <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 space-y-3">
-            <h3 className="text-sm font-semibold text-slate-200">Phase 1 Steps Overview</h3>
-            <ul className="space-y-2.5 text-xs">
-              <li className="flex items-center gap-2 text-emerald-400">
-                <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
-                <span>Step 1: DB Schema & Seeding (Complete)</span>
-              </li>
-              <li className="flex items-center gap-2 text-emerald-400">
-                <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
-                <span>Step 2: Authentication & Roles (Complete)</span>
-              </li>
-              <li className="flex items-center gap-2 text-indigo-400 font-medium">
-                <div className="w-4 h-4 rounded-full border-2 border-indigo-400 flex items-center justify-center">
-                  <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
-                </div>
-                <span>Step 3: PNR list (dashboard) with TanStack Table</span>
-              </li>
-              <li className="flex items-center gap-2 text-slate-500">
-                <Layers className="w-4 h-4 flex-shrink-0" />
-                <span>Step 4: PNR detail page & activity log</span>
-              </li>
-              <li className="flex items-center gap-2 text-slate-500">
-                <Calendar className="w-4 h-4 flex-shrink-0" />
-                <span>Step 7: Daily deadline-check job (Resend email)</span>
-              </li>
-            </ul>
-          </div>
-        </div>
+        <PnrTable rows={rows} todayIso={todayIsoInPkt()} />
       </main>
+
+      <footer className="border-t border-stone-200 py-4">
+        <p className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 text-[11px] text-stone-400">
+          Eyries EMD · internal booking tracker · amounts in PKR
+        </p>
+      </footer>
     </div>
   );
 }
+

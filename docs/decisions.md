@@ -40,6 +40,18 @@ Every time an ambiguous field, rule, or edge case gets resolved — by the proje
 **Question:** Step 1 applies schema via `db/schema.sql` + `db/apply-schema.ts`; Prisma migrations would be the more standard route.
 **Answer:** Keep the raw-SQL approach for now (it also owns the two SQL views, which Prisma can't express). Made idempotent so re-running heals partial applications — which had in fact happened: the live DB was missing everything after `airlines`. Revisit if drift between `db/schema.sql` and `prisma/schema.prisma` becomes a problem.
 
+### 2026-08-23 — Urgency colour: which round statuses are "unresolved"
+**Question:** Step 3 colours rows by "nearest unresolved `emd_rounds.deadline_date`", but "unresolved" wasn't defined across the five round statuses.
+**Answer:** Only `status = 'pending'` counts as unresolved. Paid, refund_requested, refunded, and expired rounds never drive the row colour. Decided by project owner at start of Step 3. A PNR with no pending rounds shows green; a PNR whose status ≠ active is grey regardless.
+
+### 2026-08-23 — Dashboard totals scoping vs filters
+**Question:** data-model.md says totals are "scoped to whatever filter staff has applied"; phase-1 Step 3 says to show totals from the (global) `dashboard_totals` view.
+**Answer:** For Step 3 the totals row always shows the global view values, regardless of active filters. Filter-scoped recomputation would require defining money-aggregation logic in app code — deferred until the owner explicitly asks for it. Decided by project owner at start of Step 3.
+
+### 2026-08-23 — Money display format
+**Question:** No currency is specified anywhere in the docs for fare/taxes/PSF/EMD columns.
+**Answer:** Initially plain numbers with no symbol. **Updated same day at owner review: currency is PKR.** Money columns show `(PKR)` in their headers, totals cards render `PKR x,xxx.xx` via the shared `formatPkr()` helper (`src/lib/format.ts`).
+
 ---
 
 ## Template for new entries

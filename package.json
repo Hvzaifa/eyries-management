@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "db:apply": "npx tsx db/apply-schema.ts",
     "db:seed": "npx tsx prisma/seed.ts",
     "db:seed:users": "npx tsx scripts/seed-users.ts"
@@ -39,6 +40,7 @@
     "prisma": "^6.1.0",
     "tailwindcss": "^4",
     "tsx": "^4.19.2",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.11"
   }
 }
