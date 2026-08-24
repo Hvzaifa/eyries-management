@@ -35,6 +35,7 @@ access · Supabase Auth · TanStack Table · Resend · Vercel hosting.
 | `npm run db:apply` | Apply `db/schema.sql` to the database |
 | `npm run db:seed` | Seed lookup tables |
 | `npm run db:seed:users` | Create/reset sample auth users (needs service role key) |
+| `npm run job:deadline-check` | Dry-run the daily deadline alert (add `-- --send` to deliver) |
 
 ## Conventions
 

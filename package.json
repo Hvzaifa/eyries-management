@@ -11,7 +11,8 @@
     "test": "vitest run",
     "db:apply": "npx tsx db/apply-schema.ts",
     "db:seed": "npx tsx prisma/seed.ts",
-    "db:seed:users": "npx tsx scripts/seed-users.ts"
+    "db:seed:users": "npx tsx scripts/seed-users.ts",
+    "job:deadline-check": "npx tsx scripts/deadline-check.ts"
   },
   "prisma": {
     "seed": "npx tsx prisma/seed.ts"

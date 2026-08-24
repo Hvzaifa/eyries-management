@@ -104,6 +104,10 @@ Every time an ambiguous field, rule, or edge case gets resolved — by the proje
 **Question:** How should the PNR list be ordered by default?
 **Answer:** Outbound date ascending (closest departure first), undated rows last — per owner request so active bookings read in departure order. SR# remains available by clicking the column.
 
+### 2026-08-24 — Deadline alert scope (Step 7)
+**Question:** The phase doc says "every pending round with deadline within 2 days" — does that include overdue rounds and rounds on non-active PNRs?
+**Answer:** Overdue pending rounds ARE included (a daily job that skips already-late deadlines would never report them — aligned with the step's purpose of stopping missed deadlines). Rounds on cancelled/completed PNRs are excluded, consistent with the grey urgency rule. Rounds with no deadline are never alerted. Recipients come from the `STAFF_ALERT_EMAILS` env var; the job is read-only and sends one summary email per day. Decided during Step 7 implementation; flagged for owner confirmation.
+
 ---
 
 ## Template for new entries
