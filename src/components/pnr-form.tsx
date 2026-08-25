@@ -2,7 +2,8 @@
 
 import { useMemo, useState, useTransition } from 'react';
 import { AlertTriangle, Save, Sparkles } from 'lucide-react';
-import { suggestEmdPlan } from '@/lib/emd';
+import { suggestEmdPlan, emd2DaysBeforeDeparture } from '@/lib/emd';
+import { diffInDays } from '@/lib/urgency';
 import type { PnrFormOptions } from '@/lib/pnrs';
 
 export interface PnrFormValues {
@@ -139,6 +140,16 @@ export default function PnrForm({
     mode === 'create' && !roundDeadlineTouched && values.pnrTlDate
       ? values.pnrTlDate
       : roundDeadline;
+
+  const emd2DeadlinePreview = useMemo(() => {
+    if (!suggestion.applicable || suggestion.emd2Pct === null) return null;
+    if (!values.requestDate || !values.outboundDate) return null;
+    const offset = emd2DaysBeforeDeparture(diffInDays(values.requestDate, values.outboundDate));
+    if (offset === null) return null;
+    const [y, m, d] = values.outboundDate.split('-').map(Number);
+    const deadline = new Date(Date.UTC(y, m - 1, d - offset));
+    return deadline.toISOString().slice(0, 10);
+  }, [suggestion, values.requestDate, values.outboundDate]);
 
   const duplicate =
     values.pnr.trim() !== '' &&
@@ -320,7 +331,11 @@ export default function PnrForm({
                     SV Umrah policy ({suggestion.bandLabel}): 1st EMD{' '}
                     <strong>{suggestion.emd1Pct}%</strong> pre-filled below, editable · balance{' '}
                     {suggestion.emd2Pct !== null ? `${suggestion.emd2Pct}%` : '—'} recorded as the
-                    2nd round when paid.
+                    2nd round when paid
+                    {emd2DeadlinePreview && (
+                      <> — policy deadline for the 2nd EMD: <strong>{emd2DeadlinePreview}</strong></>
+                    )}
+                    .
                   </span>
                 )}
               </div>

@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma';
+import { emd2DaysBeforeDeparture } from '@/lib/emd';
 import { formatPkr } from '@/lib/format';
 
 /**
@@ -16,10 +17,10 @@ export function addDaysIso(todayIso: string, days: number): string {
   return t.toISOString().slice(0, 10);
 }
 
-/** Alert window: overdue, today, and the next 2 days inclusive. */
+/** Alert window: future only — today through exactly 2 days out. Overdue deadlines are excluded (owner rule). */
 export function isDueForAlert(deadlineIso: string | null, todayIso: string): boolean {
   if (!deadlineIso) return false;
-  return deadlineIso <= addDaysIso(todayIso, 2);
+  return deadlineIso >= todayIso && deadlineIso <= addDaysIso(todayIso, 2);
 }
 
 export interface DeadlineAlert {
@@ -42,7 +43,7 @@ export async function findDueRounds(todayIso: string): Promise<DeadlineAlert[]> 
   const rounds = await prisma.emdRound.findMany({
     where: {
       status: 'pending',
-      deadlineDate: { not: null, lte: new Date(`${horizon}T00:00:00.000Z`) },
+      deadlineDate: { not: null, gte: new Date(`${todayIso}T00:00:00.000Z`), lte: new Date(`${horizon}T00:00:00.000Z`) },
       pnr: { status: 'active' },
     },
     orderBy: { deadlineDate: 'asc' },
@@ -138,6 +139,115 @@ export function escapeHtml(s: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+export interface Emd2BackfillSummary {
+  set: number;
+  skippedNoEmd2: number;
+  skippedNotSv: number;
+  skippedNoDates: number;
+  details: { pnrCode: string; deadline: string }[];
+}
+
+/**
+ * Owner rule (2026-08-24): for SV Umrah bookings whose EMD-1 is settled
+ * (paid or refunded) and whose EMD-2 round has no deadline, derive the
+ * EMD-2 deadline from the SV policy: outbound date minus the band's
+ * days-before-departure (20/10/7/5). Writes an activity-log entry per set
+ * deadline. PNRs without an existing EMD-2 round are only counted — the
+ * round itself (and its amount) is staff's to add.
+ */
+export async function backfillEmd2Deadlines(): Promise<Emd2BackfillSummary> {
+  const summary: Emd2BackfillSummary = {
+    set: 0,
+    skippedNoEmd2: 0,
+    skippedNotSv: 0,
+    skippedNoDates: 0,
+    details: [],
+  };
+
+  const pnrs = await prisma.pnr.findMany({
+    where: { status: 'active' },
+    include: {
+      airline: true,
+      emdRounds: { orderBy: { roundNumber: 'asc' } },
+    },
+  });
+
+  for (const p of pnrs) {
+    const isSvUmrah =
+      p.airline?.code?.toUpperCase() === 'SV' &&
+      !!p.segment &&
+      p.segment.toLowerCase().includes('umrah');
+    if (!isSvUmrah) {
+      summary.skippedNotSv++;
+      continue;
+    }
+
+    const r1 = p.emdRounds.find((r) => r.roundNumber === 1);
+    const r2 = p.emdRounds.find((r) => r.roundNumber === 2);
+    const emd1Settled = !!r1 && (r1.status === 'paid' || r1.status === 'refunded');
+    if (!emd1Settled) continue;
+
+    if (!r2) {
+      summary.skippedNoEmd2++;
+      continue;
+    }
+    if (r2.deadlineDate !== null) continue;
+
+    if (!p.requestDate || !p.outboundDate) {
+      summary.skippedNoDates++;
+      continue;
+    }
+
+    const days =
+      Math.round(
+        (Date.UTC(
+          p.outboundDate.getUTCFullYear(),
+          p.outboundDate.getUTCMonth(),
+          p.outboundDate.getUTCDate()
+        ) -
+          Date.UTC(
+            p.requestDate.getUTCFullYear(),
+            p.requestDate.getUTCMonth(),
+            p.requestDate.getUTCDate()
+          )) /
+          86_400_000
+      );
+    const offset = emd2DaysBeforeDeparture(days);
+    if (offset === null) {
+      summary.skippedNoDates++;
+      continue;
+    }
+
+    const [y, m, d] = [
+      p.outboundDate.getUTCFullYear(),
+      p.outboundDate.getUTCMonth(),
+      p.outboundDate.getUTCDate(),
+    ];
+    const deadline = new Date(Date.UTC(y, m, d - offset));
+
+    await prisma.emdRound.update({
+      where: { id: r2.id },
+      data: { deadlineDate: deadline },
+    });
+    await prisma.activityLog.create({
+      data: {
+        tableName: 'emd_rounds',
+        recordId: r2.id,
+        fieldName: 'deadline_date',
+        oldValue: null,
+        newValue: deadline.toISOString().slice(0, 10),
+      },
+    });
+
+    summary.set++;
+    if (summary.details.length < 20) {
+      summary.details.push({ pnrCode: p.pnr, deadline: deadline.toISOString().slice(0, 10) });
+    }
+  }
+
+  return summary;
 }
 
 export function dashboardUrl(): string {

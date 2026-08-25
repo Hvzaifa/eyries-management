@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
 import { todayIsoInPkt } from '@/lib/urgency';
-import { sendDeadlineAlert } from '@/lib/deadlines';
+import { backfillEmd2Deadlines, sendDeadlineAlert } from '@/lib/deadlines';
 
 /**
- * Daily deadline-check job (Vercel Cron -> this route).
- * Read-only: queries due EMD rounds and sends one summary email to staff.
+ * Daily deadline job (Vercel Cron -> this route).
+ * 1. Sets missing EMD-2 deadlines from the SV policy (owner rule) — the only
+ *    write this job performs, each change activity-logged.
+ * 2. Sends one read-only summary email for pending rounds due within 2 days.
  * Protected by the CRON_SECRET bearer token — Vercel sends it automatically.
  */
 export async function GET(request: Request) {
@@ -15,17 +17,19 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  const backfill = await backfillEmd2Deadlines();
   const result = await sendDeadlineAlert(todayIsoInPkt());
 
   if (result.error) {
     return NextResponse.json(
-      { ok: false, error: result.error, due: result.alerts.length },
+      { ok: false, error: result.error, due: result.alerts.length, backfill },
       { status: 500 }
     );
   }
 
   return NextResponse.json({
     ok: true,
+    backfill,
     due: result.alerts.length,
     sent: result.sent,
     recipients: result.recipients,

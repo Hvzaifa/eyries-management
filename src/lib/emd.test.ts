@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { suggestEmdPlan } from './emd';
+import { emd2DaysBeforeDeparture, suggestEmdPlan } from './emd';
 
 const svUmrah = {
   airlineCode: 'SV',
@@ -67,5 +67,23 @@ describe('suggestEmdPlan scoping', () => {
       suggestEmdPlan({ ...svUmrah, requestDateIso: null, outboundDateIso: '2026-10-22' }).reason
     ).toBe('missing-dates');
     expect(suggestEmdPlan({ ...svUmrah, outboundDateIso: null }).reason).toBe('missing-dates');
+  });
+});
+
+describe('emd2DaysBeforeDeparture', () => {
+  it('maps each policy band to its full-payment offset (boundaries)', () => {
+    expect(emd2DaysBeforeDeparture(60)).toBe(20);
+    expect(emd2DaysBeforeDeparture(200)).toBe(20);
+    expect(emd2DaysBeforeDeparture(59)).toBe(10);
+    expect(emd2DaysBeforeDeparture(30)).toBe(10);
+    expect(emd2DaysBeforeDeparture(29)).toBe(7);
+    expect(emd2DaysBeforeDeparture(15)).toBe(7);
+    expect(emd2DaysBeforeDeparture(14)).toBe(5);
+    expect(emd2DaysBeforeDeparture(7)).toBe(5);
+  });
+
+  it('returns null for single-deposit bookings under 7 days', () => {
+    expect(emd2DaysBeforeDeparture(6)).toBeNull();
+    expect(emd2DaysBeforeDeparture(0)).toBeNull();
   });
 });

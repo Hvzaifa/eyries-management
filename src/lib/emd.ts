@@ -53,3 +53,17 @@ export function suggestEmdPlan(input: {
   if (days >= 2) return { applicable: true, emd1Pct: 100, emd2Pct: null, bandLabel: '2–6 days out' };
   return { applicable: true, emd1Pct: 100, emd2Pct: null, bandLabel: 'under 2 days out' };
 }
+
+/**
+ * Days before departure when the SV policy's 2nd EMD (full payment) is due,
+ * for a booking made `days` days before departure (same band as the plan).
+ *   60+ -> 20 · 30-59 -> 10 · 15-29 -> 7 · 7-14 -> 5
+ * Bookings under 7 days out have a single 100% deposit — no 2nd EMD (null).
+ */
+export function emd2DaysBeforeDeparture(days: number): number | null {
+  if (days >= 60) return 20;
+  if (days >= 30) return 10;
+  if (days >= 15) return 7;
+  if (days >= 7) return 5;
+  return null;
+}

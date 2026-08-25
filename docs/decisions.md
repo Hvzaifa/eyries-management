@@ -108,6 +108,26 @@ Every time an ambiguous field, rule, or edge case gets resolved — by the proje
 **Question:** The phase doc says "every pending round with deadline within 2 days" — does that include overdue rounds and rounds on non-active PNRs?
 **Answer:** Overdue pending rounds ARE included (a daily job that skips already-late deadlines would never report them — aligned with the step's purpose of stopping missed deadlines). Rounds on cancelled/completed PNRs are excluded, consistent with the grey urgency rule. Rounds with no deadline are never alerted. Recipients come from the `STAFF_ALERT_EMAILS` env var; the job is read-only and sends one summary email per day. Decided during Step 7 implementation; flagged for owner confirmation.
 
+### 2026-08-25 — Deadline alerts: future dates only
+**Question:** Should the daily alert include already-overdue deadlines?
+**Answer:** No — owner instruction: future deadlines only (today through +2 days). Overdue rounds are visible on the dashboard but never emailed. Implemented in `isDueForAlert` + the SQL filter.
+
+### 2026-08-25 — EMD-2 deadline derivation (dates band)
+**Question:** When the recorded EMD-2 % disagrees with the band implied by request/outbound dates (62 of 107 cases), which decides the deadline timing?
+**Answer:** **Dates band** — always derived from request→outbound days (60+→−20d, 30–59→−10d, 15–29→−7d, 7–14→−5d; under 7 days has no EMD-2). Recorded % stays as the historical fact. The daily job now sets missing EMD-2 deadlines on active SV-Umrah PNRs whose EMD-1 is settled (paid/refunded); 107 deadlines were set (one month-shift bug caught and corrected same day). For new UI bookings the same rule applies and the create form previews the policy EMD-2 deadline.
+
+### 2026-08-25 — Bulk request-date clusters flagged, not changed
+**Question:** The sheet contains 9 request dates carrying 33–155 rows each (e.g. 155 rows "17-May-2026"); owner says 17-May has no record.
+**Answer:** Verified the import is faithful — the clusters exist in the source sheet. Owner instruction: flag only, decision comes later. All clusters + affected PNRs listed in `data-review-flags.md`.
+
+### 2026-08-25 — >100% round percentages: later duplicate round replaces earlier
+**Question:** 55 PNRs had round percentages exceeding 100% (e.g. 30+70+30).
+**Answer:** Owner rule: when a later round's percentage exactly matches an earlier round's, it is a re-issue that REPLACES the earlier one (later round's data wins, earlier deleted, rounds renumbered sequentially, everything activity-logged). 55 PNRs adjusted. PNRs with no matching pair, or still ≠100 after replacement (38), are left as recorded and listed in `data-review-flags.md`.
+
+### 2026-08-25 — Completion rule v2: outbound passed + EMD refunded
+**Question:** What status for PNRs whose outbound passed and whose EMD was refunded?
+**Answer:** Completed. 105 active PNRs met the test (incl. 9UWZ2A, the r2-without-r1 oddity — its single refunded round qualified it). Activity-logged per row. The 18 active PNRs with outbound passed but EMD-1 still *pending* are NOT covered by any ruling — left untouched, flagged in `data-review-flags.md`.
+
 ---
 
 ## Template for new entries

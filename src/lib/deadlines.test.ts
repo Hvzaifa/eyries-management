@@ -11,11 +11,15 @@ describe('addDaysIso', () => {
 describe('isDueForAlert', () => {
   const today = '2026-08-23';
 
-  it('alerts for overdue, today, and up to exactly 2 days out (boundaries)', () => {
-    expect(isDueForAlert('2026-08-20', today)).toBe(true); // overdue
+  it('alerts today and up to exactly 2 days out (boundaries)', () => {
     expect(isDueForAlert(today, today)).toBe(true);
     expect(isDueForAlert('2026-08-24', today)).toBe(true);
     expect(isDueForAlert('2026-08-25', today)).toBe(true); // exactly +2
+  });
+
+  it('never alerts overdue deadlines (owner rule: future only)', () => {
+    expect(isDueForAlert('2026-08-22', today)).toBe(false);
+    expect(isDueForAlert('2026-08-20', today)).toBe(false);
   });
 
   it('does not alert beyond the 2-day horizon or for missing deadlines', () => {
