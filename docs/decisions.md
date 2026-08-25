@@ -128,6 +128,16 @@ Every time an ambiguous field, rule, or edge case gets resolved — by the proje
 **Question:** What status for PNRs whose outbound passed and whose EMD was refunded?
 **Answer:** Completed. 105 active PNRs met the test (incl. 9UWZ2A, the r2-without-r1 oddity — its single refunded round qualified it). Activity-logged per row. The 18 active PNRs with outbound passed but EMD-1 still *pending* are NOT covered by any ruling — left untouched, flagged in `data-review-flags.md`.
 
+### 2026-08-25 — Sheet data is immutable; replacement pass undone
+**Question:** The owner clarified that imported sheet data are live company records and must stay consistent with the original — conflicting with the earlier >100% replacement instruction.
+**Answer:** **Sheet-recorded facts (round numbers, percentages, amounts, dates, refund states) are immutable** — no pass may restructure them. The replacement pass was undone: all 55 affected PNRs had their rounds rebuilt exactly as the sheet records them (verified: round count back to 1,727; structures match the sheet). The replacement rule is void. Status rules remain active management (see completion/cancelled entries). EMD-2 deadlines continue to be derived from outbound/request dates per the dates-band rule — the only thing ever written on top of sheet data, per explicit owner instruction.
+
+### 2026-08-25 — Status definitions finalized
+**Question:** What exactly qualifies a PNR as completed or cancelled?
+**Answer:**
+- **Completed** = outbound date has passed AND the complete EMD amount has been refunded (every round refunded, refund totals matching). 564 PNRs qualify; 6 that had unrefunded pending rounds were reverted to active.
+- **Cancelled** (all four conditions required): total EMD value = 0 AND no outstanding paid EMD (any paid amount was refunded) AND outbound date passed AND PNR time limit expired. **Zero current records meet this** (no record has total EMD value 0) — the rule stands for future data.
+
 ---
 
 ## Template for new entries
