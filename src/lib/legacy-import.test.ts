@@ -69,12 +69,20 @@ describe('partitionRows', () => {
 });
 
 describe('parseExcelDate', () => {
-  it('handles Date objects from SheetJS date-formatted cells', () => {
-    expect(parseExcelDate(new Date('2026-06-01T00:00:00Z'))).toBe('2026-06-01');
+  it('reads the intended day from the workbook midnight-PKT convention', () => {
+    // Stored 2026-06-22T18:59:48Z = 23:59:48 PKT (12s before midnight) —
+    // the sheet displays 23 June; the parser must recover the 23rd.
+    expect(parseExcelDate(new Date('2026-06-22T18:59:48.000Z'))).toBe('2026-06-23');
+    expect(parseExcelDate(new Date('2026-03-12T18:59:48.000Z'))).toBe('2026-03-13');
   });
 
-  it('converts Excel serial numbers', () => {
-    // 46174 days after the 1899-12-30 epoch == 2026-06-01
+  it('leaves mid-day instants on their own PKT day', () => {
+    expect(parseExcelDate(new Date('2026-06-01T05:30:00Z'))).toBe('2026-06-01'); // 10:30 PKT
+  });
+
+  it('converts Excel serial numbers with the same convention', () => {
+    // 46174.7916... = 2026-06-01 19:00Z = midnight PKT of 2026-06-02
+    expect(parseExcelDate(46174.79166666)).toBe('2026-06-02');
     expect(parseExcelDate(46174)).toBe('2026-06-01');
   });
 

@@ -118,3 +118,5 @@ sheet_row,pnr,company,seats,fare,reasons
 758,77AEV7,"COMPANY INVESTMENT","10","75200","EMD round 1 incomplete — missing payment %; no complete EMD round found; duplicate PNR ""77AEV7"" appears on 2 rows (757, 758)"
 759,77AFBV,"COMPANY INVESTMENT","59","75200","duplicate PNR ""77AFBV"" appears on 2 rows (759, 760)"
 760,77AFBV,"COMPANY INVESTMENT","10","75200","EMD round 1 incomplete — missing payment %; no complete EMD round found; duplicate PNR ""77AFBV"" appears on 2 rows (759, 760)"
+1127,8WKIIF,"","11","74930","missing investor company"
+1128,8WL7KL,"","11","74930","missing investor company"

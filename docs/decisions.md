@@ -138,6 +138,10 @@ Every time an ambiguous field, rule, or edge case gets resolved — by the proje
 - **Completed** = outbound date has passed AND the complete EMD amount has been refunded (every round refunded, refund totals matching). 564 PNRs qualify; 6 that had unrefunded pending rounds were reverted to active.
 - **Cancelled** (all four conditions required): total EMD value = 0 AND no outstanding paid EMD (any paid amount was refunded) AND outbound date passed AND PNR time limit expired. **Zero current records meet this** (no record has total EMD value 0) — the rule stands for future data.
 
+### 2026-08-26 — Date parsing fix: the workbook's midnight-PKT convention
+**Question:** Owner reported dates one day early (e.g. 8K7FGY request 22 Jun in system vs 23 Jun in the sheet).
+**Answer:** The workbook stores every date (all 7,616 cells, uniformly) as "midnight PKT of the true day" expressed in UTC (~19:00Z), with a float-rounding artifact landing the stored instant 12 seconds short (18:59:48Z). Reading the UTC calendar day therefore yields the previous day. Fixed in `parseExcelDate`/`sheetDateToIso`: nudge +60s and read the calendar date in Asia/Karachi — recovering exactly what Excel displays. Full re-import performed from the owner's updated sheet; cell-by-cell verification of all 1,005 imported records shows zero mismatches (dates, amounts, percentages, round details). Rules re-applied after import: 580 completed / 425 active; 19 EMD-2 deadlines set on active PNRs. Two rows with blank investor company (8WKIIF, 8WL7KL) are flagged rather than invented.
+
 ---
 
 ## Template for new entries

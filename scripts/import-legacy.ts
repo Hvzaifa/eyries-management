@@ -247,10 +247,12 @@ async function main() {
     if (seats === null) errors.push('missing seats');
     const fare = parseAmount(r[idx.fare]);
     if (fare === null) errors.push('missing fare');
+    const investorCompany = strCell(r[idx.investorCompany]);
+    if (!investorCompany) errors.push('missing investor company');
 
     const data: Record<string, unknown> = {
       requestDate: requestDate ? new Date(`${requestDate}T00:00:00.000Z`) : null,
-      investorCompany: strCell(r[idx.investorCompany]),
+      investorCompany,
       pnr: pnrCode,
       gdsPnr: strCell(r[idx.gdsPnr]),
       segment: strCell(r[idx.segment]),

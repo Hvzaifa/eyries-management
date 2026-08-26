@@ -74,15 +74,36 @@ export function partitionRows(rows: MappedLegacyRow[]): PartitionResult {
   return { clean, flagged };
 }
 
+/**
+ * The workbook stores every date as "midnight PKT of the true day" expressed
+ * in UTC (~19:00Z), but a float rounding artifact lands the stored instant 12
+ * seconds short (18:59:48Z). Nudge forward one minute and read the calendar
+ * date in Asia/Karachi — this recovers exactly the date Excel displays.
+ */
+export function sheetDateToIso(v: Date): string {
+  const nudged = new Date(v.getTime() + 60_000);
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Karachi',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(nudged);
+}
+
 /** Excel serial date -> ISO yyyy-mm-dd (SheetJS may also hand us Date objects). */
 export function parseExcelDate(value: unknown): string | null {
   if (value === null || value === undefined || value === '') return null;
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value.toISOString().slice(0, 10);
+    return sheetDateToIso(value);
   }
   if (typeof value === 'number' && Number.isFinite(value)) {
-    const ms = Math.round((value - 25569) * 86400000);
-    return new Date(ms).toISOString().slice(0, 10);
+    const ms = Math.round((value - 25569) * 86400000) + 60_000;
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Karachi',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date(ms));
   }
   const s = String(value).trim();
   if (!s) return null;
