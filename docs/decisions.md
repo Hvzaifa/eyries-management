@@ -142,6 +142,10 @@ Every time an ambiguous field, rule, or edge case gets resolved — by the proje
 **Question:** Owner reported dates one day early (e.g. 8K7FGY request 22 Jun in system vs 23 Jun in the sheet).
 **Answer:** The workbook stores every date (all 7,616 cells, uniformly) as "midnight PKT of the true day" expressed in UTC (~19:00Z), with a float-rounding artifact landing the stored instant 12 seconds short (18:59:48Z). Reading the UTC calendar day therefore yields the previous day. Fixed in `parseExcelDate`/`sheetDateToIso`: nudge +60s and read the calendar date in Asia/Karachi — recovering exactly what Excel displays. Full re-import performed from the owner's updated sheet; cell-by-cell verification of all 1,005 imported records shows zero mismatches (dates, amounts, percentages, round details). Rules re-applied after import: 580 completed / 425 active; 19 EMD-2 deadlines set on active PNRs. Two rows with blank investor company (8WKIIF, 8WL7KL) are flagged rather than invented.
 
+### 2026-08-29 — raw_airline_text field added to pnrs
+**Question:** Phase 2 Step 2 requires storing the original pasted airline message alongside the PNR. Where does it go?
+**Answer:** New nullable `raw_airline_text text` column on the `pnrs` table. Only populated when a PNR is created via the AI paste-and-parse flow; null for manually-entered PNRs and all legacy-imported records. Added to `docs/data-model.md`, `db/schema.sql`, and `prisma/schema.prisma`. Approved by project owner before implementation.
+
 ---
 
 ## Template for new entries

@@ -2,9 +2,21 @@ import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 
 const USERS = [
-  { email: 'admin@eyries.com', password: 'password123', role: 'admin' },
-  { email: 'staff@eyries.com', password: 'password123', role: 'staff' },
-  { email: 'viewer@eyries.com', password: 'password123', role: 'viewer' },
+  {
+    email: 'admin@eyries.com',
+    password: process.env.SEED_ADMIN_PASSWORD || 'password123',
+    role: 'admin',
+  },
+  {
+    email: 'staff@eyries.com',
+    password: process.env.SEED_STAFF_PASSWORD || 'password123',
+    role: 'staff',
+  },
+  {
+    email: 'viewer@eyries.com',
+    password: process.env.SEED_VIEWER_PASSWORD || 'password123',
+    role: 'viewer',
+  },
 ];
 
 async function main() {
@@ -30,6 +42,7 @@ async function main() {
       password: u.password,
       email_confirm: true,
       user_metadata: { role: u.role },
+      app_metadata: { role: u.role },
     });
 
     if (!createError) {
@@ -53,6 +66,7 @@ async function main() {
     const { error: updateError } = await supabase.auth.admin.updateUserById(existing.id, {
       password: u.password,
       user_metadata: { role: u.role },
+      app_metadata: { role: u.role },
     });
     if (updateError) throw updateError;
 

@@ -5,6 +5,7 @@ import { AlertTriangle, Save, Sparkles } from 'lucide-react';
 import { suggestEmdPlan, emd2DaysBeforeDeparture } from '@/lib/emd';
 import { diffInDays } from '@/lib/urgency';
 import type { PnrFormOptions } from '@/lib/pnrs';
+import type { FieldConfidence } from '@/lib/ai/parse-booking';
 
 export interface PnrFormValues {
   id?: string;
@@ -54,22 +55,42 @@ export const EMPTY_PNR: PnrFormValues = {
 const inputCls =
   'w-full bg-stone-50 border border-stone-300 rounded-xl px-3 py-2 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:border-indigo-400 transition-colors';
 
+const confidenceDot: Record<FieldConfidence, string> = {
+  high: 'bg-emerald-400',
+  medium: 'bg-amber-400',
+  low: 'bg-red-400',
+};
+
+const confidenceBorder: Record<FieldConfidence, string> = {
+  high: '',
+  medium: '',
+  low: 'border-l-2 border-l-red-400 pl-2',
+};
+
 function Field({
   label,
   required,
   hint,
+  confidence,
   children,
 }: {
   label: string;
   required?: boolean;
   hint?: string;
+  confidence?: FieldConfidence;
   children: React.ReactNode;
 }) {
   return (
-    <div>
+    <div className={confidence ? confidenceBorder[confidence] : ''}>
       <label className="block text-xs font-medium text-stone-600 mb-1.5">
         {label}
         {required && <span className="text-red-500"> *</span>}
+        {confidence && (
+          <span
+            className={`inline-block w-2 h-2 rounded-full ml-1.5 align-middle ${confidenceDot[confidence]}`}
+            title={`AI confidence: ${confidence}`}
+          />
+        )}
       </label>
       {children}
       {hint && <p className="mt-1 text-[11px] text-stone-400">{hint}</p>}
@@ -97,12 +118,17 @@ export default function PnrForm({
   options,
   initial,
   action,
+  confidenceMap,
+  rawAirlineText,
 }: {
   mode: 'create' | 'edit';
   options: PnrFormOptions;
   initial: PnrFormValues;
   action: (formData: FormData) => Promise<{ error: string } | undefined>;
+  confidenceMap?: Partial<Record<keyof PnrFormValues, FieldConfidence>>;
+  rawAirlineText?: string;
 }) {
+  const conf = (key: keyof PnrFormValues) => confidenceMap?.[key];
   const [values, setValues] = useState<PnrFormValues>(initial);
   const [roundPct, setRoundPct] = useState<string>('');
   const [roundPctTouched, setRoundPctTouched] = useState(false);
@@ -189,6 +215,9 @@ export default function PnrForm({
 
   return (
     <form id="pnr-form" onSubmit={handleSubmit} className="space-y-5">
+      {rawAirlineText && (
+        <input type="hidden" name="raw_airline_text" value={rawAirlineText} />
+      )}
       {errorMessage && (
         <div className="flex items-start gap-3 p-3.5 bg-red-50 border border-red-200 rounded-xl text-red-700 text-xs">
           <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
@@ -226,58 +255,58 @@ export default function PnrForm({
       )}
 
       <SectionCard title="Booking details">
-        <Field label="Request date" required>
+        <Field label="Request date" required confidence={conf('requestDate')}>
           <input type="date" name="request_date" required value={values.requestDate} onChange={set('requestDate')} className={inputCls} />
         </Field>
-        <Field label="Investor company" required>
+        <Field label="Investor company" required confidence={conf('investorCompany')}>
           <input name="investor_company" required value={values.investorCompany} onChange={set('investorCompany')} placeholder="e.g. Al-Noor Travels" className={inputCls} />
         </Field>
-        <Field label="PNR code" required hint="Duplicates are flagged, not blocked.">
+        <Field label="PNR code" required hint="Duplicates are flagged, not blocked." confidence={conf('pnr')}>
           <input name="pnr" required value={values.pnr} onChange={set('pnr')} placeholder="e.g. XYZ123" className={`${inputCls} font-mono`} />
         </Field>
-        <Field label="License">
+        <Field label="License" confidence={conf('licenseId')}>
           <select name="license_id" value={values.licenseId} onChange={set('licenseId')} className={`${inputCls} cursor-pointer`}>
             <option value="">—</option>
             {options.licenses.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
           </select>
         </Field>
-        <Field label="Branch">
+        <Field label="Branch" confidence={conf('branchId')}>
           <select name="branch_id" value={values.branchId} onChange={set('branchId')} className={`${inputCls} cursor-pointer`}>
             <option value="">—</option>
             {options.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
         </Field>
-        <Field label="Airline">
+        <Field label="Airline" confidence={conf('airlineId')}>
           <select name="airline_id" value={values.airlineId} onChange={set('airlineId')} className={`${inputCls} cursor-pointer`}>
             <option value="">—</option>
             {options.airlines.map((a) => <option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}
           </select>
         </Field>
-        <Field label="Segment" hint="Free text with suggestions from previous entries.">
+        <Field label="Segment" hint="Free text with suggestions from previous entries." confidence={conf('segment')}>
           <input name="segment" list="segment-suggestions" value={values.segment} onChange={set('segment')} placeholder="Employment / Umrah / ..." className={inputCls} />
           <datalist id="segment-suggestions">
             {options.segmentSuggestions.map((s) => <option key={s} value={s} />)}
           </datalist>
         </Field>
-        <Field label="GDS PNR" hint="Only when booked directly via a GDS.">
+        <Field label="GDS PNR" hint="Only when booked directly via a GDS." confidence={conf('gdsPnr')}>
           <input name="gds_pnr" value={values.gdsPnr} onChange={set('gdsPnr')} className={`${inputCls} font-mono`} />
         </Field>
-        <Field label="Seats" required>
+        <Field label="Seats" required confidence={conf('seats')}>
           <input type="number" name="seats" required min="0" value={values.seats} onChange={set('seats')} className={inputCls} />
         </Field>
-        <Field label="Outbound date" hint="Drives the EMD-1 suggestion below.">
+        <Field label="Outbound date" hint="Drives the EMD-1 suggestion below." confidence={conf('outboundDate')}>
           <input type="date" name="outbound_date" value={values.outboundDate} onChange={set('outboundDate')} className={inputCls} />
         </Field>
-        <Field label="Inbound date">
+        <Field label="Inbound date" confidence={conf('inboundDate')}>
           <input type="date" name="inbound_date" value={values.inboundDate} onChange={set('inboundDate')} className={inputCls} />
         </Field>
-        <Field label="Sector" hint="e.g. ISB-JED-MED-ISB">
+        <Field label="Sector" hint="e.g. ISB-JED-MED-ISB" confidence={conf('sector')}>
           <input name="sector" value={values.sector} onChange={set('sector')} className={`${inputCls} font-mono`} />
         </Field>
-        <Field label="PNR TL date" hint="Time-limit / void date from the airline.">
+        <Field label="PNR TL date" hint="Time-limit / void date from the airline." confidence={conf('pnrTlDate')}>
           <input type="date" name="pnr_tl_date" value={values.pnrTlDate} onChange={set('pnrTlDate')} className={inputCls} />
         </Field>
-        <Field label="Deal %">
+        <Field label="Deal %" confidence={conf('dealPct')}>
           <input type="number" name="deal_pct" step="0.01" min="0" max="100" value={values.dealPct} onChange={set('dealPct')} className={inputCls} />
         </Field>
         <Field label="Issued status">
@@ -296,13 +325,13 @@ export default function PnrForm({
       </SectionCard>
 
       <SectionCard title="Money (PKR)">
-        <Field label="Fare per seat" required hint="Base fare only — no taxes. Total EMD value is calculated automatically after save.">
+        <Field label="Fare per seat" required hint="Base fare only — no taxes. Total EMD value is calculated automatically after save." confidence={conf('fare')}>
           <input type="number" name="fare" required step="0.01" min="0" value={values.fare} onChange={set('fare')} className={inputCls} />
         </Field>
-        <Field label="Airline taxes">
+        <Field label="Airline taxes" confidence={conf('airlineTaxes')}>
           <input type="number" name="airline_taxes" step="0.01" min="0" value={values.airlineTaxes} onChange={set('airlineTaxes')} className={inputCls} />
         </Field>
-        <Field label="PSF">
+        <Field label="PSF" confidence={conf('psf')}>
           <input type="number" name="psf" step="0.01" min="0" value={values.psf} onChange={set('psf')} className={inputCls} />
         </Field>
       </SectionCard>

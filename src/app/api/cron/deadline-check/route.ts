@@ -2,6 +2,19 @@ import { NextResponse } from 'next/server';
 import { todayIsoInPkt } from '@/lib/urgency';
 import { backfillEmd2Deadlines, sendDeadlineAlert } from '@/lib/deadlines';
 
+import { timingSafeEqual } from 'node:crypto';
+
+function isAuthorizedCron(authHeader: string | null, secret: string | undefined): boolean {
+  if (!secret || !authHeader) return false;
+  const expected = `Bearer ${secret}`;
+  const authBuffer = Buffer.from(authHeader);
+  const expectedBuffer = Buffer.from(expected);
+  if (authBuffer.length !== expectedBuffer.length) {
+    return false;
+  }
+  return timingSafeEqual(authBuffer, expectedBuffer);
+}
+
 /**
  * Daily deadline job (Vercel Cron -> this route).
  * 1. Sets missing EMD-2 deadlines from the SV policy (owner rule) — the only
@@ -13,7 +26,7 @@ export async function GET(request: Request) {
   const secret = process.env.CRON_SECRET;
   const auth = request.headers.get('authorization');
 
-  if (!secret || auth !== `Bearer ${secret}`) {
+  if (!isAuthorizedCron(auth, secret)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

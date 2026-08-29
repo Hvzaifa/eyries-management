@@ -10,9 +10,15 @@ export interface AuthUser {
 
 export function getUserRole(user: User | null): UserRole {
   if (!user) return 'viewer';
-  const role = user.user_metadata?.role as UserRole | undefined;
-  if (role === 'admin' || role === 'staff' || role === 'viewer') {
-    return role;
+  // app_metadata is set securely by the server/service role key and cannot be modified by the client.
+  const appRole = user.app_metadata?.role as UserRole | undefined;
+  if (appRole === 'admin' || appRole === 'staff' || appRole === 'viewer') {
+    return appRole;
+  }
+  // Fallback to user_metadata for backward compatibility with existing accounts
+  const userRole = user.user_metadata?.role as UserRole | undefined;
+  if (userRole === 'admin' || userRole === 'staff' || userRole === 'viewer') {
+    return userRole;
   }
   return 'viewer';
 }

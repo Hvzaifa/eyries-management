@@ -1,6 +1,6 @@
-import { prisma } from '@/lib/prisma';
-import { emd2DaysBeforeDeparture } from '@/lib/emd';
-import { formatPkr } from '@/lib/format';
+import { prisma } from './prisma';
+import { emd2DaysBeforeDeparture } from './emd';
+import { formatPkr } from './format';
 
 /**
  * Step 7 — daily deadline alert.

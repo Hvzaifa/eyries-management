@@ -69,6 +69,7 @@ export async function createPnr(formData: FormData) {
       psf: numVal(formData, 'psf'),
       fare,
       status: str(formData, 'status') ?? 'active',
+      rawAirlineText: str(formData, 'raw_airline_text'),
       createdBy,
     },
   });

@@ -40,6 +40,7 @@ Code, name, contact email(s) for sending deposit-confirmation / extension-reques
 | fare | numeric | Per-seat base fare |
 | total_emd_value | numeric, generated | = seats × fare (excl. tax & PSF). **Calculated by the system, never typed in.** |
 | status | enum('active','cancelled','completed') | |
+| raw_airline_text | text, nullable | Original pasted airline message from AI intake (Phase 2). Only populated for PNRs created via the AI parse flow. |
 | created_at, updated_at, created_by | | |
 
 ## `emd_rounds` (open-ended — no fixed limit on round count)

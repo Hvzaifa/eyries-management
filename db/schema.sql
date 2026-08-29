@@ -49,6 +49,7 @@ create table if not exists pnrs (
   fare numeric(12,2) not null,
   total_emd_value numeric(14,2) generated always as (seats * fare) stored,
   status text not null default 'active' check (status in ('active','cancelled','completed')),
+  raw_airline_text text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   created_by uuid

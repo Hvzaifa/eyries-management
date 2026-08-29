@@ -69,6 +69,7 @@ model Pnr {
   fare            Decimal     @db.Decimal(12, 2)
   totalEmdValue   Decimal?    @map("total_emd_value") @db.Decimal(14, 2)
   status          String      @default("active")
+  rawAirlineText  String?     @map("raw_airline_text")
   createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz
   updatedAt       DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   createdBy       String?     @map("created_by") @db.Uuid
