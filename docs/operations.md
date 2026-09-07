@@ -110,6 +110,13 @@ unusual except the two items called out below, both of which have bitten before.
 2. In the Vercel dashboard, **Add New → Project**, import the repository, and
    accept the detected Next.js settings. Do not override the build command —
    `postinstall` handles Prisma (see below).
+
+   `vercel.json` declares `"framework": "nextjs"` so this is not left to the
+   project's dashboard preset. If a build ever fails before it starts with
+   *"Project framework is set to X, but no services are declared"*, the preset
+   in **Settings → General → Framework Preset** is wrong; set it to **Next.js**.
+   The first deploy of this project failed exactly that way, with the preset on
+   "services".
 3. Add the environment variables from the table below, for **Production**,
    **Preview** and **Development**.
 4. Deploy. Then set `NEXT_PUBLIC_APP_URL` to the URL Vercel assigns and
