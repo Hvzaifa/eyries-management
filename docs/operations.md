@@ -99,6 +99,78 @@ The importer **flags rather than guesses**: rows with an incomplete EMD round or
 a duplicate PNR code are reported and left out, never silently repaired. Expect a
 flagged count and review it — those rows do not reach the database.
 
+## Deploying to Vercel
+
+The app is a standard Next.js App Router project; nothing about the deployment is
+unusual except the two items called out below, both of which have bitten before.
+
+### One-time setup
+
+1. Push `main` to GitHub (`origin` is already configured).
+2. In the Vercel dashboard, **Add New → Project**, import the repository, and
+   accept the detected Next.js settings. Do not override the build command —
+   `postinstall` handles Prisma (see below).
+3. Add the environment variables from the table below, for **Production**,
+   **Preview** and **Development**.
+4. Deploy. Then set `NEXT_PUBLIC_APP_URL` to the URL Vercel assigns and
+   **redeploy**, because that value is baked in at build time.
+
+### Environment variables
+
+| Variable | Needed on Vercel | Notes |
+|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | **yes** | |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | **yes** | Public by design; RLS is what protects the data |
+| `DATABASE_URL` | **yes** | Pooled connection, port **6543**, `?pgbouncer=true` — serverless opens many short-lived connections and the direct port will exhaust them |
+| `DIRECT_URL` | **yes** | Port 5432, used for schema work |
+| `CRON_SECRET` | **yes** | Vercel sends it to the cron route automatically |
+| `RESEND_API_KEY`, `ALERT_FROM_EMAIL`, `STAFF_ALERT_EMAILS` | for email | Deadline alerts and airline emails |
+| `NEXT_PUBLIC_APP_URL` | **yes** | Links in alert emails. **Falls back to `http://localhost:3000`**, so without it every emailed link points at the recipient's own machine |
+| `LLM_API_KEY`, `GROQ_API_KEY`, `CEREBREAS_API_KEY` | for AI intake | At least one; paste-and-parse fails without |
+| `LLM_MODEL` | optional | Pins a single model instead of the fallback chain |
+| `SUPABASE_SERVICE_ROLE_KEY`, `SEED_*_PASSWORD` | **no** | Local scripts only. Do not put the service-role key on Vercel — it bypasses RLS |
+
+### The two things that catch people
+
+**Prisma and Vercel's build cache.** Vercel restores a cached `node_modules`
+between builds, which skips `prisma generate`, and the deployed app then runs
+against a stale or missing client. `package.json` carries
+`"postinstall": "prisma generate"` — Prisma's documented fix. If a deploy starts
+failing with "Prisma has detected that this project was built on Vercel", that
+hook has gone missing.
+
+**`api/cron` must stay out of the middleware matcher.** Vercel Cron calls the
+route with no session; if middleware sees it, the request is redirected to
+`/login` and the job silently never runs. It did exactly that until 2026-09-07.
+
+### After the first deploy — verify, do not assume
+
+```bash
+# 1. The public views must stay closed (this is the important one)
+curl -s -o /dev/null -w '%{http_code}\n' \
+  "$NEXT_PUBLIC_SUPABASE_URL/rest/v1/refunded_emd_rounds?select=*&limit=1" \
+  -H "apikey: $NEXT_PUBLIC_SUPABASE_ANON_KEY"          # expect 401
+
+# 2. The cron route rejects an unauthenticated caller...
+curl -s -o /dev/null -w '%{http_code}\n' https://<app>/api/cron/deadline-check   # expect 401
+
+# 3. ...and accepts the real secret, rather than redirecting to /login
+curl -s -o /dev/null -w '%{http_code}\n' https://<app>/api/cron/deadline-check \
+  -H "Authorization: Bearer $CRON_SECRET"              # expect 200, NOT 307
+```
+
+A **307** on the third check means middleware is intercepting the cron again.
+
+Then in the app: log in, confirm the dashboard loads, open a booking, and confirm
+a branch account sees only its own branch.
+
+### Supabase settings
+
+Login is email/password (`signInWithPassword`), which needs no redirect
+allowlisting — so basic login works on a fresh domain with no Supabase change.
+Still set **Authentication → URL Configuration → Site URL** to the deployed URL,
+or password-reset emails will link to the wrong host.
+
 ## The daily job
 
 Vercel Cron calls `/api/cron/deadline-check` at 03:00 daily, authenticating with
