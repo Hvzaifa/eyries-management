@@ -67,7 +67,9 @@ export default function PnrTable({ rows, todayIso }: { rows: PnrListRow[]; today
 
   const columns = useMemo<ColumnDef<PnrListRow>[]>(
     () => [
-      { accessorKey: 'sr_no', header: 'SR#' },
+      // accessor must match the PnrListRow field name — 'sr_no' (the DB column)
+      // silently rendered an empty column, because TanStack finds no such key.
+      { accessorKey: 'srNo', header: 'SR#' },
       { accessorKey: 'requestDate', header: 'Request Date', cell: (c) => fmtDate(c.getValue()) },
       { accessorKey: 'investorCompany', header: 'Investor Company', cell: (c) => (
           <span className="font-medium text-stone-800">{c.getValue<string>()}</span>
@@ -137,7 +139,7 @@ export default function PnrTable({ rows, todayIso }: { rows: PnrListRow[]; today
           const row = c.row.original;
           const u = getUrgency(todayIso, row.nextPendingDeadline, row.status);
           const s = URGENCY_STYLES[u];
-          let label = 'No pending round';
+          let label = 'No issued round';
           if (row.status !== 'active') {
             label = row.status === 'cancelled' ? 'Cancelled' : 'Completed';
           } else if (row.nextPendingDeadline) {
@@ -291,7 +293,7 @@ export default function PnrTable({ rows, todayIso }: { rows: PnrListRow[]; today
       </div>
 
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-[11px] text-stone-500">
-        <span className="flex items-center gap-1.5"><CalendarClock className="w-3.5 h-3.5" /> Urgency (nearest pending round):</span>
+        <span className="flex items-center gap-1.5"><CalendarClock className="w-3.5 h-3.5" /> Urgency (nearest issued round):</span>
         <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-500" /> red ≤ 2 days</span>
         <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-500" /> amber ≤ 5 days</span>
         <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-500" /> green otherwise</span>

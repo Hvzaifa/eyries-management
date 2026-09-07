@@ -2,8 +2,8 @@ import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { canEdit, getUserRole } from '@/lib/types/auth';
-import { getPnrDetail } from '@/lib/pnrs';
+import { resolveAuthUser, canEditPnr, canManageEmd, canSplitPnr } from '@/lib/auth';
+import { getPnrDetail, getPnrFormOptions } from '@/lib/pnrs';
 import { getUrgency, todayIsoInPkt } from '@/lib/urgency';
 import { formatPkr } from '@/lib/format';
 import AppHeader from '@/components/app-header';
@@ -15,9 +15,13 @@ import {
   CircleDot,
   CalendarClock,
 } from 'lucide-react';
+import AddRoundButton from './add-round-button';
+import RefundRoundButton from './refund-round-button';
+import EditRoundButton from './edit-round-button';
+import SplitPnrButton from './split-pnr-button';
 
 const ROUND_STATUS_STYLES: Record<string, string> = {
-  pending: 'bg-amber-50 text-amber-700 border-amber-200',
+  issued: 'bg-amber-50 text-amber-700 border-amber-200',
   paid: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   refund_requested: 'bg-sky-50 text-sky-700 border-sky-200',
   refunded: 'bg-violet-50 text-violet-700 border-violet-200',
@@ -48,12 +52,19 @@ export default async function PnrDetailPage({
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
+  const authUser = await resolveAuthUser(user);
+
   const { id } = await params;
-  const detail = await getPnrDetail(id);
+  const detail = await getPnrDetail(id, authUser);
   if (!detail) notFound();
 
+  const options = await getPnrFormOptions(authUser);
+  const userCanEditThisPnr = canEditPnr(authUser, detail.branchId, detail.hasIssuedEmd);
+  const userCanManageEmd = canManageEmd(authUser);
+  const userCanSplit = canSplitPnr(authUser);
+
   const today = todayIsoInPkt();
-  const urgency = getUrgency(today, detail.rounds.find((r) => r.status === 'pending')?.deadlineDate ?? null, detail.status);
+  const urgency = getUrgency(today, detail.rounds.find((r) => r.status === 'issued')?.deadlineDate ?? null, detail.status);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -83,7 +94,7 @@ export default async function PnrDetailPage({
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {canEdit(getUserRole(user)) && (
+              {userCanEditThisPnr && (
                 <Link
                   href={`/pnrs/${detail.id}/edit`}
                   className="text-xs font-semibold px-3 py-1.5 rounded-xl text-white bg-gradient-to-tr from-indigo-500 to-violet-500 hover:from-indigo-400 hover:to-violet-400 shadow-md shadow-indigo-500/20 transition-all"
@@ -94,7 +105,7 @@ export default async function PnrDetailPage({
               <span className={`text-xs px-2.5 py-1 rounded-full border ${PNr_STATUS_STYLES[detail.status] ?? ''}`}>
                 {detail.status}
               </span>
-              {urgency !== 'grey' && detail.rounds.some((r) => r.status === 'pending') && (
+              {urgency !== 'grey' && detail.rounds.some((r) => r.status === 'issued') && (
                 <span className={`text-xs px-2.5 py-1 rounded-full border inline-flex items-center gap-1.5 ${
                   urgency === 'red'
                     ? 'bg-red-50 border-red-200 text-red-700'
@@ -121,7 +132,16 @@ export default async function PnrDetailPage({
               <Field label="Branch" value={detail.branchName} />
               <Field label="Segment" value={detail.segment} />
               <Field label="Airline" value={detail.airlineName ? `${detail.airlineCode} — ${detail.airlineName}` : null} />
-              <Field label="Seats" value={detail.seats} />
+              <Field label="Seats" value={
+                <>
+                  {detail.seats}
+                  {detail.allocatedToChildren > 0 && (
+                    <span className="text-[10px] text-stone-400 ml-1">
+                      ({detail.allocatedToChildren} split to children)
+                    </span>
+                  )}
+                </>
+              } />
               <Field label="Outbound" value={detail.outboundDate} />
               <Field label="Inbound" value={detail.inboundDate} />
               <Field label="Sector" value={<span className="font-mono text-[13px]">{detail.sector}</span>} />
@@ -173,18 +193,35 @@ export default async function PnrDetailPage({
             {detail.childAllocations.length > 0 && (
               <div className="mt-5 rounded-xl bg-indigo-50 border border-indigo-100 p-3.5">
                 <p className="text-xs font-medium text-indigo-700 flex items-center gap-1.5 mb-2">
-                  <Scissors className="w-3.5 h-3.5" /> Split across children
+                  <Scissors className="w-3.5 h-3.5" /> Seat allocations
                 </p>
-                <ul className="space-y-1">
+                <div className="space-y-1.5">
                   {detail.childAllocations.map((a) => (
-                    <li key={a.childPnrId} className="text-xs text-indigo-600">
-                      <Link href={`/pnrs/${a.childPnrId}`} className="font-mono font-semibold underline">
-                        {a.childPnrCode}
-                      </Link>{' '}
-                      — {a.seatsAllocated} seats
-                    </li>
+                    <div key={a.childPnrId} className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-2">
+                        <Link href={`/pnrs/${a.childPnrId}`} className="font-mono font-semibold text-indigo-600 underline">
+                          {a.childPnrCode}
+                        </Link>
+                        <span className="text-stone-500">→ {a.childInvestorCompany}</span>
+                      </div>
+                      <span className="font-medium text-stone-700">{a.seatsAllocated} seats</span>
+                    </div>
                   ))}
-                </ul>
+                </div>
+                <div className="mt-2 pt-2 border-t border-indigo-200 flex items-center justify-between text-xs font-medium">
+                  <span className="text-indigo-600">Remaining on this PNR</span>
+                  <span className="text-indigo-700">{detail.unallocatedSeats} seats</span>
+                </div>
+                {userCanSplit && detail.unallocatedSeats > 0 && (
+                  <div className="mt-2">
+                    <SplitPnrButton pnrId={detail.id} pnrCode={detail.pnr} maxSeats={detail.unallocatedSeats} />
+                  </div>
+                )}
+              </div>
+            )}
+            {detail.childAllocations.length === 0 && !detail.parentPnr && userCanSplit && detail.seats > 0 && (
+              <div className="mt-5">
+                <SplitPnrButton pnrId={detail.id} pnrCode={detail.pnr} maxSeats={detail.seats} />
               </div>
             )}
           </div>
@@ -192,7 +229,10 @@ export default async function PnrDetailPage({
 
         {/* EMD rounds */}
         <section className="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm">
-          <h2 className="text-sm font-semibold text-stone-900 mb-1">EMD rounds</h2>
+          <div className="flex items-center justify-between mb-1">
+            <h2 className="text-sm font-semibold text-stone-900">EMD rounds</h2>
+            {userCanManageEmd && <AddRoundButton pnrId={detail.id} licenses={options.licenses} />}
+          </div>
           <p className="text-[11px] text-stone-400 mb-4">
             Open-ended list — a round is added each time the deposit is extended or topped up.
           </p>
@@ -205,7 +245,7 @@ export default async function PnrDetailPage({
             <ol className="space-y-3">
               {detail.rounds.map((round) => {
                 const overdue =
-                  round.status === 'pending' &&
+                  round.status === 'issued' &&
                   round.deadlineDate !== null &&
                   round.deadlineDate < today;
                 return (
@@ -223,6 +263,14 @@ export default async function PnrDetailPage({
                         <span className={`text-[11px] px-2 py-0.5 rounded-full border ${ROUND_STATUS_STYLES[round.status] ?? ''}`}>
                           {round.status.replace('_', ' ')}
                         </span>
+                        {userCanManageEmd && (
+                          <div className="flex gap-2">
+                            <EditRoundButton pnrId={detail.id} round={round} licenses={options.licenses} />
+                            {round.status !== 'refunded' && (
+                              <RefundRoundButton pnrId={detail.id} roundId={round.id} />
+                            )}
+                          </div>
+                        )}
                         {overdue && (
                           <span className="text-[11px] text-red-600 font-medium inline-flex items-center gap-1">
                             <CircleDot className="w-3 h-3" /> past deadline
@@ -234,10 +282,14 @@ export default async function PnrDetailPage({
                       </span>
                     </div>
                     <div className="mt-3 grid grid-cols-2 sm:grid-cols-5 gap-x-4 gap-y-2 text-xs text-stone-600">
-                      <div><span className="text-stone-400">Issued</span> {round.issuanceDate}</div>
+                      <div><span className="text-stone-400">Issued</span> {round.issuanceDate}{round.issuanceTime ? ` ${round.issuanceTime}` : ''}</div>
                       <div><span className="text-stone-400">Payment %</span> {round.paymentPct}%</div>
                       <div><span className="text-stone-400">Deadline</span> {round.deadlineDate ?? '—'}{round.deadlineTime ? ` ${round.deadlineTime}` : ''}</div>
                       <div><span className="text-stone-400">EMD #</span> {round.emdNumber ?? '—'}</div>
+                      <div>
+                        <span className="text-stone-400">Paid By</span>{' '}
+                        {round.licenseName ?? (detail.licenseName ? <span className="text-stone-500 italic">{detail.licenseName}</span> : '—')}
+                      </div>
                       <div><span className="text-stone-400">Refund</span> {round.refundAmount !== null ? `${formatPkr(round.refundAmount)} on ${round.refundDate}` : '—'}</div>
                     </div>
                   </li>

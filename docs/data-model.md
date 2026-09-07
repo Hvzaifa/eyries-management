@@ -51,14 +51,16 @@ Code, name, contact email(s) for sending deposit-confirmation / extension-reques
 | pnr_id | fk → pnrs | |
 | round_number | integer | 1, 2, 3... no upper limit |
 | issuance_date | date | |
+| issuance_time | time, nullable | Time the EMD was issued. When a round is saved without an explicit deadline time, the deadline time defaults to this (see decisions.md, 2026-09-07) |
 | payment_pct | numeric | See business-rules.md for the round-1 auto-suggestion rule |
-| emd_number | text, nullable | Airline's reference |
+| emd_number | text, nullable | Airline's reference. The UI requires it for new rounds: 13 digits, formatted `123 4567890123` |
 | emd_amount | numeric | |
-| deadline_date | date | |
+| deadline_date | date, nullable | Nullable only because legacy-imported rounds have no recorded time limit — new rounds created in the UI always require one (see decisions.md, 2026-08-24) |
 | deadline_time | time, nullable | |
-| status | enum('pending','paid','refund_requested','refunded','expired') | |
+| status | enum('issued','paid','refund_requested','refunded','expired') | `issued` replaced `pending` on 2026-09-07 — creating a round in the system *is* the act of issuing it. Only `issued` counts as "unresolved" for urgency colours and deadline alerts |
 | refund_amount | numeric, nullable | Filled only when status = refunded |
 | refund_date | date, nullable | |
+| license_id | fk → licenses, nullable | Which license actually paid for **this round**. Rounds of the same PNR may be paid by different licenses, so this is not inherited from `pnrs.license_id` (see decisions.md, 2026-09-07) |
 | created_at, updated_at | | |
 
 The old "EMD REFUND" sheet is **not** a separate table — it's `emd_rounds` filtered to `status = 'refunded'`. Build it as a saved filter/view in Phase 3, not a duplicate table.

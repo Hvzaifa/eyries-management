@@ -58,7 +58,11 @@ The PNR is marked **"at risk — confirm with airline"**. The system never autom
 `emd_rounds.status = 'refunded'` is how a round is marked once the airline refunds it. There is no separate refund table — see data-model.md.
 
 ## Parent/child PNR splits
-An agent may only want part of a PNR's total seats. When that happens, a child PNR record is created (`parent_pnr_id` set), and an `allocations` row records how many seats moved. The parent's "seats remaining" is always the calculated total minus everything allocated to children — never a manually typed number.
+An agent may only want part of a PNR's total seats. When that happens, a child PNR record is created (`parent_pnr_id` set), and an `allocations` row records how many seats moved.
+
+**`pnrs.seats` is the number of seats that PNR still holds** — the split decrements the parent at the moment it happens, so `seats` already excludes everything given to children. A parent's "seats remaining" therefore *is* its `seats`; the `allocations` rows are the record of what was split away, never a further deduction from it. Both numbers are written by the system, never typed by staff.
+
+> Superseded wording: this rule previously read "the calculated total minus everything allocated to children", which described a model where the parent kept its original total. The project owner replaced that on 2026-09-01 (a 30-seat parent split by 10 shows 20 seats). Applying both at once double-counted every split — see `docs/decisions.md`, 2026-09-07.
 
 ## Out of scope for this phase (selling side — do not build)
 Ticket cancellations, ticket loss tracking, and penalty EMD calculations (the rule where >25% unsold seats after ticketing triggers a penalty, with no penalty under 10% cancelled) belong to the **selling side** of the business and are explicitly not part of this system yet.

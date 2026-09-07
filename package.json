@@ -12,7 +12,8 @@
     "db:apply": "npx tsx db/apply-schema.ts",
     "db:seed": "npx tsx prisma/seed.ts",
     "db:seed:users": "npx tsx scripts/seed-users.ts",
-    "job:deadline-check": "npx tsx scripts/deadline-check.ts"
+    "job:deadline-check": "npx tsx scripts/deadline-check.ts",
+    "db:security": "npx tsx db/apply-security.ts"
   },
   "prisma": {
     "seed": "npx tsx prisma/seed.ts"
@@ -28,7 +29,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "resend": "^4.0.1",
-    "xlsx": "^0.18.5"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

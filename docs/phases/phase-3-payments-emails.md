@@ -1,8 +1,9 @@
 # Phase 3 — Payments, Refunds, and Airline Emails
 
-## Step 1 — Record a payment / new EMD round
-- Screen to add a new `emd_rounds` entry against an existing PNR (round 2, 3, 4...), with file upload for proof of payment to Supabase Storage (private, signed URLs only).
-- Deliverable: can add a second round to a test PNR, upload a proof file, and confirm the file is not publicly accessible without a signed link.
+## Step 1 — Auto-create Round 2 & Manual addition
+- On PNR creation, automatically create both EMD Round 1 and EMD Round 2 (using the SV percentage/deadline policy).
+- Provide a button on the PNR detail page to manually create a 3rd or 4th `emd_rounds` entry. No payment proof uploads required.
+- Deliverable: can create a new SV Umrah PNR and see two rounds automatically created, and can manually add a third round.
 
 ## Step 2 — Refund recording
 - On an `emd_rounds` row, allow setting `status = 'refunded'` with `refund_amount` and `refund_date`.

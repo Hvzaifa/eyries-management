@@ -6,13 +6,27 @@ Read this file first, every session, before touching any code.
 
 We are replacing a manual Excel/Google Sheet used to track group airline seat bookings (PNRs) bought from airlines against EMD (guarantee) deposits, paid in one or more rounds, until seats are ticketed. The sheet is slow to fill in and error-prone. This system replaces it — nothing more, nothing less. Do not add features beyond what `docs/phases/` describes for the current phase.
 
-Full context, if you need it:
-- `docs/architecture.md` — tech stack and system diagram (locked in, do not change without asking)
-- `docs/data-model.md` — the finalized database schema and field meanings
-- `docs/business-rules.md` — the actual money/date logic (EMD % table, deadline behavior, statuses)
-- `docs/decisions.md` — a running log of resolved ambiguities. **Check this before assuming anything about a field's meaning.**
-- `docs/phases/` — one file per build phase, each broken into small, reviewable steps
-- `PROGRESS.md` — which step we're currently on. Update it when a step is confirmed done.
+## Before you write any code
+
+Read these, in this order. **Do not start implementing until you have.**
+
+1. **`docs/README.md`** — the documentation index. It tells you what every other
+   document is authoritative for and what to read for the task in hand.
+2. **`PROGRESS.md`** — which step we're on. Start here every session.
+3. **`docs/business-rules.md`** — the money and date logic.
+4. **`docs/data-model.md`** — what every field means.
+5. **`docs/decisions.md`** — 69 resolved ambiguities and the bugs behind them.
+   **Search it before assuming anything**, and before "fixing" something that
+   looks wrong — several obvious improvements have already been tried and
+   reverted, and the entry explains why.
+
+Then, as the task requires:
+- `docs/architecture.md` — stack and system diagram (locked; do not change without asking)
+- `docs/operations.md` — scripts, database changes, backups, security, the daily cron
+- `docs/phases/` — the build plan, one file per phase
+- `docs/reference/` — findings that inform work without governing it
+- `docs/sessions/` — narrative notes from past sessions (secondary; `PROGRESS.md`
+  and `docs/decisions.md` are the primary record)
 
 ## Golden rules
 

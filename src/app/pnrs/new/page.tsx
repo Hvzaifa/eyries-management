@@ -1,11 +1,11 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
-import { canEdit, getUserRole } from '@/lib/types/auth';
+import { resolveAuthUser } from '@/lib/auth';
 import { getPnrFormOptions } from '@/lib/pnrs';
 import { EMPTY_PNR } from '@/components/pnr-form';
 import PnrForm from '@/components/pnr-form';
 import AppHeader from '@/components/app-header';
-import { createPnr } from '../actions';
+import { createPnr } from '../actions/pnr';
 import Link from 'next/link';
 import { Bot } from 'lucide-react';
 
@@ -13,9 +13,21 @@ export default async function NewPnrPage() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
-  if (!canEdit(getUserRole(user))) redirect('/');
 
-  const options = await getPnrFormOptions();
+  const authUser = await resolveAuthUser(user);
+  const options = await getPnrFormOptions(authUser);
+
+  // Branch users: filter options to only their branch, and pre-fill branchId
+  const filteredOptions = authUser.accountType === 'branch' && authUser.branchIds.length > 0
+    ? {
+        ...options,
+        branches: options.branches.filter(b => authUser.branchIds.includes(b.id)),
+      }
+    : options;
+
+  const initial = authUser.accountType === 'branch' && authUser.branchId
+    ? { ...EMPTY_PNR, branchId: authUser.branchId }
+    : EMPTY_PNR;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -38,9 +50,8 @@ export default async function NewPnrPage() {
           </Link>
         </div>
 
-        <PnrForm mode="create" options={options} initial={EMPTY_PNR} action={createPnr} />
+        <PnrForm mode="create" options={filteredOptions} initial={initial} action={createPnr} />
       </main>
     </div>
   );
 }
-

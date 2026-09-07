@@ -43,10 +43,11 @@ export interface ParsedBookingDraft {
 const SYSTEM_PROMPT = `You are an expert airline group booking data extraction assistant for an airline seat management system.
 Your task is to analyze pasted airline confirmation emails, GDS PNR texts (Sabre, Amadeus, Galileo, Navitaire), or booking slips, and extract structured fields.
 
-Return ONLY a valid JSON object matching this exact schema. For every field, return an object with "value", "confidence" ("high", "medium", or "low"), and optional "notes" explaining your extraction.
+Return ONLY a valid JSON array of objects matching this exact schema. If the text contains multiple distinct bookings or PNRs, return multiple objects in the array. For every field, return an object with "value", "confidence" ("high", "medium", or "low"), and optional "notes" explaining your extraction.
 
 Schema:
-{
+[
+  {
   "pnr": { "value": string | null, "confidence": "high"|"medium"|"low", "notes": string },
   "gdsPnr": { "value": string | null, "confidence": "high"|"medium"|"low", "notes": string },
   "airlineCode": { "value": string | null, "confidence": "high"|"medium"|"low", "notes": string },
@@ -68,9 +69,10 @@ Schema:
   "roundPaymentPct": { "value": number | null, "confidence": "high"|"medium"|"low", "notes": string },
   "roundEmdAmount": { "value": number | null, "confidence": "high"|"medium"|"low", "notes": string },
   "roundEmdNumber": { "value": string | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "roundDeadlineDate": { "value": "YYYY-MM-DD" | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "roundDeadlineTime": { "value": "HH:mm" | null, "confidence": "high"|"medium"|"low", "notes": string }
-}
+    "roundDeadlineDate": { "value": "YYYY-MM-DD" | null, "confidence": "high"|"medium"|"low", "notes": string },
+    "roundDeadlineTime": { "value": "HH:mm" | null, "confidence": "high"|"medium"|"low", "notes": string }
+  }
+]
 
 Guidelines:
 1. Dates must be formatted as YYYY-MM-DD. If year is missing in text, infer current or next logical year based on travel dates.
@@ -79,7 +81,7 @@ Guidelines:
 4. Seats and monetary amounts (fare, taxes, psf, emdAmount) must be numbers without commas or currency symbols.
 5. If a field cannot be found in the text, set value to null and confidence to "low".
 6. Never make up booking codes or amounts. If ambiguous, set confidence to "low" and explain in notes.
-7. Return ONLY the JSON object. Do not include markdown code block formatting or explanation text outside the JSON.`;
+7. Return ONLY the JSON array. Do not include markdown code block formatting or explanation text outside the JSON.`;
 
 export function cleanJsonString(raw: string): string {
   let cleaned = raw.trim();
@@ -166,88 +168,185 @@ function sanitizeValue(v: unknown, type: 'string' | 'number' | 'date'): unknown 
   return null;
 }
 
-export function parseRawLlmJson(jsonText: string, rawPastedText: string, modelUsed?: string): ParsedBookingDraft {
+export function parseRawLlmJson(jsonText: string, rawPastedText: string, modelUsed?: string): ParsedBookingDraft[] {
   const cleaned = cleanJsonString(jsonText);
-  let parsed: Record<string, unknown> = {};
+  let parsed: unknown;
   try {
     parsed = JSON.parse(cleaned);
   } catch (err) {
     throw new Error(`Failed to parse LLM JSON output: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  return {
-    requestDate: parseField<string>(parsed, 'requestDate', 'date'),
-    investorCompany: parseField<string>(parsed, 'investorCompany', 'string'),
-    licenseName: parseField<string>(parsed, 'licenseName', 'string'),
-    branchName: parseField<string>(parsed, 'branchName', 'string'),
-    pnr: parseField<string>(parsed, 'pnr', 'string'),
-    gdsPnr: parseField<string>(parsed, 'gdsPnr', 'string'),
-    segment: parseField<string>(parsed, 'segment', 'string'),
-    airlineCode: parseField<string>(parsed, 'airlineCode', 'string'),
-    seats: parseField<number>(parsed, 'seats', 'number'),
-    outboundDate: parseField<string>(parsed, 'outboundDate', 'date'),
-    inboundDate: parseField<string>(parsed, 'inboundDate', 'date'),
-    sector: parseField<string>(parsed, 'sector', 'string'),
-    pnrTlDate: parseField<string>(parsed, 'pnrTlDate', 'date'),
-    dealPct: parseField<number>(parsed, 'dealPct', 'number'),
-    airlineTaxes: parseField<number>(parsed, 'airlineTaxes', 'number'),
-    psf: parseField<number>(parsed, 'psf', 'number'),
-    fare: parseField<number>(parsed, 'fare', 'number'),
+  // Ensure it's an array
+  const parsedArray = Array.isArray(parsed) ? parsed : [parsed];
 
-    roundIssuanceDate: parseField<string>(parsed, 'roundIssuanceDate', 'date'),
-    roundPaymentPct: parseField<number>(parsed, 'roundPaymentPct', 'number'),
-    roundEmdAmount: parseField<number>(parsed, 'roundEmdAmount', 'number'),
-    roundEmdNumber: parseField<string>(parsed, 'roundEmdNumber', 'string'),
-    roundDeadlineDate: parseField<string>(parsed, 'roundDeadlineDate', 'date'),
-    roundDeadlineTime: parseField<string>(parsed, 'roundDeadlineTime', 'string'),
+  return parsedArray.map((item) => {
+    const obj = item as Record<string, unknown>;
+    return {
+      requestDate: parseField<string>(obj, 'requestDate', 'date'),
+      investorCompany: parseField<string>(obj, 'investorCompany', 'string'),
+      licenseName: parseField<string>(obj, 'licenseName', 'string'),
+      branchName: parseField<string>(obj, 'branchName', 'string'),
+      pnr: parseField<string>(obj, 'pnr', 'string'),
+      gdsPnr: parseField<string>(obj, 'gdsPnr', 'string'),
+      segment: parseField<string>(obj, 'segment', 'string'),
+      airlineCode: parseField<string>(obj, 'airlineCode', 'string'),
+      seats: parseField<number>(obj, 'seats', 'number'),
+      outboundDate: parseField<string>(obj, 'outboundDate', 'date'),
+      inboundDate: parseField<string>(obj, 'inboundDate', 'date'),
+      sector: parseField<string>(obj, 'sector', 'string'),
+      pnrTlDate: parseField<string>(obj, 'pnrTlDate', 'date'),
+      dealPct: parseField<number>(obj, 'dealPct', 'number'),
+      airlineTaxes: parseField<number>(obj, 'airlineTaxes', 'number'),
+      psf: parseField<number>(obj, 'psf', 'number'),
+      fare: parseField<number>(obj, 'fare', 'number'),
 
-    rawPastedText,
-    modelUsed,
-  };
+      roundIssuanceDate: parseField<string>(obj, 'roundIssuanceDate', 'date'),
+      roundPaymentPct: parseField<number>(obj, 'roundPaymentPct', 'number'),
+      roundEmdAmount: parseField<number>(obj, 'roundEmdAmount', 'number'),
+      roundEmdNumber: parseField<string>(obj, 'roundEmdNumber', 'string'),
+      roundDeadlineDate: parseField<string>(obj, 'roundDeadlineDate', 'date'),
+      roundDeadlineTime: parseField<string>(obj, 'roundDeadlineTime', 'string'),
+
+      rawPastedText,
+      modelUsed,
+    };
+  });
+}
+/**
+ * Providers are tried in order until one returns a usable response.
+ *
+ * All three speak the OpenAI chat-completions shape, so one request body works
+ * for each. A local Ollama provider used to sit at the head of this list; it was
+ * removed on 2026-09-07 — it can only ever work on a developer's own machine and
+ * on the deployed app it was a guaranteed connection failure and a wasted retry
+ * before every real provider was reached.
+ */
+const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const CEREBRAS_URL = 'https://api.cerebras.ai/v1/chat/completions';
+
+/** Text-only fallback chain, fastest and most reliable first. */
+const GROQ_MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+const CEREBRAS_MODELS = ['llama3.1-70b'];
+const OPENROUTER_MODELS = ['openrouter/free', 'nvidia/nemotron-3.5-lightning:free', 'google/gemma-4-31b-it:free'];
+
+/** Only OpenRouter is wired for image input, so a screenshot has one route. */
+const OPENROUTER_VISION_MODELS = ['openrouter/free'];
+
+/** Per-provider request deadline. Several candidates may be tried in sequence. */
+const PROVIDER_TIMEOUT_MS = 45_000;
+
+interface ModelCandidate {
+  provider: string;
+  url: string;
+  model: string;
+  apiKey: string;
 }
 
-const DEFAULT_FREE_MODELS = [
-  'nvidia/nemotron-3.5-lightning:free',
-  'z-ai/glm-5.2:free',
-  'google/gemma-4-31b-it:free',
-  'google/gemma-4-26b-a4b-it:free',
-];
+/**
+ * Builds the ordered list of providers to try.
+ *
+ * An explicitly requested model (or `LLM_MODEL`) short-circuits the chain and is
+ * the only thing tried; otherwise the fallback list is assembled from whichever
+ * API keys are configured.
+ */
+function buildCandidates(opts: {
+  model?: string;
+  openRouterKey?: string;
+  groqKey?: string;
+  cerebrasKey?: string;
+  hasImage: boolean;
+}): ModelCandidate[] {
+  const { model, openRouterKey, groqKey, cerebrasKey, hasImage } = opts;
+  const openRouter = (m: string): ModelCandidate =>
+    ({ provider: 'OpenRouter', url: OPENROUTER_URL, model: m, apiKey: openRouterKey! });
+
+  const explicit = model || process.env.LLM_MODEL;
+  if (explicit && openRouterKey) return [openRouter(explicit)];
+
+  // An image can only go to a vision-capable model.
+  if (hasImage) {
+    return openRouterKey ? OPENROUTER_VISION_MODELS.map(openRouter) : [];
+  }
+
+  const candidates: ModelCandidate[] = [];
+  if (groqKey) {
+    candidates.push(...GROQ_MODELS.map((m) => ({ provider: 'Groq', url: GROQ_URL, model: m, apiKey: groqKey })));
+  }
+  if (cerebrasKey) {
+    candidates.push(...CEREBRAS_MODELS.map((m) => ({ provider: 'Cerebras', url: CEREBRAS_URL, model: m, apiKey: cerebrasKey })));
+  }
+  if (openRouterKey) {
+    candidates.push(...OPENROUTER_MODELS.map(openRouter));
+  }
+  return candidates;
+}
 
 export async function parseAirlineMessage(
   rawText: string,
-  opts: { model?: string; apiKey?: string } = {}
-): Promise<ParsedBookingDraft> {
-  const apiKey = opts.apiKey || process.env.LLM_API_KEY;
-  if (!apiKey) {
-    throw new Error('LLM_API_KEY is not configured in environment variables.');
+  opts: { model?: string; apiKey?: string; imageBase64?: string; imageMimeType?: string } = {}
+): Promise<ParsedBookingDraft[]> {
+  const openRouterKey = opts.apiKey || process.env.LLM_API_KEY;
+  const groqKey = process.env.GROQ_API_KEY;
+  const cerebrasKey = process.env.CEREBREAS_API_KEY;
+
+  const hasImage = !!opts.imageBase64;
+  const candidates = buildCandidates({ model: opts.model, openRouterKey, groqKey, cerebrasKey, hasImage });
+
+  if (candidates.length === 0) {
+    throw new Error(
+      hasImage
+        ? 'Image parsing needs LLM_API_KEY (OpenRouter) to be configured.'
+        : 'No LLM API key is configured. Set LLM_API_KEY, GROQ_API_KEY or CEREBREAS_API_KEY.'
+    );
   }
 
-  const modelCandidates = opts.model
-    ? [opts.model]
-    : process.env.LLM_MODEL
-      ? [process.env.LLM_MODEL]
-      : DEFAULT_FREE_MODELS;
+  // Build the user message content — multimodal when an image is present
+  type ContentPart =
+    | { type: 'text'; text: string }
+    | { type: 'image_url'; image_url: { url: string } };
+
+  const userContent: string | ContentPart[] = hasImage
+    ? [
+        {
+          type: 'image_url' as const,
+          image_url: {
+            url: `data:${opts.imageMimeType || 'image/png'};base64,${opts.imageBase64}`,
+          },
+        },
+        ...(rawText.trim()
+          ? [{ type: 'text' as const, text: `Also consider this accompanying text:\n\n${rawText}` }]
+          : []),
+        { type: 'text' as const, text: 'Extract the booking and EMD details from this airline booking screenshot.' },
+      ]
+    : `Extract the booking and EMD details from the following message:\n\n${rawText}`;
 
   let lastError: Error | null = null;
 
-  for (const model of modelCandidates) {
+  for (const candidate of candidates) {
     try {
-      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      // Every provider call needs its own deadline. Without one, a provider that
+      // accepts the connection and then stalls holds the request open until the
+      // hosting platform kills the whole function — and because these candidates
+      // are tried one after another, a few slow ones in a row could exhaust the
+      // budget before a working provider was ever reached.
+      const response = await fetch(candidate.url, {
+        signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-          'HTTP-Referer': 'https://eyries.local',
-          'X-Title': 'Eyries Group Booking Intake',
+          Authorization: `Bearer ${candidate.apiKey}`,
+          ...(candidate.provider === 'OpenRouter' && {
+            'HTTP-Referer': 'https://eyries.local',
+            'X-Title': 'Eyries Group Booking Intake',
+          }),
         },
         body: JSON.stringify({
-          model,
+          model: candidate.model,
           messages: [
             { role: 'system', content: SYSTEM_PROMPT },
-            {
-              role: 'user',
-              content: `Extract the booking and EMD details from the following message:\n\n${rawText}`,
-            },
+            { role: 'user', content: userContent },
           ],
           temperature: 0.1,
         }),
@@ -255,7 +354,7 @@ export async function parseAirlineMessage(
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`OpenRouter API error (${response.status}) on model ${model}: ${errorText}`);
+        throw new Error(`${candidate.provider} API error (${response.status}) on model ${candidate.model}: ${errorText}`);
       }
 
       const data = (await response.json()) as {
@@ -264,12 +363,13 @@ export async function parseAirlineMessage(
 
       const content = data.choices?.[0]?.message?.content;
       if (!content) {
-        throw new Error(`Empty response received from LLM model ${model}.`);
+        throw new Error(`Empty response received from LLM model ${candidate.model}.`);
       }
 
-      return parseRawLlmJson(content, rawText, model);
+      return parseRawLlmJson(content, rawText || '[image upload]', candidate.model);
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
+      console.warn(`[AI Parsing] Failed with ${candidate.provider} (${candidate.model}): ${lastError.message}`);
       // Try next candidate model if available
       continue;
     }

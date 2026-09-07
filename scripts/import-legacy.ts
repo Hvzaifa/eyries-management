@@ -32,7 +32,7 @@ interface RoundDraft {
   emdAmount: number | null;
   deadlineDate: string | null;
   deadlineTime: Date | null;
-  status: 'pending' | 'refunded';
+  status: 'issued' | 'refunded';
   refundAmount: number | null;
   refundDate: string | null;
 }
@@ -365,7 +365,11 @@ async function main() {
         emdAmount: amount as number,
         deadlineDate: effectiveTl,
         deadlineTime: tlTime,
-        status: refundAmount !== null || refundDate !== null ? 'refunded' : 'pending',
+        // 'pending' was renamed to 'issued' on 2026-09-07 and the emd_rounds
+        // CHECK constraint now rejects the old value outright — this importer
+        // had not been updated since, so every unrefunded round it tried to
+        // insert would have been refused by the database.
+        status: refundAmount !== null || refundDate !== null ? 'refunded' : 'issued',
         refundAmount,
         refundDate,
       });

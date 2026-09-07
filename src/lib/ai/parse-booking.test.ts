@@ -36,7 +36,8 @@ describe('parseRawLlmJson', () => {
       roundDeadlineTime: { value: '17:00', confidence: 'medium' },
     });
 
-    const parsed = parseRawLlmJson(rawJson, 'Original message text here', 'test-model');
+    const parsedArr = parseRawLlmJson(rawJson, 'Original message text here', 'test-model');
+    const parsed = parsedArr[0];
 
     expect(parsed.pnr.value).toBe('SVGRP1');
     expect(parsed.pnr.confidence).toBe('high');
@@ -67,7 +68,8 @@ describe('parseRawLlmJson', () => {
       pnr: { value: 'TESTPNR', confidence: 'high' },
     });
 
-    const parsed = parseRawLlmJson(rawJson, 'Short text');
+    const parsedArr = parseRawLlmJson(rawJson, 'Short text');
+    const parsed = parsedArr[0];
 
     expect(parsed.pnr.value).toBe('TESTPNR');
     expect(parsed.pnr.confidence).toBe('high');
@@ -89,7 +91,8 @@ describe('parseRawLlmJson', () => {
       outboundDate: { value: '2026-11-20T00:00:00.000Z' },
     });
 
-    const parsed = parseRawLlmJson(rawJson, 'Dirty text');
+    const parsedArr = parseRawLlmJson(rawJson, 'Dirty text');
+    const parsed = parsedArr[0];
 
     expect(parsed.seats.value).toBe(50);
     expect(parsed.fare.value).toBe(120000);

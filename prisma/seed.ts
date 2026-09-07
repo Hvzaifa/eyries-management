@@ -28,8 +28,13 @@ async function main() {
     { name: 'Faisalabad' },
   ];
 
+  // Case-insensitive match: branch names identify a branch regardless of case
+  // (owner ruling, 2026-09-07). An exact-match lookup here is what originally
+  // created "Rawalpindi" alongside the imported "RAWALPINDI" as two rows.
   for (const branch of branchesData) {
-    const existing = await prisma.branch.findFirst({ where: { name: branch.name } });
+    const existing = await prisma.branch.findFirst({
+      where: { name: { equals: branch.name, mode: 'insensitive' } },
+    });
     if (!existing) {
       await prisma.branch.create({ data: branch });
     }
@@ -62,14 +67,15 @@ async function main() {
   console.log('Seeding completed successfully!');
 }
 
-export async function mainWithSamples() {
-  await main();
-  const { seedSamplePnrs } = await import('./seed-sample-pnrs');
-  await seedSamplePnrs();
-}
-
+// This seeds ONLY the lookup tables, which is what the README says it does.
+// It used to also insert fabricated `TEST-*` bookings via a `seedSamplePnrs()`
+// helper — scaffolding from Phase 1 Step 3, used to eyeball the urgency colours
+// before real data existed. With 1,015 real bookings imported and the urgency
+// rules covered by unit tests, that scaffolding was obsolete; worse, it meant
+// running the documented `npm run db:seed` against production would write fake
+// bookings into live data. Removed 2026-09-07.
 if (process.argv[1] && process.argv[1].endsWith('seed.ts')) {
-  mainWithSamples()
+  main()
     .catch((e) => {
       console.error('Error during seeding:', e);
       process.exit(1);

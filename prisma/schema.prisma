@@ -16,6 +16,7 @@ model License {
   name      String   @unique
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   pnrs      Pnr[]
+  emdRounds EmdRound[]
 
   @@map("licenses")
 }
@@ -91,14 +92,17 @@ model EmdRound {
   pnr          Pnr       @relation(fields: [pnrId], references: [id], onDelete: Cascade)
   roundNumber  Int       @map("round_number")
   issuanceDate DateTime  @map("issuance_date") @db.Date
+  issuanceTime DateTime? @map("issuance_time") @db.Time
   paymentPct   Decimal   @map("payment_pct") @db.Decimal(5, 2)
   emdNumber    String?   @map("emd_number")
   emdAmount    Decimal   @map("emd_amount") @db.Decimal(14, 2)
   deadlineDate DateTime? @map("deadline_date") @db.Date
   deadlineTime DateTime? @map("deadline_time") @db.Time
-  status       String    @default("pending")
+  status       String    @default("issued")
   refundAmount Decimal?  @map("refund_amount") @db.Decimal(14, 2)
   refundDate   DateTime? @map("refund_date") @db.Date
+  licenseId    String?   @map("license_id") @db.Uuid
+  license      License?  @relation(fields: [licenseId], references: [id])
   createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 

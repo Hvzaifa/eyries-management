@@ -1,10 +1,10 @@
 import { logout } from '@/app/login/actions';
-import { getUserRole, canEdit } from '@/lib/types/auth';
+import { resolveAuthUser, isHeadOffice } from '@/lib/auth';
 import type { User } from '@supabase/supabase-js';
 import Link from 'next/link';
 import { Plane, LogOut } from 'lucide-react';
 
-export default function AppHeader({
+export default async function AppHeader({
   user,
   subtitle,
   breadcrumb,
@@ -13,8 +13,10 @@ export default function AppHeader({
   subtitle?: string;
   breadcrumb?: { href: string; label: string };
 }) {
-  const role = getUserRole(user);
-  const userCanEdit = canEdit(role);
+  const authUser = await resolveAuthUser(user);
+  const isHQ = isHeadOffice(authUser);
+
+  const badgeLabel = isHQ ? 'Head Office' : `${authUser.branchName ?? 'Branch'}`;
 
   return (
     <header className="border-b border-stone-200 bg-white/80 backdrop-blur-md sticky top-0 z-50">
@@ -41,14 +43,18 @@ export default function AppHeader({
         </div>
 
         <div className="flex items-center gap-4">
-          <span className="text-xs px-3 py-1.5 rounded-xl bg-stone-100 border border-stone-200 capitalize font-medium text-stone-600">
-            {role}
-          </span>
-          {!userCanEdit && (
-            <span className="text-[11px] text-amber-600 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full">
-              read-only
-            </span>
+          {isHQ && (
+            <Link href="/refunds" className="text-sm font-medium text-stone-600 hover:text-indigo-600 transition-colors mr-1">
+              Refunds
+            </Link>
           )}
+          <span className={`text-xs px-3 py-1.5 rounded-xl border font-medium ${
+            isHQ
+              ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+              : 'bg-stone-100 border-stone-200 text-stone-600'
+          }`}>
+            {badgeLabel}
+          </span>
           <span className="text-xs text-stone-500 hidden md:inline-block max-w-[180px] truncate">
             {user.email}
           </span>

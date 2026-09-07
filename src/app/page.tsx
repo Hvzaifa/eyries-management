@@ -1,10 +1,10 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { canEdit, getUserRole } from '@/lib/types/auth';
+import { resolveAuthUser } from '@/lib/auth';
 import { getDashboardTotals, listPnrs } from '@/lib/pnrs';
 import { todayIsoInPkt } from '@/lib/urgency';
-import PnrTable from './pnr-table';
+import PnrTable from '@/components/pnr-table';
 import AppHeader from '@/components/app-header';
 import { formatPkr } from '@/lib/format';
 import {
@@ -14,6 +14,7 @@ import {
   ArrowDownToLine,
   RotateCcw,
   PlusCircle,
+  Mail,
 } from 'lucide-react';
 
 export default async function HomePage() {
@@ -24,8 +25,9 @@ export default async function HomePage() {
     redirect('/login');
   }
 
-  const [rows, totals] = await Promise.all([listPnrs(), getDashboardTotals()]);
-  const userCanEdit = canEdit(getUserRole(user));
+  const authUser = await resolveAuthUser(user);
+
+  const [rows, totals] = await Promise.all([listPnrs(authUser), getDashboardTotals(authUser)]);
 
   const cards = [
     { label: 'Active PNRs', value: String(totals.activePnrs), icon: FileText, tint: 'bg-indigo-100 text-indigo-600' },
@@ -49,15 +51,33 @@ export default async function HomePage() {
               Here is where every booking stands today.
             </p>
           </div>
-          {userCanEdit && (
+          <div className="flex items-center gap-3">
+            {authUser.accountType === 'headoffice' && (
+              <>
+                <Link
+                  href="/pnrs/batch-email"
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-stone-700 bg-white border border-stone-200 hover:bg-stone-50 shadow-sm transition-all"
+                >
+                  <Mail className="w-4" />
+                  Batch emails
+                </Link>
+                <Link
+                  href="/pnrs/bulk-refund"
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-stone-700 bg-white border border-stone-200 hover:bg-stone-50 shadow-sm transition-all"
+                >
+                  <RotateCcw className="w-4" />
+                  Bulk refund
+                </Link>
+              </>
+            )}
             <Link
               href="/pnrs/new"
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-tr from-indigo-500 to-violet-500 hover:from-indigo-400 hover:to-violet-400 shadow-md shadow-indigo-500/25 transition-all"
             >
-              <PlusCircle className="w-4 h-4" />
+              <PlusCircle className="w-4" />
               New booking
             </Link>
-          )}
+          </div>
         </div>
 
         <section className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">

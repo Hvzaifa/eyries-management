@@ -1,18 +1,26 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
-import { canEdit, getUserRole } from '@/lib/types/auth';
+import { resolveAuthUser } from '@/lib/auth';
 import { getPnrFormOptions } from '@/lib/pnrs';
 import AppHeader from '@/components/app-header';
 import AiIntakeForm from '@/components/ai-intake-form';
-import { createPnr } from '../../actions';
+import { createPnr } from '../../actions/pnr';
 
 export default async function AiIntakePage() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
-  if (!canEdit(getUserRole(user))) redirect('/');
+  const authUser = await resolveAuthUser(user);
 
-  const options = await getPnrFormOptions();
+  const options = await getPnrFormOptions(authUser);
+
+  // Branch users: filter options to only their branch
+  const filteredOptions = authUser.accountType === 'branch' && authUser.branchIds.length > 0
+    ? {
+        ...options,
+        branches: options.branches.filter(b => authUser.branchIds.includes(b.id)),
+      }
+    : options;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -26,7 +34,7 @@ export default async function AiIntakePage() {
           </p>
         </div>
 
-        <AiIntakeForm options={options} action={createPnr} />
+        <AiIntakeForm options={filteredOptions} action={createPnr} />
       </main>
     </div>
   );

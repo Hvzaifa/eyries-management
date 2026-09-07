@@ -1,13 +1,19 @@
 import { prisma } from './prisma';
-import { emd2DaysBeforeDeparture } from './emd';
+import { emd2DaysBeforeDeparture, clampEmd2Deadline } from './emd';
 import { formatPkr } from './format';
 
 /**
  * Step 7 — daily deadline alert.
- * Read-only: finds pending EMD rounds on ACTIVE PNRs whose deadline is
- * today, within the next 2 days, or already overdue, and produces one
- * summary email for staff. Rounds without a deadline are never alerted —
- * they light up again the moment a time limit is recorded.
+ * Read-only: finds issued EMD rounds on ACTIVE PNRs whose deadline falls
+ * between today and 2 days out, and produces one summary email for staff.
+ *
+ * Overdue rounds are deliberately EXCLUDED (owner rule, docs/decisions.md
+ * 2026-08-25 "Deadline alerts: future dates only") — they stay visible on the
+ * dashboard but are never emailed. This docstring previously said overdue rounds
+ * were included, which had not been true since that ruling.
+ *
+ * Rounds without a deadline are never alerted — they light up again the moment
+ * a time limit is recorded.
  */
 
 export function addDaysIso(todayIso: string, days: number): string {
@@ -42,7 +48,7 @@ export async function findDueRounds(todayIso: string): Promise<DeadlineAlert[]> 
   const horizon = addDaysIso(todayIso, 2);
   const rounds = await prisma.emdRound.findMany({
     where: {
-      status: 'pending',
+      status: 'issued',
       deadlineDate: { not: null, gte: new Date(`${todayIso}T00:00:00.000Z`), lte: new Date(`${horizon}T00:00:00.000Z`) },
       pnr: { status: 'active' },
     },
@@ -93,8 +99,8 @@ export function buildDeadlineEmail(
           ? '<span style="color:#b91c1c;font-weight:700">TODAY</span>'
           : `<span style="color:#b45309;font-weight:600">in ${a.daysLeft}d</span>`;
       return `<tr>
-        <td style="padding:8px 10px;border-bottom:1px solid #e7e5e4;font-family:monospace">${a.pnrCode}</td>
-        <td style="padding:8px 10px;border-bottom:1px solid #e7e5e4">${a.airlineCode ?? '—'} · ${escapeHtml(a.investorCompany)}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid #e7e5e4;font-family:monospace">${escapeHtml(a.pnrCode)}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid #e7e5e4">${escapeHtml(a.airlineCode ?? '—')} · ${escapeHtml(a.investorCompany)}</td>
         <td style="padding:8px 10px;border-bottom:1px solid #e7e5e4;text-align:right">${a.seats}</td>
         <td style="padding:8px 10px;border-bottom:1px solid #e7e5e4;text-align:center">${a.roundNumber} (${a.paymentPct}%)</td>
         <td style="padding:8px 10px;border-bottom:1px solid #e7e5e4;text-align:right;white-space:nowrap">${formatPkr(a.emdAmount)}</td>
@@ -133,12 +139,14 @@ export function buildDeadlineEmail(
   return { subject, html };
 }
 
-export function escapeHtml(s: string): string {
+/** Module-private: only `buildDeadlineEmail` needs it. */
+function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 export interface Emd2BackfillSummary {
@@ -225,7 +233,12 @@ export async function backfillEmd2Deadlines(): Promise<Emd2BackfillSummary> {
       p.outboundDate.getUTCMonth(),
       p.outboundDate.getUTCDate(),
     ];
-    const deadline = new Date(Date.UTC(y, m, d - offset));
+    // Same ordering rule as the create form: a backfilled EMD-2 deadline must
+    // not sit on or before EMD-1's (docs/decisions.md, 2026-09-07).
+    const policyIso = new Date(Date.UTC(y, m, d - offset)).toISOString().slice(0, 10);
+    const deadline = new Date(
+      `${clampEmd2Deadline(policyIso, r1.deadlineDate ? r1.deadlineDate.toISOString().slice(0, 10) : null)}T00:00:00.000Z`
+    );
 
     await prisma.emdRound.update({
       where: { id: r2.id },
@@ -250,7 +263,8 @@ export async function backfillEmd2Deadlines(): Promise<Emd2BackfillSummary> {
   return summary;
 }
 
-export function dashboardUrl(): string {
+/** Module-private: only `sendDeadlineAlert` needs it. */
+function dashboardUrl(): string {
   return process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
 }
 

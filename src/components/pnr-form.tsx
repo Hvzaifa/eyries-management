@@ -2,8 +2,9 @@
 
 import { useMemo, useState, useTransition } from 'react';
 import { AlertTriangle, Save, Sparkles } from 'lucide-react';
-import { suggestEmdPlan, emd2DaysBeforeDeparture } from '@/lib/emd';
-import { diffInDays } from '@/lib/urgency';
+import { suggestEmdPlan, emd2DaysBeforeDeparture, emd1DaysToDeadline, clampEmd2Deadline } from '@/lib/emd';
+import { formatEmdNumberInput } from '@/lib/format';
+import { diffInDays, todayIsoInPkt } from '@/lib/urgency';
 import type { PnrFormOptions } from '@/lib/pnrs';
 import type { FieldConfidence } from '@/lib/ai/parse-booking';
 
@@ -120,6 +121,9 @@ export default function PnrForm({
   action,
   confidenceMap,
   rawAirlineText,
+  submitLabel,
+  onSkip,
+  onSuccess,
 }: {
   mode: 'create' | 'edit';
   options: PnrFormOptions;
@@ -127,6 +131,9 @@ export default function PnrForm({
   action: (formData: FormData) => Promise<{ error: string } | undefined>;
   confidenceMap?: Partial<Record<keyof PnrFormValues, FieldConfidence>>;
   rawAirlineText?: string;
+  submitLabel?: string;
+  onSkip?: () => void;
+  onSuccess?: () => void;
 }) {
   const conf = (key: keyof PnrFormValues) => confidenceMap?.[key];
   const [values, setValues] = useState<PnrFormValues>(initial);
@@ -161,11 +168,37 @@ export default function PnrForm({
       ? String(suggestion.emd1Pct)
       : roundPct;
 
+  const computedDeadlineDate = useMemo(() => {
+    if (mode !== 'create') return '';
+    // Only airlines with an uploaded policy get a suggestion (docs/decisions.md,
+    // 2026-08-23 "EMD suggestions now airline-scoped"). Previously this fired for
+    // ANY airline whose typed percentage happened to be 15 or 30, applying SV's
+    // policy to airlines that have none.
+    if (!suggestion.applicable) return '';
+    if (!values.requestDate || !values.outboundDate) return '';
+
+    // Band-based, per the owner's 2026-09-07 ruling — see emd1DaysToDeadline().
+    // The old rule keyed off the percentage and gave every band except 15% and
+    // 30% a deadline of TODAY, so short-notice bookings were created overdue.
+    const daysToAdd = emd1DaysToDeadline(diffInDays(values.requestDate, values.outboundDate));
+
+    // Count forward in UTC from today-in-PKT, so adding days cannot be shifted
+    // by the browser's own timezone.
+    const todayIso = todayIsoInPkt(new Date());
+    const [y, m, d] = todayIso.split('-').map(Number);
+    const deadline = new Date(Date.UTC(y, m - 1, d + daysToAdd));
+    return deadline.toISOString().slice(0, 10);
+  }, [mode, suggestion, values.requestDate, values.outboundDate]);
+
   // PNR TL is the EMD-1 deadline until the deposit confirmation email is sent.
   const autoRoundDeadline =
-    mode === 'create' && !roundDeadlineTouched && values.pnrTlDate
-      ? values.pnrTlDate
+    mode === 'create' && !roundDeadlineTouched && computedDeadlineDate
+      ? computedDeadlineDate
       : roundDeadline;
+
+  // (There was an `autoPnrTlDate` here that nothing ever rendered. The PNR TL is
+  // set server-side from round 1's deadline in createPnr, so the form does not
+  // need to derive it — docs/decisions.md, 2026-09-07 "PNR TL defined".)
 
   const emd2DeadlinePreview = useMemo(() => {
     if (!suggestion.applicable || suggestion.emd2Pct === null) return null;
@@ -173,9 +206,11 @@ export default function PnrForm({
     const offset = emd2DaysBeforeDeparture(diffInDays(values.requestDate, values.outboundDate));
     if (offset === null) return null;
     const [y, m, d] = values.outboundDate.split('-').map(Number);
-    const deadline = new Date(Date.UTC(y, m - 1, d - offset));
-    return deadline.toISOString().slice(0, 10);
-  }, [suggestion, values.requestDate, values.outboundDate]);
+    const policyIso = new Date(Date.UTC(y, m - 1, d - offset)).toISOString().slice(0, 10);
+    // Same clamp the server applies, so the preview cannot promise a date that
+    // createPnr will then move.
+    return clampEmd2Deadline(policyIso, autoRoundDeadline || null);
+  }, [suggestion, values.requestDate, values.outboundDate, autoRoundDeadline]);
 
   const duplicate =
     values.pnr.trim() !== '' &&
@@ -202,6 +237,8 @@ export default function PnrForm({
       if (res?.error) {
         setErrorMessage(res.error);
         setDuplicateWarning(false);
+      } else {
+        onSuccess?.();
       }
     });
   };
@@ -369,8 +406,8 @@ export default function PnrForm({
                 )}
               </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-4">
-                  <Field label="Issuance date" required>
-                    <input type="date" name="round_issuance_date" className={inputCls} />
+                  <Field label="Issuance date" required hint="Auto-set to current date.">
+                    <input type="date" disabled defaultValue={new Date().toISOString().slice(0, 10)} className={`${inputCls} bg-stone-100 opacity-70 cursor-not-allowed`} />
                   </Field>
                   <Field label="Payment %" required hint="Suggested from request → departure days; always editable.">
                     <input
@@ -385,11 +422,23 @@ export default function PnrForm({
                       className={inputCls}
                     />
                   </Field>
-                  <Field label="EMD number" hint="Airline's reference.">
-                    <input name="round_emd_number" className={inputCls} />
+                  <Field label="EMD number" required hint="Airline's reference.">
+                    <input 
+                      name="round_emd_number" 
+                      required
+                      className={inputCls} 
+                      placeholder="e.g. 123 4567890123"
+                      onChange={(e) => e.target.value = formatEmdNumberInput(e.target.value)}
+                    />
                   </Field>
                   <Field label="EMD amount (PKR)" required hint="Type the agreed amount — never auto-calculated.">
                     <input type="number" name="round_emd_amount" step="0.01" min="0" className={inputCls} />
+                  </Field>
+                  <Field label="Paid By License" hint="Defaults to the PNR's license if blank.">
+                    <select name="round_license_id" className={`${inputCls} cursor-pointer`}>
+                      <option value="">— (Same as PNR) —</option>
+                      {options.licenses.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                    </select>
                   </Field>
                   <Field
                     label="Deadline date"
@@ -422,13 +471,23 @@ export default function PnrForm({
       )}
 
       <div className="flex items-center justify-end gap-3 pb-8">
+        {onSkip && (
+          <button
+            type="button"
+            onClick={onSkip}
+            disabled={isPending}
+            className="px-5 py-2.5 rounded-xl text-sm font-medium text-stone-600 bg-stone-100 hover:bg-stone-200 disabled:opacity-50 transition-colors"
+          >
+            Skip
+          </button>
+        )}
         <button
           type="submit"
           disabled={isPending}
           className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-tr from-indigo-500 to-violet-500 hover:from-indigo-400 hover:to-violet-400 disabled:opacity-50 shadow-md shadow-indigo-500/25 transition-all cursor-pointer"
         >
           <Save className="w-4 h-4" />
-          {isPending ? 'Saving...' : mode === 'create' ? 'Create booking' : 'Save changes'}
+          {isPending ? 'Saving...' : submitLabel || (mode === 'create' ? 'Create booking' : 'Save changes')}
         </button>
       </div>
     </form>

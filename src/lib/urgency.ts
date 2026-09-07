@@ -20,10 +20,10 @@ export function diffInDays(todayIso: string, deadlineIso: string): number {
 /**
  * Urgency colour for a PNR row (Phase 1 Step 3):
  *   grey   — PNR status is not 'active'
- *   red    — nearest pending deadline is today or within 2 days (incl. overdue)
- *   amber  — nearest pending deadline within 5 days
- *   green  — otherwise, or no pending rounds at all
- * Only emd_rounds with status = 'pending' count as unresolved
+ *   red    — nearest issued deadline is today or within 2 days (incl. overdue)
+ *   amber  — nearest issued deadline within 5 days
+ *   green  — otherwise, or no issued rounds at all
+ * Only emd_rounds with status = 'issued' count as unresolved
  * (docs/decisions.md, 2026-08-23).
  */
 export function getUrgency(
@@ -37,4 +37,17 @@ export function getUrgency(
   if (days <= 2) return 'red';
   if (days <= 5) return 'amber';
   return 'green';
+}
+
+/**
+ * True when two dates represent the same instant (or are both null).
+ *
+ * Exists because `a !== b` on two Date objects compares object identity, not
+ * value — it is ALWAYS true for two separate Date objects, even when they hold
+ * the same moment. Used as a change-detector that makes every save look like an
+ * edit, so any "has this date changed?" check must go through here.
+ */
+export function sameDate(a: Date | null, b: Date | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.getTime() === b.getTime();
 }

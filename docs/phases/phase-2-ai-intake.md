@@ -17,4 +17,4 @@ Goal: replace manual typing of airline messages with paste → AI draft → huma
 ## Step 3 — Real-world testing
 - Test against at least 10 real (anonymized) airline messages from different airlines/formats before considering this phase done.
 - Log parsing failures or consistently-wrong fields in `docs/decisions.md` so future prompt adjustments are informed by real cases, not guesses.
-- Deliverable: a short written note (in `docs/decisions.md` or a new `docs/parsing-notes.md`) on which airline formats parse well and which need manual entry as a fallback.
+- Deliverable: a short written note (in `docs/decisions.md` or `docs/reference/parsing-notes.md`) on which airline formats parse well and which need manual entry as a fallback.

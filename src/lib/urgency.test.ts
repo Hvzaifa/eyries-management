@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { diffInDays, getUrgency, todayIsoInPkt } from './urgency';
+import { diffInDays, getUrgency, todayIsoInPkt, sameDate } from './urgency';
 
 describe('diffInDays', () => {
   it('returns 0 for the same date', () => {
@@ -47,7 +47,7 @@ describe('getUrgency', () => {
     expect(getUrgency(today, '2026-08-25', 'active')).toBe('red');
   });
 
-  it('is red today and for overdue pending deadlines', () => {
+  it('is red today and for overdue issued deadlines', () => {
     expect(getUrgency(today, '2026-08-23', 'active')).toBe('red');
     expect(getUrgency(today, '2026-08-22', 'active')).toBe('red');
   });
@@ -62,7 +62,28 @@ describe('getUrgency', () => {
     expect(getUrgency(today, '2026-12-31', 'active')).toBe('green');
   });
 
-  it('is green when there is no pending deadline at all', () => {
+  it('is green when there is no issued deadline at all', () => {
     expect(getUrgency(today, null, 'active')).toBe('green');
+  });
+});
+
+describe('sameDate', () => {
+  it('treats two separate Date objects holding the same instant as equal', () => {
+    // The bug this guards: `a !== b` on Date objects compares identity, so it is
+    // true even here — which made every EMD-round save look like a TL-date change.
+    const a = new Date('2026-11-03T00:00:00.000Z');
+    const b = new Date('2026-11-03T00:00:00.000Z');
+    expect(a !== b).toBe(true);        // the trap
+    expect(sameDate(a, b)).toBe(true); // the fix
+  });
+
+  it('detects a genuine change', () => {
+    expect(sameDate(new Date('2026-11-03T00:00:00.000Z'), new Date('2026-11-04T00:00:00.000Z'))).toBe(false);
+  });
+
+  it('handles nulls on either side', () => {
+    expect(sameDate(null, null)).toBe(true);
+    expect(sameDate(null, new Date('2026-11-03T00:00:00.000Z'))).toBe(false);
+    expect(sameDate(new Date('2026-11-03T00:00:00.000Z'), null)).toBe(false);
   });
 });

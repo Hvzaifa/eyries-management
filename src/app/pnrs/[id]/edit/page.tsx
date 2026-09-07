@@ -1,10 +1,10 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect, notFound } from 'next/navigation';
-import { canEdit, getUserRole } from '@/lib/types/auth';
+import { resolveAuthUser, canEditPnr } from '@/lib/auth';
 import { getPnrDetail, getPnrFormOptions } from '@/lib/pnrs';
 import PnrForm, { type PnrFormValues } from '@/components/pnr-form';
 import AppHeader from '@/components/app-header';
-import { updatePnr } from '../../actions';
+import { updatePnr } from '../../actions/pnr';
 
 export default async function EditPnrPage({
   params,
@@ -14,11 +14,17 @@ export default async function EditPnrPage({
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
-  if (!canEdit(getUserRole(user))) redirect('/');
+
+  const authUser = await resolveAuthUser(user);
 
   const { id } = await params;
-  const [detail, options] = await Promise.all([getPnrDetail(id), getPnrFormOptions()]);
+  const [detail, options] = await Promise.all([getPnrDetail(id, authUser), getPnrFormOptions(authUser)]);
   if (!detail) notFound();
+
+  // Branch scoping: cannot edit if PNR is from another branch or EMD has been issued
+  if (!canEditPnr(authUser, detail.branchId, detail.hasIssuedEmd)) {
+    redirect(`/pnrs/${id}`);
+  }
 
   const initial: PnrFormValues = {
     id: detail.id,
@@ -43,6 +49,14 @@ export default async function EditPnrPage({
     psf: detail.psf === null ? '' : String(detail.psf),
   };
 
+  // For branch users, filter options to only show their branch
+  const filteredOptions = authUser.accountType === 'branch' && authUser.branchIds.length > 0
+    ? {
+        ...options,
+        branches: options.branches.filter(b => authUser.branchIds.includes(b.id)),
+      }
+    : options;
+
   return (
     <div className="min-h-screen flex flex-col">
       <AppHeader
@@ -59,7 +73,7 @@ export default async function EditPnrPage({
           </p>
         </div>
 
-        <PnrForm mode="edit" options={options} initial={initial} action={updatePnr} />
+        <PnrForm mode="edit" options={filteredOptions} initial={initial} action={updatePnr} />
       </main>
     </div>
   );

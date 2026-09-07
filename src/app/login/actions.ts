@@ -3,16 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-
-function getSafeRedirectUrl(target: string | null): string {
-  if (!target) return '/';
-  const trimmed = target.trim();
-  // Must start with '/' but NOT '//' (which would be protocol-relative redirect), and must not contain protocol schemes
-  if (trimmed.startsWith('/') && !trimmed.startsWith('//') && !trimmed.includes('://')) {
-    return trimmed;
-  }
-  return '/';
-}
+import { getSafeRedirectUrl } from '@/lib/safe-redirect';
 
 export async function login(formData: FormData) {
   const email = formData.get('email') as string;
