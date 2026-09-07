@@ -119,8 +119,11 @@ unusual except the two items called out below, both of which have bitten before.
    "services".
 3. Add the environment variables from the table below, for **Production**,
    **Preview** and **Development**.
-4. Deploy. Then set `NEXT_PUBLIC_APP_URL` to the URL Vercel assigns and
-   **redeploy**, because that value is baked in at build time.
+4. Deploy. The site runs at this point.
+5. *If you want the daily alert email's link to work*, set `NEXT_PUBLIC_APP_URL`
+   to the URL Vercel assigned and **redeploy** — `NEXT_PUBLIC_*` values are
+   inlined at build time, so setting it alone does nothing until a rebuild.
+   Nothing else depends on it.
 
 ### Environment variables
 
@@ -132,7 +135,7 @@ unusual except the two items called out below, both of which have bitten before.
 | `DIRECT_URL` | **yes** | Port 5432, used for schema work |
 | `CRON_SECRET` | **yes** | Vercel sends it to the cron route automatically |
 | `RESEND_API_KEY`, `ALERT_FROM_EMAIL`, `STAFF_ALERT_EMAILS` | for email | Deadline alerts and airline emails |
-| `NEXT_PUBLIC_APP_URL` | **yes** | Links in alert emails. **Falls back to `http://localhost:3000`**, so without it every emailed link points at the recipient's own machine |
+| `NEXT_PUBLIC_APP_URL` | for email | **Not needed for the site to run** — it appears in exactly one place, the "Open the dashboard" link inside the daily alert email (`src/lib/deadlines.ts`). Without it that link falls back to `http://localhost:3000` and points at the recipient's own machine |
 | `LLM_API_KEY`, `GROQ_API_KEY`, `CEREBREAS_API_KEY` | for AI intake | At least one; paste-and-parse fails without |
 | `LLM_MODEL` | optional | Pins a single model instead of the fallback chain |
 | `SUPABASE_SERVICE_ROLE_KEY`, `SEED_*_PASSWORD` | **no** | Local scripts only. Do not put the service-role key on Vercel — it bypasses RLS |
