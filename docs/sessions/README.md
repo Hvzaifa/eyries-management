@@ -15,11 +15,11 @@ are snapshots.
 
 | Date | Session | Covers |
 |---|---|---|
-| 2026-09-01 | [Phase 3 & 4 refinements](2026-09-01-phase-3-4-refinements.md) | Bulk EMD refunds, per-round license tracking, batch airline emails, EMD-number validation |
+| 2026-09-01 | [Phase 3 & 4 refinements](phase-3-4-refinements.md) | Bulk EMD refunds, per-round license tracking, batch airline emails, EMD-number validation |
 
 ## Convention for new notes
 
-Name them `YYYY-MM-DD-short-topic.md` and keep them to what a future reader needs:
+Name them after the topic (`short-topic.md`) and date them in the table above. Keep them to what a future reader needs:
 what the session set out to do, what was decided and why, what changed, and what
 was left open. A session note is a summary, not a transcript.
 
