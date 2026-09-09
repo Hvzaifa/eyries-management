@@ -26,11 +26,28 @@ export interface PnrListRow {
   fare: number;
   totalEmdValue: number | null;
   status: string;
+  /**
+   * Money that actually left for this PNR — gross, never netted against a later
+   * refund. Same rule as the `dashboard_totals` view (docs/decisions.md,
+   * 2026-08-23); carried per row so the dashboard cards can re-total whatever
+   * the filters leave visible.
+   */
+  totalPaid: number;
+  /** Refunds received back for this PNR. */
+  totalRefunded: number;
   /** Earliest deadline among issued rounds (the only "unresolved" ones). */
   nextPendingDeadline: string | null;
   /** True when any issued round exists, even without a recorded deadline. */
   hasPendingRound: boolean;
 }
+
+/**
+ * Round statuses that count as money paid out.
+ *
+ * A refunded round still had its EMD paid, so it stays in this list — the
+ * refund is reported separately rather than subtracted.
+ */
+const PAID_ROUND_STATUSES = ['paid', 'refund_requested', 'refunded'];
 
 function iso(d: Date | null): string | null {
   return d ? d.toISOString().slice(0, 10) : null;
@@ -49,101 +66,78 @@ export async function listPnrs(user?: AuthUser): Promise<PnrListRow[]> {
       license: true,
       branch: true,
       airline: true,
+      // Every round, not just the next issued one: the same pass now also totals
+      // what was paid and refunded per PNR, so the dashboard cards can re-total
+      // the rows a filter leaves visible without a second round-trip.
       emdRounds: {
-        where: { status: 'issued' },
-        orderBy: { deadlineDate: 'asc' },
-        take: 1,
+        select: { status: true, deadlineDate: true, emdAmount: true, refundAmount: true },
       },
     },
   });
 
-  return rows.map((r) => ({
-    id: r.id,
-    srNo: r.srNo,
-    requestDate: iso(r.requestDate)!,
-    investorCompany: r.investorCompany,
-    licenseName: r.license?.name ?? null,
-    branchName: r.branch?.name ?? null,
-    licenseId: r.licenseId,
-    branchId: r.branchId,
-    pnr: r.pnr,
-    gdsPnr: r.gdsPnr,
-    segment: r.segment,
-    airlineCode: r.airline?.code ?? null,
-    seats: r.seats,
-    outboundDate: iso(r.outboundDate),
-    inboundDate: iso(r.inboundDate),
-    sector: r.sector,
-    pnrTlDate: iso(r.pnrTlDate),
-    dealPct: r.dealPct === null ? null : Number(r.dealPct),
-    issuedStatus: r.issuedStatus,
-    airlineTaxes: r.airlineTaxes === null ? null : Number(r.airlineTaxes),
-    psf: r.psf === null ? null : Number(r.psf),
-    fare: Number(r.fare),
-    totalEmdValue: r.totalEmdValue === null ? null : Number(r.totalEmdValue),
-    status: r.status,
-    nextPendingDeadline: iso(r.emdRounds[0]?.deadlineDate ?? null),
-    hasPendingRound: r.emdRounds.length > 0,
-  }));
+  return rows.map((r) => {
+    const issued = r.emdRounds.filter((e) => e.status === 'issued');
+
+    // Earliest *recorded* deadline among issued rounds. Rounds with no deadline
+    // still make the PNR pending, they just cannot be the date shown — which is
+    // what `ORDER BY deadline_date ASC` did before, Postgres sorting NULLs last.
+    const deadlines = issued
+      .map((e) => e.deadlineDate)
+      .filter((d): d is Date => d !== null)
+      .sort((a, b) => a.getTime() - b.getTime());
+
+    const totalPaid = r.emdRounds
+      .filter((e) => PAID_ROUND_STATUSES.includes(e.status))
+      .reduce((sum, e) => sum + Number(e.emdAmount), 0);
+
+    const totalRefunded = r.emdRounds
+      .filter((e) => e.status === 'refunded')
+      .reduce((sum, e) => sum + Number(e.refundAmount ?? 0), 0);
+
+    return {
+      id: r.id,
+      srNo: r.srNo,
+      requestDate: iso(r.requestDate)!,
+      investorCompany: r.investorCompany,
+      licenseName: r.license?.name ?? null,
+      branchName: r.branch?.name ?? null,
+      licenseId: r.licenseId,
+      branchId: r.branchId,
+      pnr: r.pnr,
+      gdsPnr: r.gdsPnr,
+      segment: r.segment,
+      airlineCode: r.airline?.code ?? null,
+      seats: r.seats,
+      outboundDate: iso(r.outboundDate),
+      inboundDate: iso(r.inboundDate),
+      sector: r.sector,
+      pnrTlDate: iso(r.pnrTlDate),
+      dealPct: r.dealPct === null ? null : Number(r.dealPct),
+      issuedStatus: r.issuedStatus,
+      airlineTaxes: r.airlineTaxes === null ? null : Number(r.airlineTaxes),
+      psf: r.psf === null ? null : Number(r.psf),
+      fare: Number(r.fare),
+      totalEmdValue: r.totalEmdValue === null ? null : Number(r.totalEmdValue),
+      status: r.status,
+      totalPaid,
+      totalRefunded,
+      nextPendingDeadline: iso(deadlines[0] ?? null),
+      hasPendingRound: issued.length > 0,
+    };
+  });
 }
 
-export interface DashboardTotals {
-  activePnrs: number;
-  totalSeats: number;
-  totalEmdValue: number;
-  totalPaid: number;
-  totalRefunded: number;
-}
-
-/** Dashboard totals — scoped to branch when the caller is a branch user. */
-export async function getDashboardTotals(user?: AuthUser): Promise<DashboardTotals> {
-  type Row = {
-    active_pnrs: bigint | number;
-    total_seats: bigint | number;
-    total_emd_value: string;
-    total_paid: string;
-    total_refunded: string;
-  };
-
-  const scope = pnrBranchFilter(user);
-  // null = branch account with no resolvable branch: show nothing, not everything.
-  if (scope === null) {
-    return { activePnrs: 0, totalSeats: 0, totalEmdValue: 0, totalPaid: 0, totalRefunded: 0 };
-  }
-
-  let result: Row[];
-  if (user?.accountType === 'branch') {
-    // total_paid counts paid + refund_requested + refunded — money that actually
-    // left — matching the dashboard_totals view head office sees
-    // (docs/decisions.md, 2026-08-23). Both are gross, never netted.
-    const branchIds = user.branchIds;
-    result = await prisma.$queryRaw<Row[]>`
-      SELECT
-        COUNT(*)::int AS active_pnrs,
-        COALESCE(SUM(seats), 0)::int AS total_seats,
-        COALESCE(SUM(total_emd_value), 0) AS total_emd_value,
-        COALESCE((SELECT SUM(emd_amount) FROM emd_rounds WHERE pnr_id IN (SELECT id FROM pnrs WHERE status = 'active' AND branch_id = ANY(${branchIds}::uuid[])) AND status IN ('paid','refund_requested','refunded')), 0) AS total_paid,
-        COALESCE((SELECT SUM(refund_amount) FROM emd_rounds WHERE pnr_id IN (SELECT id FROM pnrs WHERE status = 'active' AND branch_id = ANY(${branchIds}::uuid[])) AND status = 'refunded'), 0) AS total_refunded
-      FROM pnrs
-      WHERE status = 'active' AND branch_id = ANY(${branchIds}::uuid[])
-    `;
-  } else {
-    result = await prisma.$queryRaw<Row[]>`select * from "dashboard_totals"`;
-  }
-
-  const row = result[0];
-  if (!row) {
-    return { activePnrs: 0, totalSeats: 0, totalEmdValue: 0, totalPaid: 0, totalRefunded: 0 };
-  }
-
-  return {
-    activePnrs: Number(row.active_pnrs),
-    totalSeats: Number(row.total_seats),
-    totalEmdValue: Number(row.total_emd_value),
-    totalPaid: Number(row.total_paid),
-    totalRefunded: Number(row.total_refunded),
-  };
-}
+/*
+ * `getDashboardTotals()` and its `DashboardTotals` type were removed on
+ * 2026-09-09. They read the `dashboard_totals` view (and a hand-written branch
+ * equivalent) for figures that were always active-only and unfilterable, so the
+ * cards contradicted the table beneath them. The cards now total the rows the
+ * filters leave visible — see `lib/dashboard.ts`, which is also the only place
+ * the paid/refunded rule now lives, instead of three.
+ *
+ * The `dashboard_totals` view itself still exists in `db/schema.sql`; dropping
+ * it is a database migration, not a code change.
+ */
 
 export interface EmdRoundView {
   id: string;

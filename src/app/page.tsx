@@ -2,20 +2,11 @@ import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { resolveAuthUser } from '@/lib/auth';
-import { getDashboardTotals, listPnrs } from '@/lib/pnrs';
+import { listPnrs } from '@/lib/pnrs';
 import { todayIsoInPkt } from '@/lib/urgency';
 import PnrTable from '@/components/pnr-table';
 import AppHeader from '@/components/app-header';
-import { formatPkr } from '@/lib/format';
-import {
-  FileText,
-  Users,
-  Wallet,
-  ArrowDownToLine,
-  RotateCcw,
-  PlusCircle,
-  Mail,
-} from 'lucide-react';
+import { RotateCcw, PlusCircle, Mail } from 'lucide-react';
 
 export default async function HomePage() {
   const supabase = await createClient();
@@ -27,15 +18,7 @@ export default async function HomePage() {
 
   const authUser = await resolveAuthUser(user);
 
-  const [rows, totals] = await Promise.all([listPnrs(authUser), getDashboardTotals(authUser)]);
-
-  const cards = [
-    { label: 'Active PNRs', value: String(totals.activePnrs), icon: FileText, tint: 'bg-indigo-100 text-indigo-600' },
-    { label: 'Total Seats', value: String(totals.totalSeats), icon: Users, tint: 'bg-sky-100 text-sky-600' },
-    { label: 'Total EMD Value', value: formatPkr(totals.totalEmdValue), icon: Wallet, tint: 'bg-violet-100 text-violet-600' },
-    { label: 'Total Paid', value: formatPkr(totals.totalPaid), icon: ArrowDownToLine, tint: 'bg-emerald-100 text-emerald-600' },
-    { label: 'Total Refunded', value: formatPkr(totals.totalRefunded), icon: RotateCcw, tint: 'bg-amber-100 text-amber-600' },
-  ];
+  const rows = await listPnrs(authUser);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -80,30 +63,14 @@ export default async function HomePage() {
           </div>
         </div>
 
-        <section className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
-          {cards.map((card) => (
-            <div
-              key={card.label}
-              className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm hover:shadow-md transition-shadow"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
-                  {card.label}
-                </p>
-                <span className={`w-7 h-7 rounded-lg flex items-center justify-center ${card.tint}`}>
-                  <card.icon className="w-3.5 h-3.5" />
-                </span>
-              </div>
-              <p className="mt-2 text-lg font-bold text-stone-900 tabular-nums">{card.value}</p>
-            </div>
-          ))}
-        </section>
-        <p className="text-[11px] text-stone-400 -mt-3">
-          Totals come from the dashboard_totals view, reflect active PNRs only, and do not change
-          with the filters below. Total paid includes rounds later refunded (gross, never netted).
-        </p>
-
+        {/* The cards live inside PnrTable: they re-total on every filter change,
+            and the filters are the table's own state. */}
         <PnrTable rows={rows} todayIso={todayIsoInPkt()} />
+
+        <p className="text-[11px] text-stone-400">
+          Cards follow the filters above and show active PNRs unless a status is chosen. Total paid
+          includes rounds later refunded (gross, never netted).
+        </p>
       </main>
 
       <footer className="border-t border-stone-200 py-4">

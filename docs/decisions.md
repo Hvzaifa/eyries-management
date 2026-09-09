@@ -98,6 +98,7 @@ answer including who decided it. If it fixed a bug, say what the bug actually di
 - [2026-09-07 — Branch dashboard totals used a different "total paid" than head office](#2026-09-07-branch-dashboard-totals-used-a-different-total-paid-than-head-office)
 - [2026-09-08 — `/pnrs/new` crashed for branch accounts: a constant imported across the client boundary](#2026-09-08-pnrsnew-crashed-for-branch-accounts-a-constant-imported-across-the-client-boundary)
 - [2026-09-09 — AI intake moved to Gemini; Groq, Cerebras and OpenRouter removed](#2026-09-09-ai-intake-moved-to-gemini-groq-cerebras-and-openrouter-removed)
+- [2026-09-09 — Dashboard cards follow the filters; unfiltered still means active](#2026-09-09-dashboard-cards-follow-the-filters-unfiltered-still-means-active)
 
 ---
 
@@ -774,6 +775,26 @@ The page used it two ways, and only one of them survived that substitution:
 **Removed as dead in the same pass:** the `apiKey` and `model` options on `parseAirlineMessage` (no caller ever passed either), the `model` field the route accepted from the request body (the browser never sent it, and honouring it would have let any signed-in user aim the key at a model of their choosing — pinning a model is an operator decision), the never-assigned `rawText` field on `ParsedField`, and the `.split('/').pop()?.replace(':free', '')` that tidied OpenRouter model names for display and is a no-op on a Gemini ID.
 
 **Still open:** `docs/architecture.md` names the **Claude API** for this feature, and the implementation has never matched it. Left as-is pending the owner's call, since architecture.md is locked.
+
+---
+
+### 2026-09-09 — Dashboard cards follow the filters; unfiltered still means active
+
+**Question:** The five summary cards ignored the filter bar — they always showed every active PNR, whatever the table below was showing. They should react to status, airline and branch, including combinations. But the table lists **all** statuses by default while the cards counted **active only**: with no status chosen, should the cards now include cancelled and completed bookings?
+
+**Answer (owner's ruling):** **No — with no status filter the cards keep their old meaning, active PNRs only.** Picking a status switches them wholly to it. The alternative, mirroring the table exactly, was rejected because it would have moved the headline figures the day it shipped: cancelled bookings would start inflating Total EMD Value, and a cancelled booking is not live exposure. Branch, airline and the search box always apply, so `active + PA + RAWALPINDI` totals exactly those rows.
+
+The count card is relabelled from the filter — "Completed PNRs", "Cancelled PNRs" — because "Active PNRs" sitting above a count of cancelled bookings is how a filtered dashboard misleads someone.
+
+**Why the totals moved out of SQL.** The figures came from the `dashboard_totals` view, which is aggregated over every active PNR and cannot see a filter the browser applies; the page carried a note admitting the cards "do not change with the filters below". Filters are client state, so the cards now sum the rows already in the browser — no round-trip per keystroke. `listPnrs` gained `totalPaid` / `totalRefunded` per PNR to make that possible, using the same one pass over `emd_rounds` that already found the next deadline.
+
+**This deleted a duplicated money rule rather than adding a third copy.** "Paid" meant `emd_amount` for rounds in `('paid','refund_requested','refunded')` and was written out three times — the SQL view, a hand-written branch-scoped raw query, and now a TypeScript path. `getDashboardTotals()` and `DashboardTotals` were removed, leaving `lib/dashboard.ts` as the only definition. The `dashboard_totals` view still exists in `db/schema.sql`; dropping it is a migration, not a code change.
+
+**Money is summed in whole paisa.** Amounts are `decimal(14,2)` in Postgres but plain JS numbers once filtered client-side, and summing hundreds of floats drifts. `sumMoney()` totals integer paisa so the cards stay exact to the paisa staff reconcile against.
+
+**No investor-company dropdown.** One was built and then removed the same day: the filter bar's search box already matches on investor company, so a fourth select earned its screen space only by duplicating a control that was already there. Anyone re-adding it should know why it is not trivial — `investor_company` is free text on the booking form, so the same client exists under several spellings (the data holds both `"COMPANY INVESTMENT"` and `"Company investment"`), and an exact-match dropdown would list one company twice and split its money across the two entries, showing 8 active PNRs where there are 731. A normalised key, as branch names already use, is the fix.
+
+**Verified against the live database, not just unit tests.** Across all 1,501 PNRs the new client-side totals reproduce the `dashboard_totals` view exactly — 857 active PNRs, 51,731 seats, PKR 6,114,583,575 EMD value, PKR 1,059,506,806 paid, PKR 1,059,312,309 refunded — and the rewritten deadline lookup returns an identical `nextPendingDeadline` and `hasPendingRound` for every row. Seven filter combinations were reconciled against equivalent SQL, including `active + SV + RAWALPINDI` (322 PNRs) against `active + RAWALPINDI` (323), confirming the dimensions compose.
 
 ---
 

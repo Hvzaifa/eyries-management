@@ -16,6 +16,7 @@ import Link from 'next/link';
 import { getUrgency } from '@/lib/urgency';
 import type { PnrListRow } from '@/lib/pnrs';
 import { formatNumber, formatPkr } from '@/lib/format';
+import DashboardCards from '@/components/dashboard-cards';
 
 const URGENCY_STYLES = {
   red: {
@@ -195,8 +196,22 @@ export default function PnrTable({ rows, todayIso }: { rows: PnrListRow[]; today
 
   const visibleRows = table.getRowModel().rows;
 
+  // What the cards summarise: every filter the table applies, including the
+  // search box. The status filter is passed separately so the summary knows
+  // whether to fall back to its active-only default (see lib/dashboard.ts).
+  //
+  // Not wrapped in useMemo: `getFilteredRowModel()` is memoised by TanStack and
+  // returns a new model only when the filters actually change, whereas `table`
+  // itself is a stable reference — so a useMemo keyed on it would hand back a
+  // stale set of rows and freeze the cards on the first filter applied.
+  const filteredRows = table.getFilteredRowModel().rows.map((r) => r.original);
+  const statusFilter =
+    (columnFilters.find((f) => f.id === 'status')?.value as string | undefined) ?? null;
+
   return (
     <div className="space-y-4">
+      <DashboardCards rows={filteredRows} statusFilter={statusFilter} />
+
       {urgencyCounts.red > 0 && (
         <div className="flex items-center gap-2.5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           <AlertTriangle className="w-4 h-4 flex-shrink-0" />
