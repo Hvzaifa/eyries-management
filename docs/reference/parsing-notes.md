@@ -1,13 +1,14 @@
 # Parsing Notes — Phase 2 Step 3
 
-**Providers:** Groq → Cerebras → OpenRouter, tried in that order (see `src/lib/ai/parse-booking.ts`).
-Local Ollama was removed on 2026-09-07 — it could only ever work on a developer's own
-machine, and on the deployed app it was a guaranteed connection failure before every
-real provider was reached.
+**Provider:** Gemini only — `gemini-2.5-flash`, falling back to `gemini-2.5-flash-lite`
+for text (see `src/lib/ai/parse-booking.ts`). Ollama was removed on 2026-09-07, and
+Groq, Cerebras and OpenRouter on 2026-09-09; none of their keys were set on the deployed
+app, so the "fallback chain" was only ever a series of failures before the one provider
+that worked (docs/decisions.md).
 
 ## Summary
 
-The AI Intake parser (`/api/ai/parse-pnr`) handles structured and semi-structured airline messages effectively, but results vary based on the clarity of the source text and the capacity of the local LLM.
+The AI Intake parser (`/api/ai/parse-pnr`) handles structured and semi-structured airline messages effectively, but results vary based on the clarity of the source text.
 
 ## Airline Format Analysis
 
@@ -19,7 +20,7 @@ The AI Intake parser (`/api/ai/parse-pnr`) handles structured and semi-structure
 ### Formats that need manual entry as fallback
 - **Short/abbreviated messages** (e.g., GDS-style codes like "DEP 10DEC26") — date parsing is highly model-dependent.
 - **WhatsApp-style informal messages** (e.g., Serene Air quick texts) — field boundaries are ambiguous; sector/route may be incomplete.
-- **Image-only inputs** — requires a vision-capable local model. `gemma3:4b` is text-only, so images must be processed by larger cloud models (like OpenRouter) or handled via Excel upload if tabular.
+- **Image-only inputs** — no longer a separate weak spot. Gemini is multimodal, so a screenshot goes to the same model as pasted text; earlier notes here described a text-only local model that could not read images at all.
 
 ## Consistently weak fields
 

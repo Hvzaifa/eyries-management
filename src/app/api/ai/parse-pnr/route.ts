@@ -27,9 +27,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    // No `model` field: the browser never sent one, and accepting it would let a
+    // signed-in user aim this key at any model they liked. Pinning a model is an
+    // operator decision, made with `GEMINI_MODEL` (docs/operations.md).
     const body = (await request.json()) as {
       text?: string;
-      model?: string;
       imageBase64?: string;
       imageMimeType?: string;
       excelBase64?: string;
@@ -69,7 +71,6 @@ export async function POST(request: Request) {
     }
 
     const drafts = await parseAirlineMessage(text, {
-      model: body.model,
       imageBase64: imageBase64 || undefined,
       imageMimeType: body.imageMimeType || undefined,
     });

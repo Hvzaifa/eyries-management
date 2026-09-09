@@ -35,8 +35,8 @@ Required to run: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
 `DATABASE_URL`, `DIRECT_URL`.
 Required for specific features: `SUPABASE_SERVICE_ROLE_KEY` (user seeding),
 `RESEND_API_KEY` + `ALERT_FROM_EMAIL` + `STAFF_ALERT_EMAILS` (email),
-`CRON_SECRET` (daily job), `LLM_API_KEY` / `GROQ_API_KEY` / `CEREBREAS_API_KEY`
-(AI intake), `SEED_*_PASSWORD` (user seeding).
+`CRON_SECRET` (daily job), `GEMINI_API_KEY` (AI intake),
+`SEED_*_PASSWORD` (user seeding).
 
 ## Changing the database
 
@@ -136,8 +136,8 @@ unusual except the two items called out below, both of which have bitten before.
 | `CRON_SECRET` | **yes** | Vercel sends it to the cron route automatically |
 | `RESEND_API_KEY`, `ALERT_FROM_EMAIL`, `STAFF_ALERT_EMAILS` | for email | Deadline alerts and airline emails |
 | `NEXT_PUBLIC_APP_URL` | for email | **Not needed for the site to run** — it appears in exactly one place, the "Open the dashboard" link inside the daily alert email (`src/lib/deadlines.ts`). Without it that link falls back to `http://localhost:3000` and points at the recipient's own machine |
-| `LLM_API_KEY`, `GROQ_API_KEY`, `CEREBREAS_API_KEY` | for AI intake | At least one; paste-and-parse fails without |
-| `LLM_MODEL` | optional | Pins a single model instead of the fallback chain |
+| `GEMINI_API_KEY` | for AI intake | Google AI Studio key. Paste-and-parse and screenshot upload both fail without it. It must be a **Gemini** key — the code posts to Gemini's OpenAI-compatible endpoint, so a key from any other provider returns 401 no matter what the variable is named |
+| `GEMINI_MODEL` | optional | Pins one model instead of the `gemini-2.5-flash` → `gemini-2.5-flash-lite` fallback. Lets a misbehaving model be routed around from the dashboard without a redeploy |
 | `SUPABASE_SERVICE_ROLE_KEY`, `SEED_*_PASSWORD` | **no** | Local scripts only. Do not put the service-role key on Vercel — it bypasses RLS |
 
 ### The two things that catch people

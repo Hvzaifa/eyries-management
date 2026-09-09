@@ -97,6 +97,7 @@ answer including who decided it. If it fixed a bug, say what the bug actually di
 - [2026-09-07 — SR# column was rendering blank](#2026-09-07-sr-column-was-rendering-blank)
 - [2026-09-07 — Branch dashboard totals used a different "total paid" than head office](#2026-09-07-branch-dashboard-totals-used-a-different-total-paid-than-head-office)
 - [2026-09-08 — `/pnrs/new` crashed for branch accounts: a constant imported across the client boundary](#2026-09-08-pnrsnew-crashed-for-branch-accounts-a-constant-imported-across-the-client-boundary)
+- [2026-09-09 — AI intake moved to Gemini; Groq, Cerebras and OpenRouter removed](#2026-09-09-ai-intake-moved-to-gemini-groq-cerebras-and-openrouter-removed)
 
 ---
 
@@ -753,6 +754,26 @@ The page used it two ways, and only one of them survived that substitution:
 **Fix:** `PnrFormValues` and `EMPTY_PNR` moved to `src/lib/pnr-form-values.ts`, a plain module with no `'use client'`, so the server gets the real object. `pnr-form.tsx` now imports the type from there and exports only its component.
 
 **The general rule this establishes:** a server component may import *types* from a client module (they are erased at compile time) but **never a value** — no constants, no helper functions, no lookup tables. Shared values belong in a neutral module both sides import. The failure is silent: it type-checks, it builds, and it can work on the code path that passes the value straight through, so it surfaces only for whichever user hits the path that reads into it.
+
+---
+
+### 2026-09-09 — AI intake moved to Gemini; Groq, Cerebras and OpenRouter removed
+
+**Question:** `/api/ai/parse-pnr` returned 500 for both paste and screenshot upload, locally and in production. Replacing the `LLM_API_KEY` *value* with a Gemini key did not help. What was wrong, and what should the provider chain be?
+
+**Answer:** Two separate faults, one of which hid the other.
+
+**1. The env var name is only a label; the URL decides the provider.** The code posted to a hardcoded `https://openrouter.ai/...`, so a Gemini key placed in `LLM_API_KEY` was sent to OpenRouter and got a 401. Verified both ways: OpenRouter `401`, Gemini's OpenAI-compatible endpoint `200`. The route reports every failure as the same generic 500, so a misrouted key looked identical to a parse failure.
+
+**2. The vision path could never have worked.** Screenshots were sent to `openrouter/free`, which is not a model — it is a *router* that picks a different free model per request, and its pool includes `nvidia/nemotron-3.5-content-safety:free`, a safety **classifier**. When the lottery landed there the reply was `User Safety: safe`, or `User Safety: unsafe / Safety Categories: PII/Privacy` — a booking full of passenger names and PNRs reads as PII — `JSON.parse` threw, and the request 500'd. Nothing was wrong with the upload: the same screenshot succeeded on a retry when the router happened to pick a real model. Never pin a router as a model.
+
+**The chain was fiction.** The documented order was Groq → Cerebras → OpenRouter, but on checking: every Groq model ID (`llama-3.3-70b-versatile`, `llama-3.1-8b-instant`) and the Cerebras one (`llama3.1-70b`) returned **404 — those models no longer exist**, and the Cerebras account answered **402, no credit**. Neither key is set on Vercel, so in production the "fallback" had always been a single provider. Three providers were carrying zero traffic and two could not have served any.
+
+**Now: Gemini only** — `gemini-2.5-flash`, falling back to `gemini-2.5-flash-lite` for text. Gemini is multimodal, so a screenshot goes to the same model as pasted text and the image path is no longer the fragile one. This is the same reasoning that removed Ollama on 2026-09-07: a provider that cannot work on the deployed app is not a fallback, it is a delay before the one that can. `GEMINI_API_KEY` replaces `LLM_API_KEY`; `GEMINI_MODEL` replaces `LLM_MODEL`.
+
+**Removed as dead in the same pass:** the `apiKey` and `model` options on `parseAirlineMessage` (no caller ever passed either), the `model` field the route accepted from the request body (the browser never sent it, and honouring it would have let any signed-in user aim the key at a model of their choosing — pinning a model is an operator decision), the never-assigned `rawText` field on `ParsedField`, and the `.split('/').pop()?.replace(':free', '')` that tidied OpenRouter model names for display and is a no-op on a Gemini ID.
+
+**Still open:** `docs/architecture.md` names the **Claude API** for this feature, and the implementation has never matched it. Left as-is pending the owner's call, since architecture.md is locked.
 
 ---
 

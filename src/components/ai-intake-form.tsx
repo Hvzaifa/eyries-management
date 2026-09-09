@@ -376,7 +376,7 @@ export default function AiIntakeForm({
                 Review the fields below. Low-confidence fields are highlighted in red.
                 {currentDraft.modelUsed && (
                   <span className="ml-1.5 text-stone-300">
-                    Model: {currentDraft.modelUsed.split('/').pop()?.replace(':free', '')}
+                    Model: {currentDraft.modelUsed}
                   </span>
                 )}
               </p>

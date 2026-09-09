@@ -3,7 +3,6 @@ export type FieldConfidence = 'high' | 'medium' | 'low';
 export interface ParsedField<T> {
   value: T | null;
   confidence: FieldConfidence;
-  rawText?: string;
   notes?: string;
 }
 
@@ -214,93 +213,56 @@ export function parseRawLlmJson(jsonText: string, rawPastedText: string, modelUs
   });
 }
 /**
- * Providers are tried in order until one returns a usable response.
+ * Gemini's OpenAI-compatible endpoint, reached with `GEMINI_API_KEY`.
  *
- * All three speak the OpenAI chat-completions shape, so one request body works
- * for each. A local Ollama provider used to sit at the head of this list; it was
- * removed on 2026-09-07 — it can only ever work on a developer's own machine and
- * on the deployed app it was a guaranteed connection failure and a wasted retry
- * before every real provider was reached.
+ * The env var name is only a label — this URL is what decides which service
+ * receives the request. That distinction cost a debugging session: the key's
+ * *value* was swapped to Gemini while the URL still pointed at OpenRouter, so
+ * every call 401'd and the intake route reported it as the same generic 500 it
+ * reports for any other failure.
+ *
+ * Groq and Cerebras providers were removed on 2026-09-09 — same reasoning that
+ * removed Ollama on 2026-09-07 (docs/decisions.md). Neither key is set on the
+ * deployed app, so neither was ever reachable in production; Cerebras answered
+ * 402 (no credit) and Groq's pinned models had 404'd out of existence, so the
+ * "fallback" was three guaranteed failures before the only working provider.
+ * Gemini is multimodal, so one provider now serves both text and screenshots.
  */
-const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const CEREBRAS_URL = 'https://api.cerebras.ai/v1/chat/completions';
+const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
 
-/** Text-only fallback chain, fastest and most reliable first. */
-const GROQ_MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
-const CEREBRAS_MODELS = ['llama3.1-70b'];
-const OPENROUTER_MODELS = ['openrouter/free', 'nvidia/nemotron-3.5-lightning:free', 'google/gemma-4-31b-it:free'];
+/** Tried in order until one returns usable JSON. */
+const TEXT_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
 
-/** Only OpenRouter is wired for image input, so a screenshot has one route. */
-const OPENROUTER_VISION_MODELS = ['openrouter/free'];
+/** Flash-lite is not trusted with screenshots, so the image path has one model. */
+const VISION_MODELS = ['gemini-2.5-flash'];
 
-/** Per-provider request deadline. Several candidates may be tried in sequence. */
-const PROVIDER_TIMEOUT_MS = 45_000;
-
-interface ModelCandidate {
-  provider: string;
-  url: string;
-  model: string;
-  apiKey: string;
-}
+/** Per-model request deadline. Several may be tried in sequence. */
+const MODEL_TIMEOUT_MS = 45_000;
 
 /**
- * Builds the ordered list of providers to try.
+ * The models to try, in order.
  *
- * An explicitly requested model (or `LLM_MODEL`) short-circuits the chain and is
- * the only thing tried; otherwise the fallback list is assembled from whichever
- * API keys are configured.
+ * `GEMINI_MODEL` pins a single model and skips the fallback, so a bad model can
+ * be routed around from the Vercel dashboard without a redeploy
+ * (docs/operations.md).
  */
-function buildCandidates(opts: {
-  model?: string;
-  openRouterKey?: string;
-  groqKey?: string;
-  cerebrasKey?: string;
-  hasImage: boolean;
-}): ModelCandidate[] {
-  const { model, openRouterKey, groqKey, cerebrasKey, hasImage } = opts;
-  const openRouter = (m: string): ModelCandidate =>
-    ({ provider: 'OpenRouter', url: OPENROUTER_URL, model: m, apiKey: openRouterKey! });
-
-  const explicit = model || process.env.LLM_MODEL;
-  if (explicit && openRouterKey) return [openRouter(explicit)];
-
-  // An image can only go to a vision-capable model.
-  if (hasImage) {
-    return openRouterKey ? OPENROUTER_VISION_MODELS.map(openRouter) : [];
-  }
-
-  const candidates: ModelCandidate[] = [];
-  if (groqKey) {
-    candidates.push(...GROQ_MODELS.map((m) => ({ provider: 'Groq', url: GROQ_URL, model: m, apiKey: groqKey })));
-  }
-  if (cerebrasKey) {
-    candidates.push(...CEREBRAS_MODELS.map((m) => ({ provider: 'Cerebras', url: CEREBRAS_URL, model: m, apiKey: cerebrasKey })));
-  }
-  if (openRouterKey) {
-    candidates.push(...OPENROUTER_MODELS.map(openRouter));
-  }
-  return candidates;
+function modelsToTry(hasImage: boolean): string[] {
+  const pinned = process.env.GEMINI_MODEL;
+  if (pinned) return [pinned];
+  return hasImage ? VISION_MODELS : TEXT_MODELS;
 }
 
 export async function parseAirlineMessage(
   rawText: string,
-  opts: { model?: string; apiKey?: string; imageBase64?: string; imageMimeType?: string } = {}
+  opts: { imageBase64?: string; imageMimeType?: string } = {}
 ): Promise<ParsedBookingDraft[]> {
-  const openRouterKey = opts.apiKey || process.env.LLM_API_KEY;
-  const groqKey = process.env.GROQ_API_KEY;
-  const cerebrasKey = process.env.CEREBREAS_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY is not configured, so no booking can be parsed.');
+  }
 
   const hasImage = !!opts.imageBase64;
-  const candidates = buildCandidates({ model: opts.model, openRouterKey, groqKey, cerebrasKey, hasImage });
-
-  if (candidates.length === 0) {
-    throw new Error(
-      hasImage
-        ? 'Image parsing needs LLM_API_KEY (OpenRouter) to be configured.'
-        : 'No LLM API key is configured. Set LLM_API_KEY, GROQ_API_KEY or CEREBREAS_API_KEY.'
-    );
-  }
+  const models = modelsToTry(hasImage);
 
   // Build the user message content — multimodal when an image is present
   type ContentPart =
@@ -324,26 +286,22 @@ export async function parseAirlineMessage(
 
   let lastError: Error | null = null;
 
-  for (const candidate of candidates) {
+  for (const model of models) {
     try {
-      // Every provider call needs its own deadline. Without one, a provider that
-      // accepts the connection and then stalls holds the request open until the
-      // hosting platform kills the whole function — and because these candidates
-      // are tried one after another, a few slow ones in a row could exhaust the
-      // budget before a working provider was ever reached.
-      const response = await fetch(candidate.url, {
-        signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+      // Every call needs its own deadline. Without one, a model that accepts the
+      // connection and then stalls holds the request open until the hosting
+      // platform kills the whole function — and because these are tried one
+      // after another, a slow one could exhaust the budget before a working
+      // model was ever reached.
+      const response = await fetch(GEMINI_URL, {
+        signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${candidate.apiKey}`,
-          ...(candidate.provider === 'OpenRouter' && {
-            'HTTP-Referer': 'https://eyries.local',
-            'X-Title': 'Eyries Group Booking Intake',
-          }),
+          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          model: candidate.model,
+          model,
           messages: [
             { role: 'system', content: SYSTEM_PROMPT },
             { role: 'user', content: userContent },
@@ -354,7 +312,7 @@ export async function parseAirlineMessage(
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`${candidate.provider} API error (${response.status}) on model ${candidate.model}: ${errorText}`);
+        throw new Error(`Gemini API error (${response.status}) on model ${model}: ${errorText}`);
       }
 
       const data = (await response.json()) as {
@@ -363,14 +321,14 @@ export async function parseAirlineMessage(
 
       const content = data.choices?.[0]?.message?.content;
       if (!content) {
-        throw new Error(`Empty response received from LLM model ${candidate.model}.`);
+        throw new Error(`Empty response received from model ${model}.`);
       }
 
-      return parseRawLlmJson(content, rawText || '[image upload]', candidate.model);
+      return parseRawLlmJson(content, rawText || '[image upload]', model);
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
-      console.warn(`[AI Parsing] Failed with ${candidate.provider} (${candidate.model}): ${lastError.message}`);
-      // Try next candidate model if available
+      console.warn(`[AI Parsing] Failed with ${model}: ${lastError.message}`);
+      // Try the next model if there is one.
       continue;
     }
   }
