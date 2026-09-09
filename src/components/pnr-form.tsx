@@ -7,51 +7,7 @@ import { formatEmdNumberInput } from '@/lib/format';
 import { diffInDays, todayIsoInPkt } from '@/lib/urgency';
 import type { PnrFormOptions } from '@/lib/pnrs';
 import type { FieldConfidence } from '@/lib/ai/parse-booking';
-
-export interface PnrFormValues {
-  id?: string;
-  requestDate: string;
-  investorCompany: string;
-  licenseId: string;
-  branchId: string;
-  pnr: string;
-  gdsPnr: string;
-  segment: string;
-  airlineId: string;
-  seats: string;
-  outboundDate: string;
-  inboundDate: string;
-  sector: string;
-  pnrTlDate: string;
-  dealPct: string;
-  issuedStatus: string;
-  status: string;
-  fare: string;
-  airlineTaxes: string;
-  psf: string;
-}
-
-export const EMPTY_PNR: PnrFormValues = {
-  requestDate: '',
-  investorCompany: '',
-  licenseId: '',
-  branchId: '',
-  pnr: '',
-  gdsPnr: '',
-  segment: '',
-  airlineId: '',
-  seats: '',
-  outboundDate: '',
-  inboundDate: '',
-  sector: '',
-  pnrTlDate: '',
-  dealPct: '',
-  issuedStatus: 'unissued',
-  status: 'active',
-  fare: '',
-  airlineTaxes: '',
-  psf: '',
-};
+import type { PnrFormValues } from '@/lib/pnr-form-values';
 
 const inputCls =
   'w-full bg-stone-50 border border-stone-300 rounded-xl px-3 py-2 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:border-indigo-400 transition-colors';

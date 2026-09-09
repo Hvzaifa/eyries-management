@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import { resolveAuthUser } from '@/lib/auth';
 import { getPnrFormOptions } from '@/lib/pnrs';
-import { EMPTY_PNR } from '@/components/pnr-form';
+import { EMPTY_PNR } from '@/lib/pnr-form-values';
 import PnrForm from '@/components/pnr-form';
 import AppHeader from '@/components/app-header';
 import { createPnr } from '../actions/pnr';

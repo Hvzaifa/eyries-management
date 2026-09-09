@@ -2,7 +2,8 @@ import { createClient } from '@/lib/supabase/server';
 import { redirect, notFound } from 'next/navigation';
 import { resolveAuthUser, canEditPnr } from '@/lib/auth';
 import { getPnrDetail, getPnrFormOptions } from '@/lib/pnrs';
-import PnrForm, { type PnrFormValues } from '@/components/pnr-form';
+import PnrForm from '@/components/pnr-form';
+import type { PnrFormValues } from '@/lib/pnr-form-values';
 import AppHeader from '@/components/app-header';
 import { updatePnr } from '../../actions/pnr';
 

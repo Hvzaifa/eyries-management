@@ -96,6 +96,7 @@ answer including who decided it. If it fixed a bug, say what the bug actually di
 - [2026-09-07 — createPnr wrote the booking before it finished validating it](#2026-09-07-createpnr-wrote-the-booking-before-it-finished-validating-it)
 - [2026-09-07 — SR# column was rendering blank](#2026-09-07-sr-column-was-rendering-blank)
 - [2026-09-07 — Branch dashboard totals used a different "total paid" than head office](#2026-09-07-branch-dashboard-totals-used-a-different-total-paid-than-head-office)
+- [2026-09-08 — `/pnrs/new` crashed for branch accounts: a constant imported across the client boundary](#2026-09-08-pnrsnew-crashed-for-branch-accounts-a-constant-imported-across-the-client-boundary)
 
 ---
 
@@ -729,6 +730,29 @@ docs/
 ```
 
 All 31 internal documentation links verified to resolve.
+
+---
+
+### 2026-09-08 — `/pnrs/new` crashed for branch accounts: a constant imported across the client boundary
+
+**Question:** `/pnrs/new` threw `Cannot read properties of undefined (reading 'trim')` in production while working locally. Why the difference, and what was undefined?
+
+**Answer:** Neither production nor "the browser" was the variable — **the account was**. The page crashed for branch users and worked for head office, and the local login happened to be head office.
+
+`EMPTY_PNR`, the blank form defaults, was exported from `components/pnr-form.tsx` — a `'use client'` module — and imported by `app/pnrs/new/page.tsx`, a server component. Every *value* exported from a client module is replaced in the server bundle by a client-reference stub:
+
+```js
+const EMPTY_PNR = registerClientReference(function() { throw new Error("Attempted to call EMPTY_PNR() from the server ...
+```
+
+The page used it two ways, and only one of them survived that substitution:
+
+- **Head office:** `initial = EMPTY_PNR`. Passing the stub straight through as a prop is fine — React serialises the reference and the browser resolves it back to the real object from the client chunk. Worked by luck.
+- **Branch:** `initial = { ...EMPTY_PNR, branchId }`. Spreading the stub copies none of the 19 defaults, so `initial.pnr` was `undefined` and `values.pnr.trim()` threw during the form's first render.
+
+**Fix:** `PnrFormValues` and `EMPTY_PNR` moved to `src/lib/pnr-form-values.ts`, a plain module with no `'use client'`, so the server gets the real object. `pnr-form.tsx` now imports the type from there and exports only its component.
+
+**The general rule this establishes:** a server component may import *types* from a client module (they are erased at compile time) but **never a value** — no constants, no helper functions, no lookup tables. Shared values belong in a neutral module both sides import. The failure is silent: it type-checks, it builds, and it can work on the code path that passes the value straight through, so it surfaces only for whichever user hits the path that reads into it.
 
 ---
 

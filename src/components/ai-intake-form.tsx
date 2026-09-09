@@ -2,7 +2,8 @@
 
 import { useRef, useState, useTransition } from 'react';
 import { Bot, ClipboardPaste, Loader2, RotateCcw, AlertTriangle, ImagePlus, X, FileSpreadsheet, CheckCircle2 } from 'lucide-react';
-import PnrForm, { type PnrFormValues } from '@/components/pnr-form';
+import PnrForm from '@/components/pnr-form';
+import type { PnrFormValues } from '@/lib/pnr-form-values';
 import type { PnrFormOptions } from '@/lib/pnrs';
 import type { ParsedBookingDraft, FieldConfidence } from '@/lib/ai/parse-booking';
 
