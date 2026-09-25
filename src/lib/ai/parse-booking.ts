@@ -230,14 +230,105 @@ export function parseRawLlmJson(jsonText: string, rawPastedText: string, modelUs
  */
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
 
-/** Tried in order until one returns usable JSON. */
-const TEXT_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+/**
+ * The AI service cannot be used at all with the configuration it was given —
+ * no key, or a key the provider rejects. Distinct from a parse failure so the
+ * route can say so plainly instead of "could not parse this input".
+ *
+ * Found on 2026-09-25: the configured `GEMINI_API_KEY` was not a Gemini API key
+ * (Google returned 401 UNAUTHENTICATED on every endpoint), and every upload
+ * reported only "failed to parse", which reads like a problem with the image.
+ */
+export class AiConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AiConfigError';
+  }
+}
 
-/** Flash-lite is not trusted with screenshots, so the image path has one model. */
-const VISION_MODELS = ['gemini-2.5-flash'];
+/**
+ * HTTP statuses that mean "this key will not work", not "this attempt failed".
+ * 401 = not a valid credential; 403 = valid but not permitted (API disabled,
+ * key restricted). Retrying another model with the same key cannot help.
+ */
+export function isKeyRejection(status: number): boolean {
+  return status === 401 || status === 403;
+}
 
-/** Per-model request deadline. Several may be tried in sequence. */
+/**
+ * The provider is up but will not serve this request right now — rate limited
+ * or "experiencing high demand". Worth one quick retry, and never the user's
+ * input at fault.
+ *
+ * Found on 2026-09-25: Google answers 503 "This model is currently experiencing
+ * high demand" intermittently (1 in 3 probes on two models that day), and the
+ * screenshot path had a single model and no retry — so every busy moment
+ * reached staff as "failed to parse", which reads like a bad screenshot.
+ */
+export function isTransientStatus(status: number): boolean {
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+/**
+ * Every model was busy or unreachable. Distinct from a parse failure so the
+ * route can tell staff to try again shortly, rather than suggest the input is
+ * the problem.
+ */
+export class AiBusyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AiBusyError';
+  }
+}
+
+/** A provider response that failed with an HTTP status, kept so it can be classified. */
+class ProviderHttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string
+  ) {
+    super(message);
+    this.name = 'ProviderHttpError';
+  }
+}
+
+/**
+ * Tried in order until one returns usable JSON.
+ *
+ * Checked against the live API on 2026-09-25 with a rendered booking
+ * confirmation (PNR, seats, sector, dates, fare, taxes, segment): both models
+ * extracted every field correctly from the image and from pasted text.
+ *
+ * - `gemini-2.5-flash` first — the model this app has been tuned against.
+ * - `gemini-3.5-flash-lite` as the backup — the replacement Google names for
+ *   the retired `gemini-2.5-flash-lite` (which answered 404 "no longer
+ *   available to new users"), and the faster of the two (~3 s vs ~9 s on an
+ *   image). The old rule "flash-lite is not trusted with screenshots" was about
+ *   the 2.5 generation; a human confirms every draft before it is saved either
+ *   way.
+ *
+ * `gemini-3.5-flash` and `gemini-flash-latest` were also tried and were
+ * returning 503 "high demand" at the time, so neither is relied on.
+ */
+const TEXT_MODELS = ['gemini-2.5-flash', 'gemini-3.5-flash-lite'];
+const VISION_MODELS = ['gemini-2.5-flash', 'gemini-3.5-flash-lite'];
+
+/** Per-request deadline. Several requests may be made in sequence. */
 const MODEL_TIMEOUT_MS = 45_000;
+
+/**
+ * Everything together — every model, every retry — must finish inside this,
+ * or the hosting platform ends the function first and staff see a bare error
+ * instead of a message. Well inside Vercel's 60 s ceiling for a function that
+ * sets no `maxDuration`.
+ */
+const TOTAL_BUDGET_MS = 55_000;
+
+/** Wait before retrying a busy model. Overridable so tests do not sleep. */
+function retryDelayMs(): number {
+  const v = Number(process.env.GEMINI_RETRY_DELAY_MS);
+  return Number.isFinite(v) && v >= 0 ? v : 1_500;
+}
 
 /**
  * The models to try, in order.
@@ -258,7 +349,7 @@ export async function parseAirlineMessage(
 ): Promise<ParsedBookingDraft[]> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    throw new Error('GEMINI_API_KEY is not configured, so no booking can be parsed.');
+    throw new AiConfigError('GEMINI_API_KEY is not configured, so no booking can be parsed.');
   }
 
   const hasImage = !!opts.imageBase64;
@@ -284,54 +375,85 @@ export async function parseAirlineMessage(
       ]
     : `Extract the booking and EMD details from the following message:\n\n${rawText}`;
 
+  const startedAt = Date.now();
+  const remaining = () => TOTAL_BUDGET_MS - (Date.now() - startedAt);
+
   let lastError: Error | null = null;
+  // True while every failure so far has been the provider being busy or slow —
+  // decides whether staff are told "try again shortly" or "could not parse".
+  let onlyTransientFailures = true;
 
   for (const model of models) {
-    try {
-      // Every call needs its own deadline. Without one, a model that accepts the
-      // connection and then stalls holds the request open until the hosting
-      // platform kills the whole function — and because these are tried one
-      // after another, a slow one could exhaust the budget before a working
-      // model was ever reached.
-      const response = await fetch(GEMINI_URL, {
-        signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: 'system', content: SYSTEM_PROMPT },
-            { role: 'user', content: userContent },
-          ],
-          temperature: 0.1,
-        }),
-      });
+    // A busy model gets one quick retry before moving on; demand spikes on
+    // Google's side are usually seconds long.
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      // Never start a request the time budget cannot finish.
+      if (remaining() < 5_000) break;
+      try {
+        // Every call needs its own deadline. Without one, a model that accepts
+        // the connection and then stalls holds the request open until the
+        // hosting platform kills the whole function.
+        const response = await fetch(GEMINI_URL, {
+          signal: AbortSignal.timeout(Math.min(MODEL_TIMEOUT_MS, remaining())),
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: 'system', content: SYSTEM_PROMPT },
+              { role: 'user', content: userContent },
+            ],
+            temperature: 0.1,
+          }),
+        });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Gemini API error (${response.status}) on model ${model}: ${errorText}`);
+        if (!response.ok) {
+          const errorText = await response.text();
+          if (isKeyRejection(response.status)) {
+            throw new AiConfigError(
+              `Gemini rejected GEMINI_API_KEY (${response.status}) on model ${model}: ${errorText}`
+            );
+          }
+          throw new ProviderHttpError(
+            response.status,
+            `Gemini API error (${response.status}) on model ${model}: ${errorText}`
+          );
+        }
+
+        const data = (await response.json()) as {
+          choices?: { message?: { content?: string } }[];
+        };
+
+        const content = data.choices?.[0]?.message?.content;
+        if (!content) {
+          throw new Error(`Empty response received from model ${model}.`);
+        }
+
+        return parseRawLlmJson(content, rawText || '[image upload]', model);
+      } catch (err) {
+        // A rejected key fails identically on every model; stop here rather
+        // than spending another request to learn the same thing.
+        if (err instanceof AiConfigError) throw err;
+        lastError = err instanceof Error ? err : new Error(String(err));
+        console.warn(`[AI Parsing] ${model} attempt ${attempt} failed: ${lastError.message}`);
+
+        const transient =
+          (err instanceof ProviderHttpError && isTransientStatus(err.status)) ||
+          (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError'));
+        if (!transient) {
+          onlyTransientFailures = false;
+          break; // not worth retrying this model — try the next one
+        }
+        if (attempt === 1) await new Promise((r) => setTimeout(r, retryDelayMs()));
       }
-
-      const data = (await response.json()) as {
-        choices?: { message?: { content?: string } }[];
-      };
-
-      const content = data.choices?.[0]?.message?.content;
-      if (!content) {
-        throw new Error(`Empty response received from model ${model}.`);
-      }
-
-      return parseRawLlmJson(content, rawText || '[image upload]', model);
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
-      console.warn(`[AI Parsing] Failed with ${model}: ${lastError.message}`);
-      // Try the next model if there is one.
-      continue;
     }
   }
 
-  throw lastError || new Error('Failed to parse airline text using available AI models.');
+  if (lastError && onlyTransientFailures) {
+    throw new AiBusyError(`Every AI model was busy or timed out. Last error: ${lastError.message}`);
+  }
+  throw lastError || new AiBusyError('No AI request could be made within the time allowed.');
 }

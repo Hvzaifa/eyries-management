@@ -15,9 +15,11 @@ import type { NextConfig } from "next";
  * to render dynamically for a small gain on an internal tool with no
  * user-generated HTML. `'unsafe-eval'` is development-only (React's dev tooling).
  *
- * **Shipped as Report-Only first.** Violations are logged in the browser console
- * instead of blocked, so a missed source shows up without breaking a page. Once
- * a deploy has run clean, change the header name to `Content-Security-Policy`.
+ * **Enforced since 2026-09-25.** It shipped as Report-Only first; the owner ran
+ * the deployed app with the console open and saw no violations, so it now
+ * blocks. If a page ever breaks after adding a new external service, the
+ * browser console names the blocked source — add it to the matching directive
+ * below rather than loosening `default-src`.
  */
 function contentSecurityPolicy(): string {
   const supabase = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
@@ -65,7 +67,7 @@ const nextConfig: NextConfig = {
             value: 'max-age=31536000; includeSubDomains',
           },
           {
-            key: 'Content-Security-Policy-Report-Only',
+            key: 'Content-Security-Policy',
             value: contentSecurityPolicy(),
           },
           {

@@ -78,9 +78,10 @@ wrong before — see `decisions.md`, 2026-09-07 "db/schema.sql had drifted".
   readable. (`dashboard_totals`, the other, was dropped on 2026-09-24.)
 - **Response headers** (`next.config.ts`): frame, content-type, referrer and HSTS
   headers; a `Permissions-Policy` switching off camera, microphone, location,
-  payment and USB; `X-Powered-By` removed; and a **Content-Security-Policy in
-  Report-Only mode**. After one deploy with no violations in the browser
-  console, rename the header to `Content-Security-Policy` to enforce it.
+  payment and USB; `X-Powered-By` removed; and a **Content-Security-Policy,
+  enforced since 2026-09-25** after a Report-Only deploy showed no violations.
+  If adding an external service ever breaks a page, the browser console names
+  the blocked source; add it to the matching directive in `next.config.ts`.
 - **Reads verify the session locally, writes ask the Auth server.** Pages and
   the middleware use `auth.getClaims()` (`src/lib/server/session.ts`); every
   server action that writes goes through `requireUser()`, which uses
@@ -109,26 +110,65 @@ curl -s -o /dev/null -w '%{http_code}\n' \
 
 ### Owner action: switch Supabase to asymmetric JWT signing keys
 
-Until this is done, `getClaims()` still asks the Auth server on every request,
-so the ~300 ms per navigation it is meant to save is not saved yet. The code is
-correct either way.
+Until the project signs sessions with an asymmetric key, `getClaims()` still asks
+the Auth server on every request, so the ~300 ms per navigation it is meant to
+save is not saved. The code is correct either way.
+
+**State found on 2026-09-25:** the project already publishes an **ES256
+(asymmetric) key** at `<SUPABASE_URL>/auth/v1/.well-known/jwks.json`, so it may
+already be the active key. The app's `NEXT_PUBLIC_SUPABASE_ANON_KEY` is a **new
+publishable key** (`sb_publishable_…`), not a legacy JWT, so it does not depend
+on the legacy secret. (An earlier version of this section said it did; that was
+not checked at the time and was wrong.)
 
 1. Supabase Dashboard → **Project Settings → JWT Keys**.
-2. Click **Migrate JWT secret**. This imports the current secret and creates a
-   new asymmetric key on standby. Nothing changes for users yet.
-3. Click **Rotate keys**. New tokens are signed with the new key; Supabase:
-   *"Non-expired access tokens will remain to be accepted, so no users will be
-   forcefully signed out"*, with no downtime.
-4. **Stop there. Do NOT revoke the legacy JWT secret.** The app's
-   `NEXT_PUBLIC_SUPABASE_ANON_KEY` is itself a JWT signed by that secret —
-   revoking it would make the app's own key invalid. Revoking is only safe after
-   switching the app to Supabase's new publishable/secret API keys, which is a
-   separate change.
+2. Look at **Current key**:
+   - **ECC (P-256)** → nothing to do; local verification is already on.
+   - **Legacy HS256 (shared secret)** → continue.
+3. If you see **Migrate JWT secret**, click it. It imports the current secret and
+   puts a new asymmetric key on standby. Nothing changes for users yet.
+4. Click **Rotate keys** so the ECC key becomes current. Supabase: *"Non-expired
+   access tokens will remain to be accepted, so no users will be forcefully
+   signed out"*, with no downtime.
+5. **No need to revoke the legacy secret.** Nothing is gained, and anything still
+   holding a legacy key — most likely a legacy `service_role` key used by
+   `npm run db:seed:users` — would stop working. Leave it as "previously used".
 
 Checked before recommending this: nothing in this repository verifies JWTs
 with the legacy secret itself (no `jose`/`jsonwebtoken`), and there are no Edge
 Functions — the two things Supabase warns rotation can break. It can be undone:
 a previously used key can be moved back to standby and rotated to.
+
+## The AI intake: models, retries, and when it fails
+
+`src/lib/ai/parse-booking.ts` calls Google Gemini through its OpenAI-compatible
+endpoint, trying `gemini-2.5-flash` then `gemini-3.5-flash-lite`, for both
+pasted text and screenshots. A model that answers **busy** (429/5xx, "high
+demand") or times out gets **one retry** after 1.5 s, then the next model is
+tried; everything is capped at 55 s so it finishes before Vercel ends the
+function.
+
+What staff see, and what it means:
+
+| Message | Cause | Fix |
+|---|---|---|
+| "The AI service is not set up correctly…" (503) | `GEMINI_API_KEY` missing, or Google rejected it (401/403) | Update `GEMINI_API_KEY` **in Vercel → Settings → Environment Variables**, then redeploy. A key changed only in the local `.env` does not reach production |
+| "The AI service is busy right now…" (503) | Every model stayed busy or timed out | Wait a minute and retry. Transient on Google's side |
+| "Could not parse this input…" (500) | A model answered but the reply was unusable | Try again, or enter manually. Details are in Vercel → Logs, line `AI Intake parse error:` |
+
+**When Google retires a model** (it answers 404 "no longer available"), list what
+the key can use and pick a replacement:
+
+```bash
+curl -s "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200" \
+  -H "x-goog-api-key: $GEMINI_API_KEY" | grep '"name"'
+```
+
+For an immediate fix without a code change, set `GEMINI_MODEL` in Vercel to a
+working model name — it pins that one model and skips the list — then update
+`TEXT_MODELS` / `VISION_MODELS` in code. Verified on 2026-09-25:
+`gemini-2.5-flash-lite` retired for this key; `gemini-2.5-flash` and
+`gemini-3.5-flash-lite` both extract every field from a test screenshot.
 
 ## Where page time goes, and how to check it
 

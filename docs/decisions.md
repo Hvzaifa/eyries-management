@@ -1317,7 +1317,20 @@ Result: booking page data **3,740 ms → 212 ms**, dashboard **2,067 ms → 117 
 - Checked and left alone: every server action is guarded; both API routes authenticate; RLS on 11/11 tables; no server secret in client code; forged session cookies are rejected (tested against a production build).
 - **A pre-existing bug fixed in passing:** `db/apply-security.ts` refused to commit whenever the refund log was empty, treating "no rows" as "no access" — so since the 2026-09-20 reset it could not be re-applied at all. It now treats a successful query as proof of access.
 
-**Owner caution recorded in `operations.md`:** when switching to asymmetric JWT keys, **rotate but do not revoke** the legacy secret — the app's current anon key is a JWT signed by it.
+**Owner caution recorded in `operations.md`, corrected 2026-09-25:** the first version said to rotate but never revoke because the app's anon key was a JWT signed by the legacy secret. That was not checked, and was wrong — the app uses a new `sb_publishable_…` key, and the project already publishes an ES256 key. Revoking is still unnecessary (it gains nothing, and a legacy `service_role` key used for seeding users would stop working), but not for the reason first given.
+
+### 2026-09-25 — AI screenshot upload failing with "failed to parse" (500)
+
+**Report:** the deployed AI intake returned 500 on image upload.
+
+**Three causes found, all producing the same generic 500 in the deployed code:**
+1. **The production key.** Earlier the same day `GEMINI_API_KEY` was found not to be a valid Gemini key (401 everywhere). A new key went into the local `.env` at 16:29 — 23 minutes *after* the 16:06 deploy — and works (verified). Vercel's environment variable is separate and must be updated there; the local file never reaches production. The deployed route turned a 401 into "Could not parse this input", which reads like a bad screenshot.
+2. **A busy provider with no fallback.** Google answered 503 *"This model is currently experiencing high demand"* on 1 of 3 probes for two models that afternoon. The screenshot path had exactly one model and no retry, so any busy moment became a failed upload.
+3. **A retired backup model.** The text path's fallback `gemini-2.5-flash-lite` now answers 404 *"no longer available to new users"*.
+
+**Fixes.** Both paths now try `gemini-2.5-flash` then `gemini-3.5-flash-lite` (Google's named replacement), each chosen by testing — a rendered booking confirmation parsed with every field correct (PNR, seats, fare, taxes, both dates, sector, segment) by both, three runs in a row on the default path. `gemini-3.5-flash` and `gemini-flash-latest` were also tried and rejected: both returning 503 at the time. A busy or timed-out model gets one retry after 1.5 s; the whole attempt is capped at 55 s, inside Vercel's function limit. Failures are now three distinct messages — key problem, provider busy, unparseable reply — so staff are never told their screenshot is at fault when it is not. `AiBusyError` is raised only when *every* failure was transient; one genuine rejection among them keeps the parse-failure message.
+
+**Also this day:** the Content-Security-Policy moved from Report-Only to enforced after the owner saw no violations in the deployed app; the built login page references no external resource. The Supabase project was found to be already on asymmetric (ES256) JWT signing keys with a new-style publishable API key, so the "rotate keys" owner step was unnecessary.
 
 ## Template for new entries
 

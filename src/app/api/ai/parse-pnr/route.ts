@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { parseAirlineMessage } from '@/lib/ai/parse-booking';
+import { parseAirlineMessage, AiConfigError, AiBusyError } from '@/lib/ai/parse-booking';
 import { parseExcelFile } from '@/lib/ai/parse-excel';
 import { createRateLimiter } from '@/lib/rate-limit';
 
@@ -100,6 +100,33 @@ export async function POST(request: Request) {
     // message can carry a provider's raw error body, which is not the browser's
     // business.
     console.error('AI Intake parse error:', err);
+    // A configuration problem is not the user's input at fault, and saying
+    // "could not parse this input" sends them retrying a screenshot that was
+    // never the problem. The message names the setting, never the key.
+    if (err instanceof AiConfigError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            'The AI service is not set up correctly (its API key is missing or was rejected). ' +
+            'Ask an administrator to update GEMINI_API_KEY. You can still enter the booking manually.',
+        },
+        { status: 503 }
+      );
+    }
+    // The provider was busy on every model, even after a retry. Nothing is
+    // wrong with the screenshot, and saying so would send staff re-cropping an
+    // image that was never the problem.
+    if (err instanceof AiBusyError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            'The AI service is busy right now. Please try again in a minute, or enter the booking manually.',
+        },
+        { status: 503 }
+      );
+    }
     return NextResponse.json(
       { ok: false, error: 'Could not parse this input. Try again, or enter the booking manually.' },
       { status: 500 }
