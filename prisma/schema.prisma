@@ -3,6 +3,14 @@
 
 generator client {
   provider = "prisma-client-js"
+  // driverAdapters: queries go through node-postgres (`src/lib/prisma.ts`),
+  // which costs ONE network round trip per query over Supabase's transaction
+  // pooler. The built-in engine in `pgbouncer=true` mode measured ~5 (504 ms vs
+  // 103 ms per query from Pakistan to Singapore, 2026-09-24).
+  //
+  // relationJoins: an `include` becomes one LATERAL JOIN query instead of one
+  // query per relation. The booking page issued 23 SQL queries before this.
+  previewFeatures = ["driverAdapters", "relationJoins"]
 }
 
 datasource db {
@@ -26,8 +34,80 @@ model Branch {
   name      String   @unique
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   pnrs      Pnr[]
+  agents    Agent[]
 
   @@map("branches")
+}
+
+/// A travel agent seats are handed over to. A record, never a login — agents do
+/// not have accounts (docs/decisions.md, 2026-09-16).
+model Agent {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name              String
+  /// Lower-cased, trimmed name. Unique, so the same agent cannot exist twice
+  /// under two spellings. Written by the app, never entered by staff.
+  nameKey           String   @unique @map("name_key")
+  b2bCode           String?  @map("b2b_code")
+  contactEmails     String[] @map("contact_emails")
+  contactPhone      String?  @map("contact_phone")
+  /// Null = created by head office. Drives who can see this agent.
+  createdByBranchId String?  @map("created_by_branch_id") @db.Uuid
+  createdByBranch   Branch?  @relation(fields: [createdByBranchId], references: [id])
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([createdByBranchId], map: "idx_agents_branch")
+  @@index([active], map: "idx_agents_active")
+  @@map("agents")
+
+  assignments AgentAssignment[]
+}
+
+/// Seats of one PNR held by one agent, with that agent's commercial terms.
+/// Several rows per PNR are normal — one PNR can be shared between agents.
+/// The money fields are written from phase 6 and used from phase 7.
+model AgentAssignment {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  pnrId         String    @map("pnr_id") @db.Uuid
+  pnr           Pnr       @relation(fields: [pnrId], references: [id], onDelete: Cascade)
+  agentId       String    @map("agent_id") @db.Uuid
+  agent         Agent     @relation(fields: [agentId], references: [id])
+  seats         Int
+  chargeType    String    @default("none") @map("charge_type")
+  chargeValue   Decimal?  @map("charge_value") @db.Decimal(12, 2)
+  discountType  String    @default("none") @map("discount_type")
+  discountValue Decimal?  @map("discount_value") @db.Decimal(12, 2)
+  chargeTax     Boolean   @default(false) @map("charge_tax")
+  assignedAt    DateTime  @default(now()) @map("assigned_at") @db.Timestamptz
+  assignedBy    String?   @map("assigned_by") @db.Uuid
+  /// Set when seats are taken back. Released rows stay as history and stop
+  /// counting against the ledger — they are never deleted.
+  releasedAt    DateTime? @map("released_at") @db.Timestamptz
+
+  recoveries AgentRecovery[]
+
+  @@index([pnrId], map: "idx_agent_assignments_pnr")
+  @@index([agentId], map: "idx_agent_assignments_agent")
+  @@map("agent_assignments")
+}
+
+/// Money actually received from an agent against one assignment (phase 7).
+/// Outstanding is the agent's calculated total minus these rows — never stored.
+model AgentRecovery {
+  id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  assignmentId String          @map("assignment_id") @db.Uuid
+  assignment   AgentAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  amount       Decimal         @db.Decimal(14, 2)
+  receivedDate DateTime        @map("received_date") @db.Date
+  method       String?
+  /// The agent's payment reference. Shown to staff, never written to a log line.
+  reference    String?
+  recordedBy   String?         @map("recorded_by") @db.Uuid
+  createdAt    DateTime        @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([assignmentId], map: "idx_agent_recoveries_assignment")
+  @@index([receivedDate], map: "idx_agent_recoveries_date")
+  @@map("agent_recoveries")
 }
 
 model Airline {
@@ -79,6 +159,7 @@ model Pnr {
   ticketing        Ticketing?
   parentAllocations Allocation[] @relation("ParentAllocations")
   childAllocations  Allocation[] @relation("ChildAllocations")
+  agentAssignments  AgentAssignment[]
 
   @@index([parentPnrId], map: "idx_pnrs_parent")
   @@index([status], map: "idx_pnrs_status")
@@ -101,6 +182,10 @@ model EmdRound {
   status       String    @default("issued")
   refundAmount Decimal?  @map("refund_amount") @db.Decimal(14, 2)
   refundDate   DateTime? @map("refund_date") @db.Date
+  // The day this EMD was paid to IATA. Null = not recorded as paid. Separate
+  // from `status` on purpose: a paid EMD is still 'issued' — the airline still
+  // holds it. See src/lib/iata-calendar.ts.
+  paymentDate  DateTime? @map("payment_date") @db.Date
   licenseId    String?   @map("license_id") @db.Uuid
   license      License?  @relation(fields: [licenseId], references: [id])
   createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
@@ -110,6 +195,7 @@ model EmdRound {
   @@index([pnrId], map: "idx_emd_rounds_pnr")
   @@index([deadlineDate], map: "idx_emd_rounds_deadline")
   @@index([status], map: "idx_emd_rounds_status")
+  @@index([issuanceDate], map: "idx_emd_rounds_unpaid")
   @@map("emd_rounds")
 }
 

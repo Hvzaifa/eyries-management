@@ -1,6 +1,6 @@
 import { logout } from '@/app/login/actions';
-import { resolveAuthUser, isHeadOffice } from '@/lib/auth';
-import type { User } from '@supabase/supabase-js';
+import { resolveAuthUser, isHeadOffice, type SessionIdentity } from '@/lib/auth';
+import { getAuthUser } from '@/lib/server/session';
 import Link from 'next/link';
 import { Plane, LogOut } from 'lucide-react';
 
@@ -9,11 +9,15 @@ export default async function AppHeader({
   subtitle,
   breadcrumb,
 }: {
-  user: User;
+  user: SessionIdentity;
   subtitle?: string;
   breadcrumb?: { href: string; label: string };
 }) {
-  const authUser = await resolveAuthUser(user);
+  // The page resolved this account a moment ago; `getAuthUser` is cached per
+  // request, so the header reuses that result instead of looking the branch up
+  // again. The fallback only runs if the header is ever rendered outside a page
+  // that went through `requirePageUser`.
+  const authUser = (await getAuthUser()) ?? (await resolveAuthUser(user));
   const isHQ = isHeadOffice(authUser);
 
   const badgeLabel = isHQ ? 'Head Office' : `${authUser.branchName ?? 'Branch'}`;
@@ -43,9 +47,21 @@ export default async function AppHeader({
         </div>
 
         <div className="flex items-center gap-4">
+          {/* Agents are visible to both account types — a branch sees the ones
+              it created (docs/decisions.md, 2026-09-19 ruling 8). */}
+          <Link href="/agents" className="text-sm font-medium text-stone-600 hover:text-indigo-600 transition-colors">
+            Agents
+          </Link>
           {isHQ && (
             <Link href="/refunds" className="text-sm font-medium text-stone-600 hover:text-indigo-600 transition-colors mr-1">
               Refunds
+            </Link>
+          )}
+          {/* Paying IATA is a head-office settlement; a branch has no reason to
+              see company-wide obligations (owner ruling, 2026-09-22). */}
+          {isHQ && (
+            <Link href="/iata" className="text-sm font-medium text-stone-600 hover:text-indigo-600 transition-colors mr-1">
+              IATA
             </Link>
           )}
           <span className={`text-xs px-3 py-1.5 rounded-xl border font-medium ${

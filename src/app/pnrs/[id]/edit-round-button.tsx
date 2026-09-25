@@ -140,11 +140,8 @@ export default function EditRoundButton({ round, licenses }: { pnrId: string, ro
                 </label>
                 <select name="round_status" defaultValue={round.status} className={inputCls}>
                   <option value="issued">Issued</option>
-                  <option value="paid">Paid</option>
-                  <option value="refund_requested">Refund requested</option>
                   <option value="refunded">Refunded</option>
-                  <option value="expired">Expired</option>
-                </select>
+                  </select>
               </div>
 
               <div className="pt-2 flex justify-end gap-2">

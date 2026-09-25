@@ -1,7 +1,6 @@
-import { createClient } from '@/lib/supabase/server';
-import { redirect } from 'next/navigation';
+import { requirePageUser } from '@/lib/server/session';
 import Link from 'next/link';
-import { resolveAuthUser } from '@/lib/auth';
+import { isHeadOffice } from '@/lib/auth';
 import { listPnrs } from '@/lib/pnrs';
 import { todayIsoInPkt } from '@/lib/urgency';
 import PnrTable from '@/components/pnr-table';
@@ -9,14 +8,7 @@ import AppHeader from '@/components/app-header';
 import { RotateCcw, PlusCircle, Mail } from 'lucide-react';
 
 export default async function HomePage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect('/login');
-  }
-
-  const authUser = await resolveAuthUser(user);
+  const { user, authUser } = await requirePageUser();
 
   const rows = await listPnrs(authUser);
 
@@ -65,7 +57,7 @@ export default async function HomePage() {
 
         {/* The cards live inside PnrTable: they re-total on every filter change,
             and the filters are the table's own state. */}
-        <PnrTable rows={rows} todayIso={todayIsoInPkt()} />
+        <PnrTable rows={rows} todayIso={todayIsoInPkt()} canIssueEmds={isHeadOffice(authUser)} />
 
         <p className="text-[11px] text-stone-400">
           Cards follow the filters above and show active PNRs unless a status is chosen. Total paid

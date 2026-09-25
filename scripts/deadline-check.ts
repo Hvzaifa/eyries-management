@@ -41,6 +41,14 @@ async function main() {
     console.log(`\nSubject: ${result.subject}`);
   }
 
+  console.log(`Due ticketing deadlines: ${result.ticketingAlerts.length}`);
+  for (const t of result.ticketingAlerts) {
+    console.log(
+      `  ${t.pnrCode} ${t.kind === 'name_update' ? 'name update' : 'ticket issuance'} ` +
+        `${t.airlineCode ?? '—'} ${t.seats} seats due ${t.deadlineDate} (in ${t.daysLeft}d)`
+    );
+  }
+
   if (result.error) {
     console.error(`\nNot sent: ${result.error}`);
     process.exit(1);

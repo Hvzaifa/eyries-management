@@ -11,6 +11,9 @@ import { validateRefund, MAX_BULK_REFUNDS } from '@/lib/refunds';
 import { str, dateVal, numVal } from '@/lib/form';
 import { requireHeadOffice, TX_TIMEOUT_MS } from '@/lib/server/guards';
 import { syncPnrTlDate } from '@/lib/server/pnr-tl';
+import { isValidEmdNumber, EMD_NUMBER_HINT } from '@/lib/bulk-emd';
+import { validateIataPayment } from '@/lib/iata-payments';
+import { todayIsoInPkt } from '@/lib/urgency';
 
 export async function createEmdRound(formData: FormData) {
   const user = await requireHeadOffice();
@@ -44,8 +47,8 @@ export async function createEmdRound(formData: FormData) {
   if (!emdNumber) {
     return { error: 'EMD Number is required.' };
   }
-  if (!/^\d{3} \d{10}$/.test(emdNumber)) {
-    return { error: 'EMD Number must be exactly 13 digits with a space after the first three numbers (e.g. 123 4567890123).' };
+  if (!isValidEmdNumber(emdNumber)) {
+    return { error: EMD_NUMBER_HINT };
   }
 
   await prisma.$transaction(async (tx) => {
@@ -115,8 +118,8 @@ export async function updateEmdRound(formData: FormData) {
   if (!emdNumber) {
     return { error: 'EMD Number is required.' };
   }
-  if (!/^\d{3} \d{10}$/.test(emdNumber)) {
-    return { error: 'EMD Number must be exactly 13 digits with a space after the first three numbers (e.g. 123 4567890123).' };
+  if (!isValidEmdNumber(emdNumber)) {
+    return { error: EMD_NUMBER_HINT };
   }
 
   await prisma.$transaction(async (tx) => {
@@ -171,7 +174,12 @@ export async function recordEmdRefund(formData: FormData) {
   const pnrId = existing.pnrId;
 
   const refundAmount = numVal(formData, 'refund_amount');
-  const check = validateRefund(refundAmount, str(formData, 'refund_date'), existing.status);
+  const check = validateRefund(
+    refundAmount,
+    str(formData, 'refund_date'),
+    existing.status,
+    Number(existing.emdAmount)
+  );
   // Re-wrap in a fresh object literal rather than returning `check` directly.
   // Every action here returns literals, which TypeScript merges into one type
   // with optional properties — that is what lets callers write `res?.error`.
@@ -223,7 +231,8 @@ export async function fetchEmdRoundsByPnrs(pnrCodes: string[]) {
   const rounds = await prisma.emdRound.findMany({
     where: {
       pnr: { pnr: { in: normalizedCodes } },
-      status: { in: ['issued', 'paid', 'refund_requested'] },
+      // Only an issued round can be refunded — the one other status IS refunded.
+      status: 'issued',
     },
     include: {
       pnr: { select: { pnr: true, investorCompany: true } },
@@ -273,7 +282,7 @@ export async function processBulkRefunds(refunds: { roundId: string, amount: num
       return { error: `One of the selected EMD rounds no longer exists. Re-fetch the list and try again.` };
     }
     const label = `${existing.pnr.pnr} round ${existing.roundNumber}`;
-    const check = validateRefund(req.amount, req.date, existing.status);
+    const check = validateRefund(req.amount, req.date, existing.status, Number(existing.emdAmount));
     if ('error' in check) return { error: `${label}: ${check.error}` };
     validated.push({ roundId: req.roundId, pnrId: existing.pnrId, amount: req.amount, date: check.date });
   }
@@ -317,3 +326,91 @@ export async function processBulkRefunds(refunds: { roundId: string, amount: num
 }
 
 
+
+/**
+ * Records that an EMD was paid to IATA — or clears that record.
+ *
+ * Head Office only, like every other action here: paying IATA is a head-office
+ * settlement, not something a branch does.
+ *
+ * `status` is deliberately untouched. Payment and possession are separate
+ * facts: a paid EMD is still `issued`, because the airline still holds it.
+ * Folding the two together is what made the old `paid` status wrong
+ * (docs/decisions.md, 2026-09-21).
+ */
+export async function recordIataPayment(formData: FormData) {
+  const user = await requireHeadOffice();
+
+  const roundId = str(formData, 'round_id');
+  if (!roundId) return { error: 'Missing round ID.' };
+
+  const existing = await prisma.emdRound.findUnique({ where: { id: roundId } });
+  if (!existing) return { error: 'EMD round not found.' };
+
+  const issuanceIso = existing.issuanceDate.toISOString().slice(0, 10);
+  const check = validateIataPayment(
+    str(formData, 'payment_date'),
+    issuanceIso,
+    todayIsoInPkt()
+  );
+  // Re-wrapped in a fresh literal rather than returned directly — see the note
+  // in `recordEmdRefund` about keeping the action's return type a loose union.
+  if ('error' in check) return { error: check.error };
+
+  const paymentDate = check.date;
+  const previous = existing.paymentDate ? existing.paymentDate.toISOString().slice(0, 10) : null;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.emdRound.update({ where: { id: roundId }, data: { paymentDate } });
+    await tx.activityLog.create({
+      data: {
+        tableName: 'emd_rounds',
+        recordId: roundId,
+        fieldName: 'payment_date',
+        oldValue: previous,
+        newValue: paymentDate.toISOString().slice(0, 10),
+        changedBy: user.id,
+      },
+    });
+  }, { timeout: TX_TIMEOUT_MS });
+
+  revalidatePath('/');
+  revalidatePath('/iata');
+  revalidatePath(`/pnrs/${existing.pnrId}`);
+  return { success: true };
+}
+
+/**
+ * Undoes a payment recorded by mistake, putting the round back on the list of
+ * what IATA is owed. Kept separate from `recordIataPayment` so clearing a
+ * payment can never be the accidental result of an empty date field.
+ */
+export async function clearIataPayment(formData: FormData) {
+  const user = await requireHeadOffice();
+
+  const roundId = str(formData, 'round_id');
+  if (!roundId) return { error: 'Missing round ID.' };
+
+  const existing = await prisma.emdRound.findUnique({ where: { id: roundId } });
+  if (!existing) return { error: 'EMD round not found.' };
+  if (!existing.paymentDate) return { error: 'No payment is recorded against this round.' };
+
+  await prisma.$transaction(async (tx) => {
+    await tx.emdRound.update({ where: { id: roundId }, data: { paymentDate: null } });
+    await tx.activityLog.create({
+      data: {
+        tableName: 'emd_rounds',
+        recordId: roundId,
+        fieldName: 'payment_date',
+        oldValue: existing.paymentDate!.toISOString().slice(0, 10),
+        newValue: null,
+        changedBy: user.id,
+      },
+    });
+  }, { timeout: TX_TIMEOUT_MS });
+
+  revalidatePath('/');
+  revalidatePath('/iata');
+  revalidatePath(`/pnrs/${existing.pnrId}`);
+  return { success: true };
+}

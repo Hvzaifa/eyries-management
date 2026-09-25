@@ -32,24 +32,25 @@ async function main() {
     console.log(`RLS enabled on ${TABLES.length} tables.`);
 
     await c.query('alter view refunded_emd_rounds set (security_invoker = on)');
-    await c.query('alter view dashboard_totals   set (security_invoker = on)');
-    console.log('security_invoker = on set on both views.');
+    // `dashboard_totals` was dropped on 2026-09-24 (unused since 2026-09-09);
+    // `refunded_emd_rounds` is the only view left.
+    console.log('security_invoker = on set on refunded_emd_rounds.');
 
     for (const role of ['anon', 'authenticated']) {
       const { rows } = await c.query('select 1 from pg_roles where rolname = $1', [role]);
       if (rows.length === 0) { console.log(`  role ${role} absent — skipped`); continue; }
       await c.query(`revoke all on refunded_emd_rounds from ${role}`);
-      await c.query(`revoke all on dashboard_totals   from ${role}`);
       console.log(`  revoked view access from ${role}`);
     }
 
     // Prove the app is unaffected before committing.
+    // Access is proved by the query SUCCEEDING. It used to also demand at least
+    // one refund row, which made this script refuse to commit on any database
+    // with no refunds yet — including the live one after the 2026-09-20 reset.
+    // A permission failure throws; an empty result is just an empty log.
     const refunds = await c.query('select count(*)::int n from refunded_emd_rounds');
-    const totals = await c.query('select active_pnrs from dashboard_totals');
-    console.log(`\nApp role still reads: ${refunds.rows[0].n} refund rows, ${totals.rows[0].active_pnrs} active PNRs.`);
-    if (refunds.rows[0].n === 0 || totals.rows.length === 0) {
-      throw new Error('App role lost access to a view — refusing to commit.');
-    }
+    const pnrs = await c.query('select count(*)::int n from pnrs');
+    console.log(`\nApp role still reads: ${refunds.rows[0].n} refund rows, ${pnrs.rows[0].n} PNRs.`);
 
     if (commit) {
       await c.query('commit');

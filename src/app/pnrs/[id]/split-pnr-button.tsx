@@ -110,20 +110,6 @@ export default function SplitPnrButton({ pnrId, pnrCode, maxSeats }: SplitPnrBut
 
               <div>
                 <label className="block text-xs font-medium text-stone-600 mb-1.5">
-                  New Investor Company <span className="text-red-400">*</span>
-                  <span className="text-[10px] text-stone-400 ml-1">(whom seats are assigned to)</span>
-                </label>
-                <input
-                  type="text"
-                  name="new_investor_company"
-                  required
-                  placeholder="Company name"
-                  className={inputCls}
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-stone-600 mb-1.5">
                   Child Outbound Date
                   <span className="text-[10px] text-stone-400 ml-1">(leave empty to inherit from parent)</span>
                 </label>

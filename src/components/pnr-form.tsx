@@ -2,8 +2,14 @@
 
 import { useMemo, useState, useTransition } from 'react';
 import { AlertTriangle, Save, Sparkles } from 'lucide-react';
-import { suggestEmdPlan, emd2DaysBeforeDeparture, emd1DaysToDeadline, clampEmd2Deadline } from '@/lib/emd';
-import { formatEmdNumberInput } from '@/lib/format';
+import {
+  suggestEmdPlan,
+  emd2DaysBeforeDeparture,
+  emd1DaysToDeadline,
+  emd1PolicyDaysToIssue,
+  clampEmd2Deadline,
+} from '@/lib/emd';
+import { SEGMENTS } from '@/lib/booking-entry';
 import { diffInDays, todayIsoInPkt } from '@/lib/urgency';
 import type { PnrFormOptions } from '@/lib/pnrs';
 import type { FieldConfidence } from '@/lib/ai/parse-booking';
@@ -93,13 +99,14 @@ export default function PnrForm({
 }) {
   const conf = (key: keyof PnrFormValues) => confidenceMap?.[key];
   const [values, setValues] = useState<PnrFormValues>(initial);
-  const [roundPct, setRoundPct] = useState<string>('');
-  const [roundPctTouched, setRoundPctTouched] = useState(false);
-  const [roundDeadline, setRoundDeadline] = useState<string>('');
-  const [roundDeadlineTouched, setRoundDeadlineTouched] = useState(false);
-  const [showRound] = useState(mode === 'create');
+  // Seeded from the booking so a date that arrived with the draft — the AI
+  // intake parses a TL date off the airline's email — is not silently replaced
+  // by the policy calculation. A supplied date counts as already touched.
+  const [roundDeadline, setRoundDeadline] = useState<string>(initial.pnrTlDate ?? '');
+  const [roundDeadlineTouched, setRoundDeadlineTouched] = useState(
+    Boolean(initial.pnrTlDate)
+  );
   const [duplicateWarning, setDuplicateWarning] = useState(false);
-  const [confirmedDuplicate, setConfirmedDuplicate] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -119,11 +126,6 @@ export default function PnrForm({
     [airlineCode, values.segment, values.requestDate, values.outboundDate]
   );
 
-  const autoRoundPct =
-    mode === 'create' && !roundPctTouched && suggestion.applicable && suggestion.emd1Pct !== null
-      ? String(suggestion.emd1Pct)
-      : roundPct;
-
   const computedDeadlineDate = useMemo(() => {
     if (mode !== 'create') return '';
     // Only airlines with an uploaded policy get a suggestion (docs/decisions.md,
@@ -133,9 +135,9 @@ export default function PnrForm({
     if (!suggestion.applicable) return '';
     if (!values.requestDate || !values.outboundDate) return '';
 
-    // Band-based, per the owner's 2026-09-07 ruling — see emd1DaysToDeadline().
-    // The old rule keyed off the percentage and gave every band except 15% and
-    // 30% a deadline of TODAY, so short-notice bookings were created overdue.
+    // The date by which EMD-1 must be ISSUED: the airline's band figure brought
+    // forward by the 3-day safety margin — see emd1DaysToDeadline(). Short-notice
+    // bands resolve to today, which is the rule, not an accident.
     const daysToAdd = emd1DaysToDeadline(diffInDays(values.requestDate, values.outboundDate));
 
     // Count forward in UTC from today-in-PKT, so adding days cannot be shifted
@@ -155,6 +157,12 @@ export default function PnrForm({
   // (There was an `autoPnrTlDate` here that nothing ever rendered. The PNR TL is
   // set server-side from round 1's deadline in createPnr, so the form does not
   // need to derive it — docs/decisions.md, 2026-09-07 "PNR TL defined".)
+
+  /** The airline's own figure, shown so staff can see what the margin came off. */
+  const policyDays =
+    values.requestDate && values.outboundDate
+      ? emd1PolicyDaysToIssue(diffInDays(values.requestDate, values.outboundDate))
+      : 0;
 
   const emd2DeadlinePreview = useMemo(() => {
     if (!suggestion.applicable || suggestion.emd2Pct === null) return null;
@@ -182,7 +190,10 @@ export default function PnrForm({
     e.preventDefault();
     setErrorMessage(null);
 
-    if (mode === 'create' && duplicate && !confirmedDuplicate) {
+    // A PNR code identifies one booking (owner ruling, 2026-09-20). This used
+    // to warn and offer "save anyway"; the server now refuses, so offering it
+    // would only produce a rejection after the click.
+    if (duplicate) {
       setDuplicateWarning(true);
       return;
     }
@@ -199,13 +210,6 @@ export default function PnrForm({
     });
   };
 
-  const confirmDuplicateAndSave = () => {
-    setConfirmedDuplicate(true);
-    setDuplicateWarning(false);
-    const form = document.getElementById('pnr-form') as HTMLFormElement | null;
-    form?.requestSubmit();
-  };
-
   return (
     <form id="pnr-form" onSubmit={handleSubmit} className="space-y-5">
       {rawAirlineText && (
@@ -219,31 +223,15 @@ export default function PnrForm({
       )}
 
       {duplicateWarning && duplicate && (
-        <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl space-y-3">
-          <p className="flex items-start gap-2.5 text-xs text-amber-800 leading-relaxed">
+        <div className="p-4 bg-red-50 border border-red-200 rounded-xl">
+          <p className="flex items-start gap-2.5 text-xs text-red-800 leading-relaxed">
             <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
             <span>
-              A booking with PNR code <strong className="font-mono">{values.pnr.trim()}</strong>{' '}
-              already exists in the system. Duplicates are allowed but flagged — double-check this
-              is not a data-entry slip.
+              PNR <strong className="font-mono">{values.pnr.trim()}</strong> already exists. A
+              booking cannot be entered twice — open the existing booking instead, or correct the
+              code.
             </span>
           </p>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={confirmDuplicateAndSave}
-              className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-500 hover:bg-amber-400 text-white transition-colors cursor-pointer"
-            >
-              Save anyway
-            </button>
-            <button
-              type="button"
-              onClick={() => setDuplicateWarning(false)}
-              className="px-3 py-1.5 text-xs font-medium rounded-lg bg-white hover:bg-stone-50 border border-stone-300 text-stone-600 transition-colors cursor-pointer"
-            >
-              Let me fix it
-            </button>
-          </div>
         </div>
       )}
 
@@ -251,10 +239,20 @@ export default function PnrForm({
         <Field label="Request date" required confidence={conf('requestDate')}>
           <input type="date" name="request_date" required value={values.requestDate} onChange={set('requestDate')} className={inputCls} />
         </Field>
-        <Field label="Investor company" required confidence={conf('investorCompany')}>
-          <input name="investor_company" required value={values.investorCompany} onChange={set('investorCompany')} placeholder="e.g. Al-Noor Travels" className={inputCls} />
-        </Field>
-        <Field label="PNR code" required hint="Duplicates are flagged, not blocked." confidence={conf('pnr')}>
+        {/* Investor company is no longer typed. Every booking is bought on
+            company investment and stays there until its seats are handed to an
+            agent or put on sale through the bot (owner ruling, 2026-09-20), so
+            the Seat ownership panel answers this, not a free-text box that could
+            disagree with it. Imported bookings keep the name the sheet recorded
+            and show it read-only below. */}
+        {values.investorCompany && values.investorCompany.toUpperCase() !== 'COMPANY INVESTMENT' && (
+          <Field label="Investor company (as recorded)" hint="From the original sheet. Seat ownership is managed on the booking page.">
+            <p className="text-sm text-stone-500 px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl">
+              {values.investorCompany}
+            </p>
+          </Field>
+        )}
+        <Field label="PNR code" required hint="Must be unique — one booking per code." confidence={conf('pnr')}>
           <input name="pnr" required value={values.pnr} onChange={set('pnr')} placeholder="e.g. XYZ123" className={`${inputCls} font-mono`} />
         </Field>
         <Field label="License" confidence={conf('licenseId')}>
@@ -275,11 +273,17 @@ export default function PnrForm({
             {options.airlines.map((a) => <option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}
           </select>
         </Field>
-        <Field label="Segment" hint="Free text with suggestions from previous entries." confidence={conf('segment')}>
-          <input name="segment" list="segment-suggestions" value={values.segment} onChange={set('segment')} placeholder="Employment / Umrah / ..." className={inputCls} />
-          <datalist id="segment-suggestions">
-            {options.segmentSuggestions.map((s) => <option key={s} value={s} />)}
-          </datalist>
+        <Field label="Segment" confidence={conf('segment')}>
+          <select name="segment" value={values.segment} onChange={set('segment')} className={`${inputCls} cursor-pointer`}>
+            <option value="">—</option>
+            {SEGMENTS.map((s) => <option key={s} value={s}>{s}</option>)}
+            {/* A booking imported with some other value keeps it until someone
+                changes it: the list is for what is entered from now on, not a
+                reason to block editing an old booking. */}
+            {values.segment && !SEGMENTS.some((s) => s.toLowerCase() === values.segment.toLowerCase()) && (
+              <option value={values.segment}>{values.segment} (as recorded)</option>
+            )}
+          </select>
         </Field>
         <Field label="GDS PNR" hint="Only when booked directly via a GDS." confidence={conf('gdsPnr')}>
           <input name="gds_pnr" value={values.gdsPnr} onChange={set('gdsPnr')} className={`${inputCls} font-mono`} />
@@ -296,9 +300,19 @@ export default function PnrForm({
         <Field label="Sector" hint="e.g. ISB-JED-MED-ISB" confidence={conf('sector')}>
           <input name="sector" value={values.sector} onChange={set('sector')} className={`${inputCls} font-mono`} />
         </Field>
-        <Field label="PNR TL date" hint="Time-limit / void date from the airline." confidence={conf('pnrTlDate')}>
-          <input type="date" name="pnr_tl_date" value={values.pnrTlDate} onChange={set('pnrTlDate')} className={inputCls} />
-        </Field>
+        {/* On a NEW booking this date is the first EMD's issuance deadline and is
+            entered in its own section below, so it is not asked for twice. On an
+            existing booking it is the live time limit, kept in sync with the
+            earliest outstanding round. */}
+        {mode === 'edit' && (
+          <Field
+            label="PNR TL date"
+            hint="The time limit the PNR rests with us — the date the next EMD must be issued by."
+            confidence={conf('pnrTlDate')}
+          >
+            <input type="date" name="pnr_tl_date" value={values.pnrTlDate} onChange={set('pnrTlDate')} className={inputCls} />
+          </Field>
+        )}
         <Field label="Deal %" confidence={conf('dealPct')}>
           <input type="number" name="deal_pct" step="0.01" min="0" max="100" value={values.dealPct} onChange={set('dealPct')} className={inputCls} />
         </Field>
@@ -330,100 +344,48 @@ export default function PnrForm({
       </SectionCard>
 
       {mode === 'create' && (
-        <section className="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
-            <h2 className="text-sm font-semibold text-stone-900">First EMD round</h2>
-          </div>
-
-          {showRound ? (
-            <>
-              <div className="flex items-center gap-2 mb-4 text-[11px] text-indigo-700">
-                <Sparkles className="w-3.5 h-3.5 flex-shrink-0" />
-                {!suggestion.applicable && suggestion.reason === 'non-sv-airline' && (
-                  <span>No policy stored for this airline yet — set the % manually. Policies can be added per airline later.</span>
-                )}
-                {!suggestion.applicable && suggestion.reason === 'non-umrah-segment' && (
-                  <span>Only SV Umrah bookings get automatic % suggestions right now — set this one manually.</span>
-                )}
-                {!suggestion.applicable && suggestion.reason === 'missing-dates' && (
-                  <span>Pick the request date, outbound date and airline to check for a policy suggestion.</span>
-                )}
-                {suggestion.applicable && (
-                  <span>
-                    SV Umrah policy ({suggestion.bandLabel}): 1st EMD{' '}
-                    <strong>{suggestion.emd1Pct}%</strong> pre-filled below, editable · balance{' '}
-                    {suggestion.emd2Pct !== null ? `${suggestion.emd2Pct}%` : '—'} recorded as the
-                    2nd round when paid
-                    {emd2DeadlinePreview && (
-                      <> — policy deadline for the 2nd EMD: <strong>{emd2DeadlinePreview}</strong></>
-                    )}
-                    .
-                  </span>
-                )}
-              </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-4">
-                  <Field label="Issuance date" required hint="Auto-set to current date.">
-                    <input type="date" disabled defaultValue={new Date().toISOString().slice(0, 10)} className={`${inputCls} bg-stone-100 opacity-70 cursor-not-allowed`} />
-                  </Field>
-                  <Field label="Payment %" required hint="Suggested from request → departure days; always editable.">
-                    <input
-                      type="number"
-                      name="round_payment_pct"
-                      step="0.01" min="0" max="100"
-                      value={autoRoundPct}
-                      onChange={(e) => {
-                        setRoundPct(e.target.value);
-                        setRoundPctTouched(true);
-                      }}
-                      className={inputCls}
-                    />
-                  </Field>
-                  <Field label="EMD number" required hint="Airline's reference.">
-                    <input 
-                      name="round_emd_number" 
-                      required
-                      className={inputCls} 
-                      placeholder="e.g. 123 4567890123"
-                      onChange={(e) => e.target.value = formatEmdNumberInput(e.target.value)}
-                    />
-                  </Field>
-                  <Field label="EMD amount (PKR)" required hint="Type the agreed amount — never auto-calculated.">
-                    <input type="number" name="round_emd_amount" step="0.01" min="0" className={inputCls} />
-                  </Field>
-                  <Field label="Paid By License" hint="Defaults to the PNR's license if blank.">
-                    <select name="round_license_id" className={`${inputCls} cursor-pointer`}>
-                      <option value="">— (Same as PNR) —</option>
-                      {options.licenses.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-                    </select>
-                  </Field>
-                  <Field
-                    label="Deadline date"
-                    required
-                    hint="Defaults to the PNR TL date — that is the EMD-1 deadline until the deposit email is sent to the airline."
-                  >
-                    <input
-                      type="date"
-                      name="round_deadline_date"
-                      required
-                      value={autoRoundDeadline}
-                      onChange={(e) => {
-                        setRoundDeadline(e.target.value);
-                        setRoundDeadlineTouched(true);
-                      }}
-                      className={inputCls}
-                    />
-                  </Field>
-                  <Field label="Deadline time">
-                    <input type="time" name="round_deadline_time" className={inputCls} />
-                  </Field>
-                </div>
-              </>
+        <SectionCard title="First EMD issuance deadline">
+          <div className="sm:col-span-2 lg:col-span-3 flex items-start gap-2 text-[11px] text-indigo-700 -mt-1 mb-1">
+            <Sparkles className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            {suggestion.applicable ? (
+              <span>
+                SV Umrah policy ({suggestion.bandLabel}): the 1st EMD must be issued by{' '}
+                <strong>{computedDeadlineDate || '—'}</strong> — the airline&rsquo;s{' '}
+                {policyDays} day{policyDays === 1 ? '' : 's'} less the 3-day margin. Editable.
+              </span>
+            ) : suggestion.reason === 'missing-dates' ? (
+              <span>Pick the request date, outbound date and airline to check for a policy.</span>
             ) : (
-              <p className="text-xs text-stone-400">
-                No first round will be recorded. You can add rounds later from the detail page.
-              </p>
+              <span>
+                No EMD policy stored for this airline yet, so enter the issuance deadline the
+                airline&rsquo;s policy gives. Policies can be added per airline later.
+              </span>
             )}
-        </section>
+          </div>
+          <Field
+            label="Issue 1st EMD by"
+            required
+            hint="The date the first EMD must be issued to secure this PNR. Head Office issues the EMD itself."
+          >
+            <input
+              type="date"
+              name="pnr_tl_date"
+              required
+              value={autoRoundDeadline}
+              onChange={(e) => {
+                setRoundDeadline(e.target.value);
+                setRoundDeadlineTouched(true);
+              }}
+              className={inputCls}
+            />
+          </Field>
+          {emd2DeadlinePreview && (
+            <div className="sm:col-span-2 text-[11px] text-stone-400 self-end pb-2">
+              Once the 1st EMD is issued, the 2nd is due by <strong>{emd2DeadlinePreview}</strong>{' '}
+              (policy, no margin).
+            </div>
+          )}
+        </SectionCard>
       )}
 
       <div className="flex items-center justify-end gap-3 pb-8">

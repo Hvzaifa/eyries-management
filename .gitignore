@@ -41,3 +41,7 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 backups/
+
+# Review file written by scripts/map-legacy-agents.ts (retired 2026-09-25, kept on
+# the archive/one-off-scripts branch for the planned re-import) — live business data
+agent-mapping-review.csv

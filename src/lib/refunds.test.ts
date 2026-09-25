@@ -86,3 +86,33 @@ describe('validateRefund — status', () => {
     }
   );
 });
+
+describe('validateRefund — a refund may not exceed its EMD amount (owner ruling, 2026-09-20)', () => {
+  it('accepts a refund equal to the round amount', () => {
+    expect(validateRefund(500_000, '2026-09-20', 'paid', 500_000)).toEqual({
+      date: new Date('2026-09-20T00:00:00.000Z'),
+    });
+  });
+
+  it('accepts a partial refund', () => {
+    expect('error' in validateRefund(100_000, '2026-09-20', 'paid', 500_000)).toBe(false);
+  });
+
+  it('rejects a refund larger than the round amount, naming both figures', () => {
+    const r = validateRefund(500_001, '2026-09-20', 'paid', 500_000);
+    expect('error' in r && r.error).toMatch(/more than the round's EMD amount/);
+    expect('error' in r && r.error).toMatch(/500,001/);
+    expect('error' in r && r.error).toMatch(/500,000/);
+  });
+
+  it('still checks everything else first — an impossible date is caught before the cap', () => {
+    const r = validateRefund(999_999, '2026-02-30', 'paid', 1_000);
+    expect('error' in r && r.error).toMatch(/not a real date/);
+  });
+
+  it('skips the cap when the round amount is not supplied', () => {
+    // Kept deliberately optional so a caller without the amount cannot have the
+    // check silently pass against `undefined`.
+    expect('error' in validateRefund(999_999, '2026-09-20', 'paid')).toBe(false);
+  });
+});

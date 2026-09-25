@@ -33,7 +33,19 @@ export interface AuthUser {
 // Resolve Supabase user → AuthUser (case-insensitive branch lookup)
 // ---------------------------------------------------------------------------
 
-export async function resolveAuthUser(user: User): Promise<AuthUser> {
+/**
+ * The fields `resolveAuthUser` actually reads. A full Supabase `User` satisfies
+ * it, and so does an identity built from verified JWT claims — which is what
+ * page reads now use (`lib/server/session.ts`), so they need no call to the
+ * Auth server.
+ */
+export interface SessionIdentity {
+  id: string;
+  email?: string;
+  app_metadata?: User['app_metadata'];
+}
+
+export async function resolveAuthUser(user: SessionIdentity): Promise<AuthUser> {
   const meta = user.app_metadata ?? {};
 
   if (meta.account_type === 'headoffice') {

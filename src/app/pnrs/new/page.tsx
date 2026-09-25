@@ -1,6 +1,4 @@
-import { createClient } from '@/lib/supabase/server';
-import { redirect } from 'next/navigation';
-import { resolveAuthUser } from '@/lib/auth';
+import { requirePageUser } from '@/lib/server/session';
 import { getPnrFormOptions } from '@/lib/pnrs';
 import { EMPTY_PNR } from '@/lib/pnr-form-values';
 import PnrForm from '@/components/pnr-form';
@@ -10,11 +8,7 @@ import Link from 'next/link';
 import { Bot } from 'lucide-react';
 
 export default async function NewPnrPage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect('/login');
-
-  const authUser = await resolveAuthUser(user);
+  const { user, authUser } = await requirePageUser();
   const options = await getPnrFormOptions(authUser);
 
   // Branch users: filter options to only their branch, and pre-fill branchId

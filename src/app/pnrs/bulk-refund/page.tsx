@@ -1,5 +1,5 @@
-import { resolveAuthUser, isHeadOffice } from '@/lib/auth';
-import { createClient } from '@/lib/supabase/server';
+import { isHeadOffice } from '@/lib/auth';
+import { requirePageUser } from '@/lib/server/session';
 import AppHeader from '@/components/app-header';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
@@ -11,14 +11,7 @@ export const metadata = {
 };
 
 export default async function BulkRefundPage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect('/login');
-  }
-
-  const authUser = await resolveAuthUser(user);
+  const { user, authUser } = await requirePageUser();
   if (!isHeadOffice(authUser)) {
     redirect('/');
   }

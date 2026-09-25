@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { parseAirlineMessage } from '@/lib/ai/parse-booking';
 import { parseExcelFile } from '@/lib/ai/parse-excel';
+import { createRateLimiter } from '@/lib/rate-limit';
 
 /** Max base64 image size: ~10 MB raw → ~13.3 MB base64. */
 const MAX_IMAGE_BASE64_LENGTH = 14_000_000;
@@ -16,6 +17,13 @@ const MAX_IMAGE_BASE64_LENGTH = 14_000_000;
  */
 const MAX_EXCEL_BASE64_LENGTH = 7_000_000;
 
+/**
+ * Parses per signed-in user per minute. A person pasting bookings does a few a
+ * minute at most; this exists to stop a stuck retry loop from spending the AI
+ * key's budget, not to meter staff. See `lib/rate-limit.ts` for its limits.
+ */
+const parseLimiter = createRateLimiter(20, 60_000);
+
 export async function POST(request: Request) {
   try {
     const supabase = await createClient();
@@ -25,6 +33,14 @@ export async function POST(request: Request) {
 
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    if (!parseLimiter.take(user.id)) {
+      const wait = parseLimiter.retryAfter(user.id);
+      return NextResponse.json(
+        { error: `Too many requests. Try again in ${wait} seconds.` },
+        { status: 429, headers: { 'Retry-After': String(wait) } }
+      );
     }
 
     // No `model` field: the browser never sent one, and accepting it would let a

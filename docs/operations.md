@@ -18,8 +18,23 @@ database holding real bookings — read the warning on a command before running 
 | `npm run db:seed` | **yes** | Lookup tables only (licenses, branches, airlines) |
 | `npm run db:seed:users` | **yes** | Creates/resets auth accounts. Needs `SEED_*_PASSWORD` |
 | `npm run job:deadline-check` | **yes** (backfill) | Dry-runs the daily alert; `-- --send` delivers it |
-| `npx tsx scripts/apply-completion-rule.ts` | **yes** with `--commit` | Completes finished bookings. Dry-runs by default |
-| `npx tsx scripts/import-legacy.ts <file.xlsx>` | **yes** with `--commit` | Imports the master sheet. Dry-runs by default |
+| `npx tsx scripts/reset-bookings.ts` | **yes** with `--commit` | Clears bookings and everything hanging off them (rounds, ticketing, allocations, assignments, recoveries) but **keeps agents** and the lookup tables. Backs up to `backups/<timestamp>/` first. Dry-runs by default |
+| `npx tsx scripts/reset-transactional-data.ts` | **yes** with `--commit` | **Irreversible.** Clears bookings, EMD rounds, ticketing, allocations, agents, assignments and the activity log, and restarts the SR# at 1. Keeps licenses, branches and airlines, and never touches auth accounts. Dry-runs by default. **Back up first** |
+
+### Retired one-off scripts (removed 2026-09-25)
+
+These did their job and were taken out of the working tree. None is needed to
+build or run the system. Each is recoverable from git:
+
+| Files | What they were | Restore with |
+|---|---|---|
+| `db/apply-agents.ts`, `apply-agent-assignments.ts`, `apply-agent-recoveries.ts`, `apply-emd-statuses.ts`, `apply-iata-payments.ts`, `apply-drop-dashboard-view.ts` | One-off migrations, all applied to production (2026-09-19 → 2026-09-24). Every change is also in `db/schema.sql`, so `npm run db:apply` still builds or heals a database without them | `git checkout archive/one-off-scripts -- <path>` |
+| `scripts/map-legacy-agents.ts`, `src/lib/legacy-agents.ts` (+ test) | Proposed agents and seat hand-overs from the legacy sheet's free-text `investor_company` | `git checkout archive/one-off-scripts -- <path>` |
+| `scripts/emd-deadline-review.ts` | Report on the 8 rounds that existed before the 2026-09-20 reset | `git checkout archive/one-off-scripts -- <path>` |
+| `scripts/import-legacy.ts`, `src/lib/legacy-import.ts` (+ test), `scripts/apply-completion-rule.ts`, `scripts/merge-duplicate-branches.ts`, `scripts/make-sample-sheet.ts` | The master-sheet importer and its helpers | `git checkout 9a6c1e0 -- <path>` |
+
+`archive/one-off-scripts` is a branch holding exactly those files on top of
+`main` as it stood on 2026-09-25. It is not meant to be merged — only read from.
 
 > `npm run typecheck` can report success while `npm run build` fails: TypeScript
 > uses an incremental cache (`tsconfig.tsbuildinfo`) that can go stale. If the
@@ -53,13 +68,32 @@ wrong before — see `decisions.md`, 2026-09-07 "db/schema.sql had drifted".
 
 ## Security posture
 
-- **RLS is enabled on all eight tables with no policies**, which denies the
+- **RLS is enabled on all eleven tables with no policies**, which denies the
   public `anon` role entirely. Authorisation lives in the app layer
   (`src/lib/auth.ts`); RLS is a deny-by-default backstop, not a second
   authorisation model.
-- **Both SQL views declare `security_invoker = on`.** Without it a view runs with
-  its owner's privileges and bypasses the RLS beneath it — which is exactly how
-  the refund ledger was once publicly readable.
+- **The one SQL view, `refunded_emd_rounds`, declares `security_invoker = on`.**
+  Without it a view runs with its owner's privileges and bypasses the RLS
+  beneath it — which is exactly how the refund ledger was once publicly
+  readable. (`dashboard_totals`, the other, was dropped on 2026-09-24.)
+- **Response headers** (`next.config.ts`): frame, content-type, referrer and HSTS
+  headers; a `Permissions-Policy` switching off camera, microphone, location,
+  payment and USB; `X-Powered-By` removed; and a **Content-Security-Policy in
+  Report-Only mode**. After one deploy with no violations in the browser
+  console, rename the header to `Content-Security-Policy` to enforce it.
+- **Reads verify the session locally, writes ask the Auth server.** Pages and
+  the middleware use `auth.getClaims()` (`src/lib/server/session.ts`); every
+  server action that writes goes through `requireUser()`, which uses
+  `auth.getUser()` so a disabled account is refused immediately rather than
+  when its token expires.
+- `/api/ai/parse-pnr`, the one route that spends money per call, is limited to
+  20 requests per user per minute (`src/lib/rate-limit.ts`). Per instance, not
+  global — it stops a runaway loop, the login requirement is the real gate.
+- `npm audit --omit=dev` was at **0 vulnerabilities** on 2026-09-24. Two
+  transitive packages are pinned through `overrides` in `package.json` —
+  `postcss` inside Next and `deepmerge-ts` inside the Prisma CLI — because the
+  patched versions are outside the ranges those packages declare. Remove the
+  overrides when a Next or Prisma upgrade brings them in natively.
 - The app is unaffected by either: Prisma connects as `postgres`, which owns the
   tables and holds `BYPASSRLS`.
 - Apply or re-check all of this with `npm run db:security` (dry run) then
@@ -73,6 +107,49 @@ curl -s -o /dev/null -w '%{http_code}\n' \
   -H "apikey: $NEXT_PUBLIC_SUPABASE_ANON_KEY"
 ```
 
+### Owner action: switch Supabase to asymmetric JWT signing keys
+
+Until this is done, `getClaims()` still asks the Auth server on every request,
+so the ~300 ms per navigation it is meant to save is not saved yet. The code is
+correct either way.
+
+1. Supabase Dashboard → **Project Settings → JWT Keys**.
+2. Click **Migrate JWT secret**. This imports the current secret and creates a
+   new asymmetric key on standby. Nothing changes for users yet.
+3. Click **Rotate keys**. New tokens are signed with the new key; Supabase:
+   *"Non-expired access tokens will remain to be accepted, so no users will be
+   forcefully signed out"*, with no downtime.
+4. **Stop there. Do NOT revoke the legacy JWT secret.** The app's
+   `NEXT_PUBLIC_SUPABASE_ANON_KEY` is itself a JWT signed by that secret —
+   revoking it would make the app's own key invalid. Revoking is only safe after
+   switching the app to Supabase's new publishable/secret API keys, which is a
+   separate change.
+
+Checked before recommending this: nothing in this repository verifies JWTs
+with the legacy secret itself (no `jose`/`jsonwebtoken`), and there are no Edge
+Functions — the two things Supabase warns rotation can break. It can be undone:
+a previously used key can be moved back to standby and rotated to.
+
+## Where page time goes, and how to check it
+
+Measured on 2026-09-24 with 4 bookings in the database, from Pakistan to the
+Singapore database (network round trip ~100 ms):
+
+| | Before | After |
+|---|---|---|
+| One trivial query | 504 ms (≈5 round trips) | 101 ms (1) |
+| Dashboard data (`listPnrs`) | 13 queries, 2,067 ms | 2 queries, 117 ms |
+| Booking page data (`getPnrDetail`) | 23 queries, 3,740 ms | 3 queries, 212 ms |
+| Form options | 20 queries, 1,244 ms | 5 queries, 111 ms |
+
+Those are from a laptop. In production the functions now run in the same region
+as the database, so each round trip is a few milliseconds rather than ~100.
+
+The costs multiply: **round-trip time × round trips per query × queries in
+series.** When something feels slow again, measure those three before reaching
+for a cache. Count queries with Prisma's query log (`NODE_ENV=development`
+prints each one) and look for `await`s that could run together.
+
 ## Backups
 
 There is no automated backup beyond Supabase's own. **Before any destructive
@@ -85,19 +162,29 @@ Restoring means re-inserting from those JSON files in FK-safe order:
 
 ## Re-importing the master sheet
 
-1. **Back up first.** The wipe is irreversible.
-2. Dry-run: `npx tsx scripts/import-legacy.ts "Groups EMD Master Sheet.xlsx"`.
-3. Delete transactional tables only — **keep the lookup tables**. User accounts
+**The importer was removed on 2026-09-25**, with the data it imported: bookings
+are entered through the app since the 2026-09-20 reset. The owner intends to
+re-import once the sheet has been cleaned into a proper format. When that
+happens:
+
+1. Restore the tooling (see "Retired one-off scripts" above):
+   `git checkout 9a6c1e0 -- scripts/import-legacy.ts src/lib/legacy-import.ts src/lib/legacy-import.test.ts scripts/apply-completion-rule.ts`
+   and, for agents, `git checkout archive/one-off-scripts -- scripts/map-legacy-agents.ts src/lib/legacy-agents.ts src/lib/legacy-agents.test.ts`.
+2. **Check it against the current schema before trusting it.** It was written
+   before phases 6–7 (agents, recoveries), the two-status EMD model, the IATA
+   `payment_date` and the per-round agent schedule. Run its tests, then a dry
+   run, and compare what it proposes against `docs/data-model.md`.
+3. **Back up first.** The wipe is irreversible.
+4. Delete transactional tables only — **keep the lookup tables**. User accounts
    resolve their branch by *name* against `branches`, so dropping those rows
    locks every branch account out.
-4. Reset the serial: `ALTER SEQUENCE pnrs_sr_no_seq RESTART WITH 1` — the
-   importer never sets `sr_no`, so without this the fresh data keeps counting
-   from wherever the old data stopped.
-5. Import with `--commit`, then run `scripts/apply-completion-rule.ts --commit`.
+5. Reset the serial: `ALTER SEQUENCE pnrs_sr_no_seq RESTART WITH 1` — the
+   importer never set `sr_no`.
+6. Import with `--commit`, then run `scripts/apply-completion-rule.ts --commit`.
 
-The importer **flags rather than guesses**: rows with an incomplete EMD round or
-a duplicate PNR code are reported and left out, never silently repaired. Expect a
-flagged count and review it — those rows do not reach the database.
+The importer **flagged rather than guessed**: rows with an incomplete EMD round
+or a duplicate PNR code were reported and left out, never silently repaired.
+Keep that behaviour for the cleaned data.
 
 ## Deploying to Vercel
 
@@ -181,6 +268,42 @@ allowlisting — so basic login works on a fresh domain with no Supabase change.
 Still set **Authentication → URL Configuration → Site URL** to the deployed URL,
 or password-reset emails will link to the wrong host.
 
+## Loading a new IATA calendar
+
+The IATA remittance calendar lives in code, at `src/lib/iata-calendar.ts`. It is
+**transcribed from IATA's published PDF, never computed** — the gap between a
+billing period closing and its remittance day varies with weekends and holidays,
+so there is no formula. The loaded calendar currently covers **1 Jan – 31 Dec
+2026**.
+
+An EMD issued past the end of the calendar gets no payment date. It is not
+treated as settled: the booking shows "Not in calendar" on the dashboard and the
+EMD appears under "Outside the loaded calendar" on `/iata`. So the symptom of a
+stale calendar is visible, not silent.
+
+To load the next year:
+
+1. Get the calendar PDF for the country and currency the company settles in
+   (Pakistan, PKR).
+2. Take **only** rows whose `Remittance Frequency` is **"4 times per month"**.
+   The PDF also carries a daily row per date with a frequency of `EasyPay` —
+   a different settlement product, and not ours. `Billing Availability` is
+   unused.
+3. Append one `{ code, billingFrom, billingTo, remittanceDay }` entry per row to
+   `IATA_PERIODS`, in date order, ISO dates.
+4. Run `npx vitest run src/lib/iata-calendar.test.ts`. The tests check the
+   transcription itself, not just the lookup: periods must be contiguous with no
+   gaps or overlaps, every day of the year must fall in exactly one period, each
+   month must have four, remittance must follow its billing window by 7–10 days,
+   and each period code must agree with its own dates. A mistyped date fails
+   there rather than surfacing as a wrong settlement figure.
+5. Update the year in the first test (`holds the 48 ... periods`) and the
+   coverage sentence above.
+
+Nothing needs to be migrated or re-derived afterwards: payment deadlines are
+read from the calendar on every request, never stored, so the new dates apply to
+existing rounds immediately.
+
 ## The daily job
 
 Vercel Cron calls `/api/cron/deadline-check` at 03:00 daily, authenticating with
@@ -188,3 +311,16 @@ Vercel Cron calls `/api/cron/deadline-check` at 03:00 daily, authenticating with
 `src/middleware.ts`: cron arrives with no session, so middleware would redirect it
 to `/login` and the job would never run. It did exactly that, silently, until
 2026-09-07.
+
+One run produces one email with up to four tables: **EMD issuance time limits**,
+**ticketing deadlines**, **IATA payments due** and **agent money due** (the last
+two added 2026-09-22). They are separate tables on purpose — an issuance time
+limit and a remittance day in one column under one heading is the confusion the
+2026-09-21 correction was about, and agent money is owed *to* the company rather
+than *by* it. All four use the same window: **today through two days out, future
+only**. Overdue items are never emailed; they stay on the dashboard and, for
+payments, on `/iata` (owner rule, 2026-08-25).
+
+The email **never writes to an airline or an agent** — it goes to
+`STAFF_ALERT_EMAILS` only. Sending an agent their notice is a human click on
+`/agents/[id]`, restricted to that agent's recorded contact addresses.

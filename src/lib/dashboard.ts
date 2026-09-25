@@ -15,7 +15,8 @@ export interface DashboardSummary {
   pnrCount: number;
   totalSeats: number;
   totalEmdValue: number;
-  totalPaid: number;
+  /** EMD the airline is holding across the visible rows (issued, not refunded). */
+  totalIssued: number;
   totalRefunded: number;
 }
 
@@ -52,7 +53,7 @@ export function summarizeDashboard(
     pnrCount: rows.length,
     totalSeats: rows.reduce((sum, r) => sum + r.seats, 0),
     totalEmdValue: sumMoney(rows.map((r) => r.totalEmdValue ?? 0)),
-    totalPaid: sumMoney(rows.map((r) => r.totalPaid)),
+    totalIssued: sumMoney(rows.map((r) => r.totalIssued)),
     totalRefunded: sumMoney(rows.map((r) => r.totalRefunded)),
   };
 }

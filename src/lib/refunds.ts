@@ -21,16 +21,22 @@ export type RefundCheck = { error: string } | { date: Date };
  * malformed date, and a round that is already refunded (re-refunding silently
  * overwrote the original amount and date with no record of what they were).
  *
- * Deliberately NOT rejected: an amount larger than the round's own EMD amount.
- * That sounds like it must be wrong, but it is not written anywhere in
- * business-rules.md and one existing round in the live data already exceeds its
- * EMD amount — so enforcing it would contradict recorded company data. Left as
- * an open question for the owner (docs/decisions.md, 2026-09-07).
+ * A refund may not exceed the round's own EMD amount (owner ruling, 2026-09-20).
+ * This was deliberately NOT enforced before: it is not written in
+ * business-rules.md and one imported round already exceeds its EMD amount, so
+ * enforcing it would have contradicted recorded company data. The owner has
+ * since ruled that the imported data is not the standard to build to — it will
+ * be re-entered cleanly — so the rule now applies to every refund recorded from
+ * here on. The one historic round is untouched and simply cannot be re-refunded.
+ *
+ * `emdAmount` is optional so an unknown round amount does not silently pass the
+ * check: a caller that has the amount must pass it, and both callers do.
  */
 export function validateRefund(
   amount: number | null,
   dateIso: string | null,
-  currentStatus: string
+  currentStatus: string,
+  emdAmount?: number
 ): RefundCheck {
   if (amount === null || typeof amount !== 'number' || !Number.isFinite(amount)) {
     return { error: 'Refund amount must be a number.' };
@@ -49,6 +55,11 @@ export function validateRefund(
   // the parsed date back to the input so an impossible day is caught, not shifted.
   if (date.toISOString().slice(0, 10) !== dateIso) {
     return { error: `Refund date "${dateIso}" is not a real date.` };
+  }
+  if (emdAmount !== undefined && Number.isFinite(emdAmount) && amount > emdAmount) {
+    return {
+      error: `Refund of ${amount.toLocaleString('en-US')} is more than the round's EMD amount of ${emdAmount.toLocaleString('en-US')}. A refund cannot exceed what was deposited.`,
+    };
   }
   if (currentStatus === 'refunded') {
     return {

@@ -1,21 +1,12 @@
-import { createClient } from '@/lib/supabase/server';
-import { redirect } from 'next/navigation';
+import { requirePageUser } from '@/lib/server/session';
 import AppHeader from '@/components/app-header';
 import { listRefundedRounds } from '@/lib/pnrs';
-import { resolveAuthUser } from '@/lib/auth';
 import { formatPkr } from '@/lib/format';
 import Link from 'next/link';
 import { RotateCcw } from 'lucide-react';
 
 export default async function RefundsPage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect('/login');
-  }
-
-  const authUser = await resolveAuthUser(user);
+  const { user, authUser } = await requirePageUser();
   const rows = await listRefundedRounds(authUser);
 
   return (

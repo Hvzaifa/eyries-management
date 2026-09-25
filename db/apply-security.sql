@@ -30,18 +30,17 @@ alter table activity_log enable row level security;
 --    privileges and bypasses the RLS above, which is why these two views were
 --    readable by anyone holding the public anon key.
 alter view refunded_emd_rounds set (security_invoker = on);
-alter view dashboard_totals   set (security_invoker = on);
+-- (dashboard_totals was dropped on 2026-09-24; it had been unused since 2026-09-09.)
 
 -- 3. Belt and braces: with no grant, PostgREST cannot reach them at all.
 revoke all on refunded_emd_rounds from anon, authenticated;
-revoke all on dashboard_totals   from anon, authenticated;
 
 -- 4. Prove the application itself is unaffected before committing. Prisma
 --    connects as `postgres`, which owns these tables and holds BYPASSRLS, so
---    both views must still return rows. If either is empty, something is wrong
---    and this transaction should NOT be committed.
-\echo '--- these must both be non-zero ---'
+--    these must run WITHOUT a permission error. An empty result is fine — a
+--    database with no refunds yet returns 0, not an error.
+\echo '--- these must run without a permission error ---'
 select count(*) as refund_rows_visible_to_app from refunded_emd_rounds;
-select active_pnrs from dashboard_totals;
+select count(*) as pnrs_visible_to_app from pnrs;
 
 commit;

@@ -22,15 +22,21 @@ export function unallocatedSeats(pnr: { seats: number }): number {
 }
 
 /**
- * Validate a requested split against the parent's remaining seats.
- * Returns an error message, or null when the split is allowed.
+ * Validate a requested split against the seats the parent can actually give.
+ *
+ * `available` is what the parent may split away — from phase 6 that is its
+ * **unassigned** seats (`seatLedger().unassigned`), not its whole seat count:
+ * seats an agent already holds cannot be moved to a different PNR behind their
+ * back. Callers pass the ledger figure; the wording here says "available to
+ * split" rather than "holds", because with agents in the picture a PNR can hold
+ * 50 seats and have none to give.
  */
-export function validateSplit(parentSeats: number, requested: number): string | null {
+export function validateSplit(available: number, requested: number): string | null {
   if (!Number.isFinite(requested) || !Number.isInteger(requested) || requested <= 0) {
     return 'Seats to allocate must be a positive whole number.';
   }
-  if (requested > parentSeats) {
-    return `Cannot allocate ${requested} seats. The parent PNR only holds ${parentSeats} seat${parentSeats === 1 ? '' : 's'}.`;
+  if (requested > available) {
+    return `Cannot allocate ${requested} seats. The parent PNR has only ${available} seat${available === 1 ? '' : 's'} available to split.`;
   }
   return null;
 }

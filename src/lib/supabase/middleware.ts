@@ -27,11 +27,18 @@ export async function updateSession(request: NextRequest) {
     }
   );
 
-  // IMPORTANT: Avoid using supabase.auth.getSession() in middleware as it's not secure.
-  // Always use supabase.auth.getUser() to validate the token against the Supabase Auth server.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // Never `getSession()` here: it trusts the cookie without verifying it.
+  //
+  // `getClaims()` verifies the JWT's signature against the project's published
+  // keys, refreshing an expired session first (which is what writes the new
+  // cookie through `setAll` above). With asymmetric signing keys that is a
+  // local check — no request to Supabase Auth on every navigation, which cost
+  // ~300 ms each (measured 2026-09-24). With the older symmetric keys it asks
+  // the Auth server instead, so it is never weaker than the `getUser()` it
+  // replaces. Server actions that write still call `getUser()` (see
+  // `lib/server/guards.ts`) so a disabled account is refused immediately.
+  const { data, error } = await supabase.auth.getClaims();
+  const user = !error && data?.claims?.sub ? data.claims : null;
 
   const pathname = request.nextUrl.pathname;
   const isAuthRoute = pathname.startsWith('/login') || pathname.startsWith('/auth');

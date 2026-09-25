@@ -11,6 +11,15 @@ import { resolveAuthUser, isHeadOffice, canEditPnr, type AuthUser } from '@/lib/
  * those becomes a callable endpoint, and these are internal checks, not actions.
  */
 
+/**
+ * Who is acting, for a server action that is about to WRITE.
+ *
+ * Deliberately `getUser()`, not the faster `getClaims()` pages use: a signed
+ * JWT stays valid until it expires even if the account has been disabled, and
+ * `getUser()` asks the Auth server, so a revoked user cannot move money in the
+ * minutes before their token runs out. One extra round trip per write is the
+ * right price for that; reads take the fast path (`lib/server/session.ts`).
+ */
 export async function requireUser(): Promise<AuthUser> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -24,6 +33,21 @@ export async function requireHeadOffice(): Promise<AuthUser> {
     throw new Error('Only the Head Office account can perform this action.');
   }
   return authUser;
+}
+
+/**
+ * A branch may act on the selling side of a booking only when it is one of its
+ * own; head office may always. `canEditPnr` cannot be reused: it also refuses
+ * once an EMD round exists, which is right for editing a booking's details and
+ * wrong here — seats are handed to agents, and agents pay, precisely while
+ * deposits are running (docs/decisions.md, 2026-09-19, and ruling 6, which puts
+ * "record recoveries, charges and discounts" among what a branch does).
+ */
+export function canSellOnPnr(user: AuthUser, pnrBranchId: string | null): boolean {
+  if (isHeadOffice(user)) return true;
+  if (user.branchIds.length === 0) return false;
+  if (!pnrBranchId) return false;
+  return user.branchIds.includes(pnrBranchId);
 }
 
 /** Exactly the shape the query below selects — keeps `any` out of the guard. */

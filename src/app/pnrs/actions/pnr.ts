@@ -12,11 +12,38 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/prisma';
 import { isHeadOffice } from '@/lib/auth';
-import { suggestEmdPlan, emd2DaysBeforeDeparture, clampEmd2Deadline } from '@/lib/emd';
-import { diffInDays } from '@/lib/urgency';
+import { balanceTicketsFor, svTicketIssuanceDeadline } from '@/lib/ticketing';
 import { unallocatedSeats, validateSplit } from '@/lib/seats';
+import { liveAgentSeats, seatLedger, validateSeatsChange } from '@/lib/inventory';
+import {
+  COMPANY_INVESTMENT,
+  normalizeSegment,
+  pnrCodeKey,
+  validatePnrCode,
+  validateSegment,
+} from '@/lib/booking-entry';
 import { str, dateVal, numVal } from '@/lib/form';
 import { requireUser, requireHeadOffice, requirePnrEditor, TX_TIMEOUT_MS } from '@/lib/server/guards';
+
+/**
+ * Finds a booking with this PNR code, ignoring case and spacing.
+ *
+ * A PNR code identifies exactly one booking (owner ruling, 2026-09-20). It is an
+ * application check rather than a unique index because the imported rows stay in
+ * place while the owner still reads them; `src/lib/booking-entry.ts` records the
+ * index to add once they are cleared.
+ *
+ * `exceptId` is the booking being edited, which must not count as its own
+ * duplicate.
+ */
+async function findPnrByCode(code: string, exceptId?: string) {
+  const key = pnrCodeKey(code);
+  const candidates = await prisma.pnr.findMany({
+    where: { pnr: { equals: code.trim(), mode: 'insensitive' } },
+    select: { id: true, pnr: true, srNo: true },
+  });
+  return candidates.find((c) => c.id !== exceptId && pnrCodeKey(c.pnr) === key) ?? null;
+}
 
 export async function createPnr(formData: FormData) {
   const user = await requireUser();
@@ -29,14 +56,38 @@ export async function createPnr(formData: FormData) {
   // assumed nothing was saved, and a half-finished PNR stayed in the system.
   // ---------------------------------------------------------------------
   const requestDate = dateVal(formData, 'request_date');
-  const investorCompany = str(formData, 'investor_company');
   const pnrCode = str(formData, 'pnr');
   const seats = numVal(formData, 'seats');
   const fare = numVal(formData, 'fare');
 
-  if (!requestDate || !investorCompany || !pnrCode || seats === null || Number.isNaN(seats) || fare === null || Number.isNaN(fare)) {
-    return { error: 'Request date, investor company, PNR, seats and fare are required.' };
+  if (!requestDate || !pnrCode || seats === null || Number.isNaN(seats) || fare === null || Number.isNaN(fare)) {
+    return { error: 'Request date, PNR, seats and fare are required.' };
   }
+
+  // Every booking is bought on company investment and stays there until seats
+  // are handed to an agent or put on sale through the bot (owner ruling,
+  // 2026-09-20). Staff no longer type this: who holds the seats is the seat
+  // ledger's answer, not free text that can disagree with it.
+  const investorCompany = COMPANY_INVESTMENT;
+
+  const codeError = validatePnrCode(pnrCode);
+  if (codeError) return { error: codeError.error };
+
+  // A PNR code identifies one booking. Duplicates used to be allowed with a
+  // warning because the imported sheet contained them; the re-entered data will
+  // not (owner ruling, 2026-09-20). Case- and space-insensitive, because an
+  // airline reference is a code, not a phrase.
+  const duplicate = await findPnrByCode(pnrCode);
+  if (duplicate) {
+    return {
+      error: `PNR ${duplicate.pnr} already exists (SR#${duplicate.srNo}). A booking cannot be entered twice.`,
+    };
+  }
+
+  const segmentInput = str(formData, 'segment');
+  const segmentError = validateSegment(segmentInput);
+  if (segmentError) return { error: segmentError.error };
+  const segment = normalizeSegment(segmentInput);
 
   // Branch users: force branchId to their own branch. An unresolved branch must
   // block creation — writing an unscoped PNR would leave a record no branch user
@@ -49,25 +100,15 @@ export async function createPnr(formData: FormData) {
   }
   const branchId = isHeadOffice(user) ? str(formData, 'branch_id') : user.branchId;
 
-  const roundPct = numVal(formData, 'round_payment_pct');
-  const roundAmount = numVal(formData, 'round_emd_amount');
-  const roundDeadline = dateVal(formData, 'round_deadline_date');
-  const roundTouched = roundPct !== null || roundAmount !== null || roundDeadline !== null;
-  const emdNumber = str(formData, 'round_emd_number');
-
-  if (roundTouched) {
-    if (!roundDeadline || roundPct === null || Number.isNaN(roundPct) || roundAmount === null || Number.isNaN(roundAmount)) {
-      return {
-        error:
-          'The EMD round is incomplete. For new bookings the EMD time limit (deadline date), payment %, and amount are all required.',
-      };
-    }
-    if (!emdNumber) {
-      return { error: 'EMD Number is required.' };
-    }
-    if (!/^\d{3} \d{10}$/.test(emdNumber)) {
-      return { error: 'EMD Number must be exactly 13 digits with a space after the first three numbers (e.g. 123 4567890123).' };
-    }
+  // The booking carries the DEADLINE to issue the first EMD, not the EMD itself
+  // (owner ruling, 2026-09-21). It is stored as `pnr_tl_date` — the time limit
+  // the PNR rests with us — and issuing against it is Head Office's job.
+  const firstEmdDeadline = dateVal(formData, 'pnr_tl_date');
+  if (!firstEmdDeadline) {
+    return {
+      error:
+        'The date the first EMD must be issued by is required. For SV Umrah bookings it is filled in from the airline\u2019s policy; otherwise enter the airline\u2019s own deadline.',
+    };
   }
 
   // ---------------------------------------------------------------------
@@ -81,40 +122,14 @@ export async function createPnr(formData: FormData) {
     if (airline) airlineCode = airline.code;
   }
 
-  const suggestion = suggestEmdPlan({
+  // SV's ticket-issuance policy date (null for every other airline, and whenever
+  // the outbound date is unknown).
+  const svIssuanceDeadline = svTicketIssuanceDeadline(
     airlineCode,
-    segment: str(formData, 'segment'),
-    requestDateIso: requestDate.toISOString().slice(0, 10),
-    outboundDateIso: outboundDate ? outboundDate.toISOString().slice(0, 10) : null,
-  });
-
-  let emd2: { pct: number; amount: number; deadlineDate: Date } | null = null;
-  if (roundTouched && suggestion.applicable && suggestion.emd2Pct !== null && outboundDate && fare && seats) {
-    const offset = emd2DaysBeforeDeparture(
-      diffInDays(requestDate.toISOString().slice(0, 10), outboundDate.toISOString().slice(0, 10))
-    );
-    if (offset !== null) {
-      const [y, m, d] = outboundDate.toISOString().slice(0, 10).split('-').map(Number);
-      const policyIso = new Date(Date.UTC(y, m - 1, d - offset)).toISOString().slice(0, 10);
-      // EMD-2 counts back from departure while EMD-1 counts forward from today,
-      // so on a short-notice booking the two cross and round 2 would fall due
-      // before round 1 (owner ruling, 2026-09-07).
-      const emd2Iso = clampEmd2Deadline(
-        policyIso,
-        roundDeadline ? roundDeadline.toISOString().slice(0, 10) : null
-      );
-      emd2 = {
-        pct: suggestion.emd2Pct,
-        amount: fare * seats * (suggestion.emd2Pct / 100),
-        deadlineDate: new Date(`${emd2Iso}T00:00:00.000Z`),
-      };
-    }
-  }
+    outboundDate ? outboundDate.toISOString().slice(0, 10) : null
+  );
 
   const createdBy = user.id;
-  const deadlineTime = str(formData, 'round_deadline_time')
-    ? new Date(`1970-01-01T${str(formData, 'round_deadline_time')}:00.000Z`)
-    : null;
 
   // ---------------------------------------------------------------------
   // 3. ONE transaction: the booking, its rounds and every log entry commit
@@ -129,15 +144,16 @@ export async function createPnr(formData: FormData) {
         branchId,
         pnr: pnrCode,
         gdsPnr: str(formData, 'gds_pnr'),
-        segment: str(formData, 'segment'),
+        segment,
         airlineId,
         seats,
         outboundDate,
         inboundDate: dateVal(formData, 'inbound_date'),
         sector: str(formData, 'sector'),
-        // The PNR TL starts as EMD-1's deadline (owner rule, 2026-09-07); it
-        // only falls back to the typed value when no round is being created.
-        pnrTlDate: roundTouched ? roundDeadline : dateVal(formData, 'pnr_tl_date'),
+        // The PNR TL IS the deadline to issue the first EMD until one exists
+        // (owner rule 2026-09-07, restated 2026-09-21). `syncPnrTlDate` moves it
+        // on to the next outstanding round as rounds are issued.
+        pnrTlDate: firstEmdDeadline,
         dealPct: numVal(formData, 'deal_pct'),
         issuedStatus: str(formData, 'issued_status') ?? 'unissued',
         airlineTaxes: numVal(formData, 'airline_taxes'),
@@ -160,63 +176,34 @@ export async function createPnr(formData: FormData) {
       },
     });
 
-    if (roundTouched) {
-      const round = await tx.emdRound.create({
+    // NO EMD round is created here (owner ruling, 2026-09-21). Issuing an EMD is
+    // Head Office's job and happens from the booking page or the bulk issuance
+    // screen; a branch creating a booking must not be able to issue one as a
+    // side effect of the form. What the booking carries is the DEADLINE by which
+    // the first EMD must be issued — `pnr_tl_date`, set above.
+
+    // Saudia issues tickets no later than 72 hours before departure (owner
+    // ruling, 2026-09-17), so a new SV booking starts with that deadline already
+    // recorded — editable like every other policy default. Without writing it
+    // here the daily alert could never warn about a booking nobody had opened.
+    // Other airlines have no stored policy; staff enter the date themselves.
+    if (svIssuanceDeadline) {
+      await tx.ticketing.create({
         data: {
           pnrId: pnr.id,
-          roundNumber: 1,
-          issuanceDate: new Date(),
-          issuanceTime: new Date(),
-          paymentPct: roundPct!,
-          emdNumber,
-          emdAmount: roundAmount!,
-          deadlineDate: roundDeadline,
-          deadlineTime,
-          status: 'issued',
-          licenseId: str(formData, 'round_license_id') || str(formData, 'license_id') || null,
+          ticketIssuanceDeadline: new Date(`${svIssuanceDeadline}T00:00:00.000Z`),
         },
       });
-
       await tx.activityLog.create({
         data: {
-          tableName: 'emd_rounds',
-          recordId: round.id,
-          fieldName: null,
+          tableName: 'ticketing',
+          recordId: pnr.id,
+          fieldName: 'ticketIssuanceDeadline',
           oldValue: null,
-          newValue: 'round 1 created',
+          newValue: svIssuanceDeadline,
           changedBy: createdBy,
         },
       });
-
-      if (emd2) {
-        const round2 = await tx.emdRound.create({
-          data: {
-            pnrId: pnr.id,
-            roundNumber: 2,
-            issuanceDate: new Date(), // Issued at the same time as R1 for the schedule
-            issuanceTime: new Date(),
-            paymentPct: emd2.pct,
-            emdAmount: emd2.amount,
-            deadlineDate: emd2.deadlineDate,
-            status: 'issued',
-          },
-        });
-
-        await tx.activityLog.create({
-          data: {
-            tableName: 'emd_rounds',
-            recordId: round2.id,
-            fieldName: null,
-            oldValue: null,
-            newValue: 'round 2 created (auto)',
-            changedBy: createdBy,
-          },
-        });
-      }
-
-      // No syncPnrTlDate call here: pnrTlDate was just set to round 1's deadline
-      // and round 1 is the earliest outstanding round, so the rule already holds.
-      // Skipping it keeps this transaction short (see the timeout note below).
     }
 
     return pnr;
@@ -239,14 +226,64 @@ export async function updatePnr(formData: FormData) {
   if (!existing) return { error: 'Booking not found.' };
 
   const requestDate = dateVal(formData, 'request_date');
-  const investorCompany = str(formData, 'investor_company');
   const pnrCode = str(formData, 'pnr');
   const seats = numVal(formData, 'seats');
   const fare = numVal(formData, 'fare');
 
-  if (!requestDate || !investorCompany || !pnrCode || seats === null || Number.isNaN(seats) || fare === null || Number.isNaN(fare)) {
-    return { error: 'Request date, investor company, PNR, seats and fare are required.' };
+  if (!requestDate || !pnrCode || seats === null || Number.isNaN(seats) || fare === null || Number.isNaN(fare)) {
+    return { error: 'Request date, PNR, seats and fare are required.' };
   }
+
+  // The investor text is NEVER rewritten by an edit. New bookings are stamped
+  // 'COMPANY INVESTMENT' and staff no longer type this field, but the imported
+  // rows carry the name the sheet recorded and the owner keeps them to read —
+  // overwriting that on every save would erase exactly what they are kept for.
+  const investorCompany = existing.investorCompany;
+
+  const codeError = validatePnrCode(pnrCode);
+  if (codeError) return { error: codeError.error };
+
+  // Duplicate check excludes THIS booking: re-saving a booking without changing
+  // its code must not report the booking as a duplicate of itself.
+  const duplicate = await findPnrByCode(pnrCode, id);
+  if (duplicate) {
+    return {
+      error: `PNR ${duplicate.pnr} already exists (SR#${duplicate.srNo}). A booking cannot be entered twice.`,
+    };
+  }
+
+  // A legacy booking may carry a segment outside the fixed list. Editing such a
+  // booking must not be blocked by a value someone else typed years ago, so an
+  // unchanged segment is left exactly as it is; only a CHANGED one is validated.
+  const segmentInput = str(formData, 'segment');
+  const segmentChanged = (segmentInput ?? null) !== (existing.segment ?? null);
+  if (segmentChanged) {
+    const segmentError = validateSegment(segmentInput);
+    if (segmentError) return { error: segmentError.error };
+  }
+  const segment = segmentChanged ? normalizeSegment(segmentInput) : existing.segment;
+
+  // Tickets issued can never exceed the seats on the booking (owner rule,
+  // 2026-09-19), so seats cannot be edited down below what has already been
+  // ticketed — that would break the rule from the other side and leave a stored
+  // balance that no longer matches.
+  const ticketing = await prisma.ticketing.findUnique({ where: { pnrId: id } });
+  if (ticketing?.ticketsIssued != null && seats < ticketing.ticketsIssued) {
+    return {
+      error: `This booking already has ${ticketing.ticketsIssued} tickets issued, so it cannot be reduced to ${seats} seats.`,
+    };
+  }
+
+  // Nor below what the selling side has already committed: seats held by agents
+  // (and, from phase 8, put on sale) cannot vanish from under them.
+  const liveAssignments = await prisma.agentAssignment.findMany({
+    where: { pnrId: id, releasedAt: null },
+    select: { seats: true },
+  });
+  const seatsError = validateSeatsChange(seats, {
+    agentSeats: liveAgentSeats(liveAssignments),
+  });
+  if (seatsError) return { error: seatsError };
 
   // Head office may reassign the branch; a branch user may not. Preserve the
   // PNR's existing branch rather than stamping the user's primary row onto it —
@@ -261,7 +298,7 @@ export async function updatePnr(formData: FormData) {
     branchId,
     pnr: pnrCode,
     gdsPnr: str(formData, 'gds_pnr'),
-    segment: str(formData, 'segment'),
+    segment,
     airlineId: str(formData, 'airline_id'),
     seats,
     outboundDate: dateVal(formData, 'outbound_date'),
@@ -298,6 +335,26 @@ export async function updatePnr(formData: FormData) {
   await prisma.$transaction(async (tx) => {
     await tx.pnr.update({ where: { id }, data: next });
 
+    // Balance tickets is seats − issued, so changing the seats changes it too.
+    // Recomputed here rather than left stale, and logged like any other write to
+    // `ticketing`.
+    if (ticketing?.ticketsIssued != null && seats !== existing.seats) {
+      const newBalance = balanceTicketsFor(seats, ticketing.ticketsIssued);
+      if (newBalance !== ticketing.balanceTickets) {
+        await tx.ticketing.update({ where: { pnrId: id }, data: { balanceTickets: newBalance } });
+        await tx.activityLog.create({
+          data: {
+            tableName: 'ticketing',
+            recordId: id,
+            fieldName: 'balanceTickets',
+            oldValue: ticketing.balanceTickets === null ? '(empty)' : String(ticketing.balanceTickets),
+            newValue: newBalance === null ? '(empty)' : String(newBalance),
+            changedBy: authUser.id,
+          },
+        });
+      }
+    }
+
     if (changes.length > 0) {
       await tx.activityLog.createMany({
         data: changes.map((c) => ({
@@ -326,8 +383,21 @@ export async function splitPnr(formData: FormData) {
   const childPnrCode = str(formData, 'child_pnr_code');
   if (!childPnrCode) return { error: 'A child PNR code from the airline is required.' };
 
-  const newInvestorCompany = str(formData, 'new_investor_company');
-  if (!newInvestorCompany) return { error: 'Investor company for the child PNR is required.' };
+  // The airline issues a NEW code for the child (docs/decisions.md, 2026-09-01),
+  // so it is a new booking and the uniqueness rule applies to it as well.
+  const childCodeError = validatePnrCode(childPnrCode);
+  if (childCodeError) return { error: childCodeError.error };
+  const childDuplicate = await findPnrByCode(childPnrCode);
+  if (childDuplicate) {
+    return {
+      error: `PNR ${childDuplicate.pnr} already exists (SR#${childDuplicate.srNo}). The child booking needs the new code the airline issued.`,
+    };
+  }
+
+  // A child booking is company investment like any other, until its seats are
+  // handed to an agent or put on sale (owner ruling, 2026-09-20). It is no
+  // longer typed at split time: assign the child on its own page afterwards.
+  const newInvestorCompany = COMPANY_INVESTMENT;
 
   const seatsToAllocate = numVal(formData, 'seats_to_allocate');
   if (seatsToAllocate === null) {
@@ -339,6 +409,7 @@ export async function splitPnr(formData: FormData) {
     where: { id: parentPnrId },
     include: {
       emdRounds: { orderBy: { roundNumber: 'asc' } },
+      agentAssignments: { where: { releasedAt: null } },
     },
   });
   if (!parent) return { error: 'Parent PNR not found.' };
@@ -346,9 +417,20 @@ export async function splitPnr(formData: FormData) {
   // Seat maths lives in src/lib/seats.ts (unit-tested): a PNR's `seats` is what
   // it still holds, so it IS the unallocated count. Subtracting `allocations` on
   // top double-counted every past split.
-  const remaining = unallocatedSeats(parent);
-  const seatsError = validateSplit(remaining, seatsToAllocate);
-  if (seatsError) return { error: seatsError };
+  //
+  // From phase 6 a split may only take seats nobody is selling yet: seats an
+  // agent holds cannot be moved to a different PNR behind their back. The ledger
+  // decides what is free (docs/business-rules.md, "Selling side").
+  const ledger = seatLedger({ seats: unallocatedSeats(parent), assignments: parent.agentAssignments });
+  const seatsError = validateSplit(ledger.unassigned, seatsToAllocate);
+  if (seatsError) {
+    return {
+      error:
+        ledger.agentSeats > 0
+          ? `${seatsError} ${ledger.agentSeats} seat${ledger.agentSeats === 1 ? ' is' : 's are'} held by agents and cannot be split away — release them first.`
+          : seatsError,
+    };
+  }
 
   const parentFare = Number(parent.fare);
   const parentRemainingSeats = parent.seats - seatsToAllocate;
@@ -402,7 +484,8 @@ export async function splitPnr(formData: FormData) {
     // 4. Handle EMD rounds based on whether EMD-1 was already paid
     const parentRounds = parent.emdRounds;
     const emd1 = parentRounds.find((r) => r.roundNumber === 1);
-    const emd1IsPaid = emd1 && (emd1.status === 'paid' || emd1.status === 'refund_requested' || emd1.status === 'refunded');
+    // Settled = the airline gave it back. With two statuses, that is `refunded`.
+    const emd1IsPaid = emd1 && emd1.status === 'refunded';
 
     if (emd1IsPaid) {
       // Scenario 1: EMD-1 already paid — parent and child share the original EMD-1.

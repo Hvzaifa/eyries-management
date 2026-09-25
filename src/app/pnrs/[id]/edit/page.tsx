@@ -1,6 +1,6 @@
-import { createClient } from '@/lib/supabase/server';
 import { redirect, notFound } from 'next/navigation';
-import { resolveAuthUser, canEditPnr } from '@/lib/auth';
+import { requirePageUser } from '@/lib/server/session';
+import { canEditPnr } from '@/lib/auth';
 import { getPnrDetail, getPnrFormOptions } from '@/lib/pnrs';
 import PnrForm from '@/components/pnr-form';
 import type { PnrFormValues } from '@/lib/pnr-form-values';
@@ -12,11 +12,7 @@ export default async function EditPnrPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect('/login');
-
-  const authUser = await resolveAuthUser(user);
+  const { user, authUser } = await requirePageUser();
 
   const { id } = await params;
   const [detail, options] = await Promise.all([getPnrDetail(id, authUser), getPnrFormOptions(authUser)]);

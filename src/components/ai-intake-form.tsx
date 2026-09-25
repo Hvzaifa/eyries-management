@@ -4,6 +4,7 @@ import { useRef, useState, useTransition } from 'react';
 import { Bot, ClipboardPaste, Loader2, RotateCcw, AlertTriangle, ImagePlus, X, FileSpreadsheet, CheckCircle2 } from 'lucide-react';
 import PnrForm from '@/components/pnr-form';
 import type { PnrFormValues } from '@/lib/pnr-form-values';
+import { normalizeSegment } from '@/lib/booking-entry';
 import type { PnrFormOptions } from '@/lib/pnrs';
 import type { ParsedBookingDraft, FieldConfidence } from '@/lib/ai/parse-booking';
 
@@ -40,7 +41,10 @@ function draftToFormValues(
     branchId: matchedBranch?.id ?? '',
     pnr: draft.pnr.value ?? '',
     gdsPnr: draft.gdsPnr.value ?? '',
-    segment: draft.segment.value ?? '',
+    // The model may return any wording; the segment list is fixed, so an
+    // unrecognised value starts blank rather than pre-filling something the
+    // save will reject (owner ruling, 2026-09-20).
+    segment: normalizeSegment(draft.segment.value ?? null) ?? '',
     airlineId: matchedAirline?.id ?? '',
     seats: draft.seats.value !== null ? String(draft.seats.value) : '',
     outboundDate: draft.outboundDate.value ?? '',

@@ -5,11 +5,15 @@ import { sameDate } from '@/lib/urgency';
  * Re-apply the PNR TL rule after anything changes a PNR's EMD rounds.
  *
  * Owner rule (2026-09-07): the PNR TL is the time limit the PNR rests with us.
- * It starts as EMD-1's deadline; once EMD-1 is settled — the airline confirms
- * payment and staff update the round's status — the TL becomes EMD-2's deadline,
- * and so on down the rounds. So the TL is always the deadline of the earliest
- * round still outstanding (status 'issued'). When no round is outstanding, the
- * last round's deadline stands; the TL is never blanked.
+ * It starts as EMD-1's deadline; once EMD-1 is settled and staff update the
+ * round's status, the TL becomes EMD-2's deadline, and so on down the rounds.
+ * So the TL is always the deadline of the earliest round still outstanding
+ * (status 'issued'). When no round is outstanding, the last round's deadline
+ * stands; the TL is never blanked.
+ *
+ * Each of those deadlines is an **issuance** time limit — the date the next EMD
+ * or the tickets must be issued by — so the TL genuinely is "how long the PNR
+ * rests with us" (owner correction, 2026-09-21).
  *
  * Must run wherever a round is created, edited, or refunded — the handover is
  * triggered by the status change, so a path that skips this leaves the TL

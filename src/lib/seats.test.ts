@@ -31,7 +31,7 @@ describe('validateSplit', () => {
   });
 
   it('rejects one seat too many', () => {
-    expect(validateSplit(40, 41)).toMatch(/only holds 40 seats/);
+    expect(validateSplit(40, 41)).toMatch(/only 40 seats available to split/);
   });
 
   it('rejects zero, negative and fractional requests', () => {
@@ -42,7 +42,7 @@ describe('validateSplit', () => {
   });
 
   it('pluralises the message correctly for a single seat', () => {
-    expect(validateSplit(1, 2)).toMatch(/only holds 1 seat\./);
+    expect(validateSplit(1, 2)).toMatch(/only 1 seat available to split/);
   });
 
   it('allows a second split of the full remainder after a first split', () => {

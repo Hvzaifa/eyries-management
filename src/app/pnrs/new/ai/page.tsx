@@ -1,16 +1,11 @@
-import { createClient } from '@/lib/supabase/server';
-import { redirect } from 'next/navigation';
-import { resolveAuthUser } from '@/lib/auth';
+import { requirePageUser } from '@/lib/server/session';
 import { getPnrFormOptions } from '@/lib/pnrs';
 import AppHeader from '@/components/app-header';
 import AiIntakeForm from '@/components/ai-intake-form';
 import { createPnr } from '../../actions/pnr';
 
 export default async function AiIntakePage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect('/login');
-  const authUser = await resolveAuthUser(user);
+  const { user, authUser } = await requirePageUser();
 
   const options = await getPnrFormOptions(authUser);
 

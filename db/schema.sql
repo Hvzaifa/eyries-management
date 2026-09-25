@@ -29,8 +29,8 @@ create table if not exists branches (
 -- are the same branch (owner ruling, 2026-09-07). The `unique` above compares
 -- text exactly, so it allowed both to exist as separate rows and one real branch
 -- ended up split across two records. This index closes that gap.
--- Requires the duplicates to be merged first:
---   npx tsx scripts/merge-duplicate-branches.ts --commit
+-- The duplicates it guards against were merged on 2026-09-07 (the merge script
+-- is retired; see docs/operations.md, "Retired one-off scripts").
 create unique index if not exists idx_branches_name_lower on branches (lower(name));
 
 create table if not exists airlines (
@@ -91,9 +91,21 @@ create table if not exists emd_rounds (
   deadline_time time,
   -- 'issued' replaced 'pending' (docs/decisions.md, 2026-09-07). Creating a round
   -- in the system IS the act of issuing it, which starts the clock to the deadline.
-  status text not null default 'issued' check (status in ('issued','paid','refund_requested','refunded','expired')),
+  -- Two statuses only (owner ruling, 2026-09-21). A round is ISSUED — which is
+  -- what secures the PNR — until the airline REFUNDS it. 'paid',
+  -- 'refund_requested' and 'expired' were removed: when an EMD is paid is an
+  -- IATA matter this system does not model yet, and a status nobody can define
+  -- is a status that gets set by guesswork.
+  status text not null default 'issued' check (status in ('issued','refunded')),
   refund_amount numeric(14,2),
   refund_date date,
+  -- The day this EMD was PAID to IATA. Added 2026-09-22 with the IATA
+  -- remittance calendar (src/lib/iata-calendar.ts). It is deliberately NOT a
+  -- status: payment is a separate axis from `status`, because an EMD that has
+  -- been paid is still held by the airline and still 'issued'. Folding payment
+  -- into `status` is what made the old 'paid' value wrong, and it was removed
+  -- on 2026-09-21. Null means unpaid; the deadline comes from the calendar.
+  payment_date date,
   -- which license actually paid for THIS round; rounds of one PNR may differ
   -- (docs/decisions.md, 2026-09-07 "License Tracking per EMD Round")
   license_id uuid references licenses(id) on update cascade on delete set null,
@@ -109,6 +121,11 @@ create table if not exists emd_rounds (
 -- appear here. Each statement is a no-op on an already-current database.
 -- ---------------------------------------------------------------------------
 
+-- Note on the selling-side tables (`agents`, phase 6): a brand-NEW table needs
+-- nothing here. `create table if not exists` does create it on an existing
+-- database — what it cannot do is ALTER one. The moment a column is added to
+-- `agents` after it ships, that column belongs here as well as above.
+
 alter table emd_rounds add column if not exists issuance_time time;
 alter table emd_rounds add column if not exists license_id uuid
   references licenses(id) on update cascade on delete set null;
@@ -121,11 +138,38 @@ alter table emd_rounds add column if not exists license_id uuid
 alter table emd_rounds drop constraint if exists emd_rounds_status_check;
 update emd_rounds set status = 'issued' where status = 'pending';
 alter table emd_rounds alter column status set default 'issued';
+-- Statuses reduced to two (owner ruling, 2026-09-21). Any row still carrying a
+-- removed status is mapped first, or the constraint cannot be validated:
+--   paid / refund_requested / expired -> issued (the EMD is still with the
+--   airline; none of them mean the deposit came back).
+update emd_rounds set status = 'issued'
+  where status in ('paid', 'refund_requested', 'expired');
 alter table emd_rounds add constraint emd_rounds_status_check
-  check (status in ('issued','paid','refund_requested','refunded','expired'));
+  check (status in ('issued','refunded'));
+
+-- IATA payment tracking (2026-09-22). Nullable with no default and no
+-- backfill: a null here means "we have not recorded paying this", which is the
+-- truth for every round that existed before the calendar was loaded. Guessing
+-- a payment date from the calendar would fabricate a settlement that may never
+-- have happened.
+alter table emd_rounds add column if not exists payment_date date;
 
 create index if not exists idx_emd_rounds_pnr on emd_rounds(pnr_id);
 create index if not exists idx_emd_rounds_status on emd_rounds(status);
+
+-- Drives the IATA settlement view and the payment half of the daily alert:
+-- EMDs with no recorded payment, ordered by when they were issued (which is
+-- what places them in a billing period).
+--
+-- The predicate deliberately does NOT include status = 'issued'. A round
+-- refunded AFTER its billing window closed was still billed and is still owed
+-- (owner correction, 2026-09-22), so refunded rows must stay in the index.
+-- Dropped first for the same reason as idx_emd_rounds_deadline above:
+-- `create index if not exists` would keep an older index of this name whose
+-- predicate still carries the status clause, leaving those rows unindexed.
+drop index if exists idx_emd_rounds_unpaid;
+create index idx_emd_rounds_unpaid
+  on emd_rounds(issuance_date) where payment_date is null;
 
 -- Partial index for the daily deadline job. Dropped first because
 -- `create index if not exists` would keep an older index of the same name whose
@@ -169,6 +213,98 @@ create table if not exists activity_log (
 create index if not exists idx_activity_log_record on activity_log(table_name, record_id);
 
 -- ---------------------------------------------------------------------------
+-- Selling side (phase 6+). See docs/data-model.md and docs/business-rules.md.
+--
+-- Agents are the travel agents that seats are handed over to. They are RECORDS,
+-- NOT user accounts — agents never log in (owner ruling, 2026-09-16).
+-- ---------------------------------------------------------------------------
+create table if not exists agents (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  -- Lower-cased, trimmed `name`. Unique, so one agent cannot exist twice under
+  -- two spellings — the exact failure that split "Rawalpindi" from "RAWALPINDI"
+  -- across two branch rows and hid 392 bookings from the branch that owned them
+  -- (docs/decisions.md, 2026-09-07). Written by the app, never typed.
+  name_key text not null unique,
+  b2b_code text,
+  contact_emails text[] not null default '{}',
+  contact_phone text,
+  -- Which branch created this agent. NULL = head office. Head office sees every
+  -- agent; a branch sees only its own (owner ruling, 2026-09-17).
+  created_by_branch_id uuid references branches(id) on update cascade on delete set null,
+  active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_agents_branch on agents(created_by_branch_id);
+create index if not exists idx_agents_active on agents(active);
+
+-- Seats of one PNR held by one agent, with that agent's commercial terms.
+-- Several rows per PNR are normal: one PNR can be shared between agents.
+--
+-- The money columns are written here and only USED in phase 7. They live on the
+-- assignment, not on the PNR, because two agents on the same PNR can be given
+-- different terms (owner ruling, 2026-09-17).
+create table if not exists agent_assignments (
+  id uuid primary key default gen_random_uuid(),
+  pnr_id uuid not null references pnrs(id) on delete cascade,
+  agent_id uuid not null references agents(id),
+  seats integer not null check (seats > 0),
+  charge_type text not null default 'none' check (charge_type in ('none','pct','per_seat')),
+  charge_value numeric(12,2),
+  discount_type text not null default 'none' check (discount_type in ('none','pct','per_seat')),
+  discount_value numeric(12,2),
+  charge_tax boolean not null default false,
+  assigned_at timestamptz not null default now(),
+  assigned_by uuid,
+  -- Set when seats are taken back. A released row stays as history and stops
+  -- counting against the ledger; it is never deleted.
+  released_at timestamptz,
+  -- A charge and a discount are never both set (owner ruling, 2026-09-17).
+  -- Enforced here as well as in the app: this is a money rule, and the database
+  -- is the only place that cannot be bypassed.
+  constraint agent_assignments_charge_xor_discount
+    check (charge_type = 'none' or discount_type = 'none'),
+  -- A type without its value, or a value without its type, is a half-saved term.
+  constraint agent_assignments_charge_value_present
+    check ((charge_type = 'none') = (charge_value is null)),
+  constraint agent_assignments_discount_value_present
+    check ((discount_type = 'none') = (discount_value is null))
+);
+
+create index if not exists idx_agent_assignments_pnr on agent_assignments(pnr_id);
+create index if not exists idx_agent_assignments_agent on agent_assignments(agent_id);
+-- The ledger only ever sums LIVE assignments, so the index matches that query.
+create index if not exists idx_agent_assignments_live
+  on agent_assignments(pnr_id) where released_at is null;
+
+-- Money actually received from an agent against one assignment. "Recovery" is
+-- the company's own word for it (phase 7 step 2).
+--
+-- There is no stored balance anywhere: outstanding is the agent's calculated
+-- total minus the sum of these rows. A stored balance goes stale the moment a
+-- charge, a discount or the seat count changes, and then two screens disagree.
+create table if not exists agent_recoveries (
+  id uuid primary key default gen_random_uuid(),
+  assignment_id uuid not null references agent_assignments(id) on delete cascade,
+  -- A payment is money that arrived, so it is positive. A correction is made by
+  -- deleting the row (head office only, and logged), never by recording a
+  -- negative payment that would read as a refund to the agent.
+  amount numeric(14,2) not null check (amount > 0),
+  received_date date not null,
+  method text,
+  -- The agent's payment reference (cheque number, transfer id). Shown to staff,
+  -- NEVER written to activity_log — CLAUDE.md rule 8, no payment references in
+  -- log lines.
+  reference text,
+  recorded_by uuid,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_agent_recoveries_assignment on agent_recoveries(assignment_id);
+create index if not exists idx_agent_recoveries_date on agent_recoveries(received_date);
+
+-- ---------------------------------------------------------------------------
 -- Row Level Security (RLS)
 --
 -- Supabase publishes every table in the `public` schema through its PostgREST
@@ -195,6 +331,9 @@ alter table emd_rounds   enable row level security;
 alter table ticketing    enable row level security;
 alter table allocations  enable row level security;
 alter table activity_log enable row level security;
+alter table agents       enable row level security;
+alter table agent_assignments enable row level security;
+alter table agent_recoveries enable row level security;
 
 
 -- Refund log view — NOT a separate table (see docs/decisions.md, 2026-08-21 entry)
@@ -221,22 +360,13 @@ left join airlines a on a.id = p.airline_id
 left join branches b on b.id = p.branch_id
 where er.status = 'refunded';
 
--- Dashboard totals view (mirrors the totals row at the top of the old sheet).
--- Scoped to active PNRs, matching the other columns.
--- total_paid = EMD amounts actually paid out (gross, incl. rounds later refunded);
--- total_refunded = amounts returned by the airline. Recorded as separate facts,
--- never netted (see docs/business-rules.md).
-create or replace view dashboard_totals with (security_invoker = on) as
-select
-  (select count(*) from pnrs where status = 'active') as active_pnrs,
-  (select coalesce(sum(seats), 0) from pnrs where status = 'active') as total_seats,
-  (select coalesce(sum(total_emd_value), 0) from pnrs where status = 'active') as total_emd_value,
-  (select coalesce(sum(er.emd_amount), 0)
-     from emd_rounds er join pnrs p on p.id = er.pnr_id
-    where p.status = 'active' and er.status in ('paid', 'refund_requested', 'refunded')) as total_paid,
-  (select coalesce(sum(er.refund_amount), 0)
-     from emd_rounds er join pnrs p on p.id = er.pnr_id
-    where p.status = 'active' and er.status = 'refunded') as total_refunded;
+-- The `dashboard_totals` view was DROPPED on 2026-09-24. The dashboard stopped
+-- reading it on 2026-09-09, when its cards began totalling the filtered rows in
+-- the browser (`src/lib/dashboard.ts`); the view then sat unused, one more object
+-- that had to be kept revoked from the public API roles. `drop ... if exists`
+-- is both the create path (a fresh database never gets it) and the healing path
+-- (an existing one loses it).
+drop view if exists dashboard_totals;
 
 -- Belt and braces alongside `security_invoker`: with no grant at all, PostgREST
 -- cannot reach these views even if the option is ever lost. Guarded by a role
@@ -245,10 +375,8 @@ do $$
 begin
   if exists (select 1 from pg_roles where rolname = 'anon') then
     execute 'revoke all on refunded_emd_rounds from anon';
-    execute 'revoke all on dashboard_totals from anon';
   end if;
   if exists (select 1 from pg_roles where rolname = 'authenticated') then
     execute 'revoke all on refunded_emd_rounds from authenticated';
-    execute 'revoke all on dashboard_totals from authenticated';
   end if;
 end $$;

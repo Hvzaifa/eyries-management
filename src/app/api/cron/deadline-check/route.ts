@@ -19,7 +19,8 @@ function isAuthorizedCron(authHeader: string | null, secret: string | undefined)
  * Daily deadline job (Vercel Cron -> this route).
  * 1. Sets missing EMD-2 deadlines from the SV policy (owner rule) — the only
  *    write this job performs, each change activity-logged.
- * 2. Sends one read-only summary email for pending rounds due within 2 days.
+ * 2. Sends one read-only summary email for issued EMD rounds AND ticketing
+ *    deadlines (name update, ticket issuance) due within 2 days.
  * Protected by the CRON_SECRET bearer token — Vercel sends it automatically.
  */
 export async function GET(request: Request) {
@@ -35,7 +36,13 @@ export async function GET(request: Request) {
 
   if (result.error) {
     return NextResponse.json(
-      { ok: false, error: result.error, due: result.alerts.length, backfill },
+      {
+        ok: false,
+        error: result.error,
+        due: result.alerts.length,
+        ticketingDue: result.ticketingAlerts.length,
+        backfill,
+      },
       { status: 500 }
     );
   }
@@ -44,6 +51,7 @@ export async function GET(request: Request) {
     ok: true,
     backfill,
     due: result.alerts.length,
+    ticketingDue: result.ticketingAlerts.length,
     sent: result.sent,
     recipients: result.recipients,
     subject: result.subject,

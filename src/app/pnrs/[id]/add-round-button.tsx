@@ -3,12 +3,50 @@
 import { useState, useTransition } from 'react';
 import { Plus, X, AlertTriangle } from 'lucide-react';
 import { createEmdRound } from '../actions/emd';
-import { formatEmdNumberInput } from '@/lib/format';
+import { formatEmdNumberInput, formatPkr } from '@/lib/format';
+import { emdAmountFor } from '@/lib/emd';
 
-export default function AddRoundButton({ pnrId, licenses }: { pnrId: string, licenses: { id: string, name: string }[] }) {
+export default function AddRoundButton({
+  pnrId,
+  licenses,
+  seats,
+  fare,
+  suggestedPct,
+  suggestedDeadline,
+}: {
+  pnrId: string;
+  licenses: { id: string; name: string }[];
+  /** The booking's seats and fare — what the EMD amount is calculated from. */
+  seats: number;
+  fare: number;
+  /** The policy percentage for the round about to be issued, when there is one. */
+  suggestedPct: number | null;
+  /** The policy date this EMD secures the PNR to, when there is one. */
+  suggestedDeadline: string | null;
+}) {
   const [isOpen, setIsOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [pct, setPct] = useState<string>(suggestedPct === null ? '' : String(suggestedPct));
+  const [amount, setAmount] = useState<string>(() => {
+    const a = emdAmountFor(seats, fare, suggestedPct);
+    return a === null ? '' : String(a);
+  });
+  const [amountTouched, setAmountTouched] = useState(false);
+
+  // The amount follows the percentage until someone types over it. The airline
+  // occasionally issues an EMD for a figure of its own, so it stays editable
+  // (owner ruling, 2026-09-21: pre-filled, verified by staff).
+  const onPctChange = (value: string) => {
+    setPct(value);
+    if (amountTouched) return;
+    const calculated = emdAmountFor(seats, fare, value === '' ? null : Number(value));
+    setAmount(calculated === null ? '' : String(calculated));
+  };
+
+  const calculated = emdAmountFor(seats, fare, pct === '' ? null : Number(pct));
+  const edited =
+    amountTouched && calculated !== null && amount !== '' && Number(amount) !== calculated;
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -80,15 +118,44 @@ export default function AddRoundButton({ pnrId, licenses }: { pnrId: string, lic
                   <label className="block text-xs font-medium text-stone-600 mb-1.5">
                     Payment % <span className="text-red-500">*</span>
                   </label>
-                  <input type="number" step="0.01" name="round_payment_pct" required className={inputCls} placeholder="e.g. 15" />
+                  <input
+                    type="number"
+                    step="0.01"
+                    name="round_payment_pct"
+                    required
+                    value={pct}
+                    onChange={(e) => onPctChange(e.target.value)}
+                    className={inputCls}
+                    placeholder="e.g. 15"
+                  />
+                  {suggestedPct !== null && (
+                    <p className="mt-1 text-[11px] text-stone-400">Policy suggests {suggestedPct}%.</p>
+                  )}
                 </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-stone-600 mb-1.5">
-                  EMD Amount (PKR) <span className="text-red-500">*</span>
-                </label>
-                <input type="number" name="round_emd_amount" required className={inputCls} placeholder="Total amount in PKR" />
+                <div>
+                  <label className="block text-xs font-medium text-stone-600 mb-1.5">
+                    EMD Amount (PKR) <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    name="round_emd_amount"
+                    required
+                    value={amount}
+                    onChange={(e) => {
+                      setAmount(e.target.value);
+                      setAmountTouched(true);
+                    }}
+                    className={inputCls}
+                    placeholder="Total amount in PKR"
+                  />
+                  <p className="mt-1 text-[11px] text-stone-400">
+                    {calculated === null
+                      ? `${seats} seats × ${formatPkr(fare)}`
+                      : `${pct || 0}% of ${formatPkr(seats * fare)} = ${formatPkr(calculated)}`}
+                    {edited && <span className="text-amber-600"> · edited</span>}
+                  </p>
+                </div>
               </div>
 
               <div>
@@ -106,9 +173,19 @@ export default function AddRoundButton({ pnrId, licenses }: { pnrId: string, lic
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-medium text-stone-600 mb-1.5">
-                    Deadline Date <span className="text-red-500">*</span>
+                    Secures the PNR until <span className="text-red-500">*</span>
                   </label>
-                  <input type="date" name="round_deadline_date" required className={inputCls} />
+                  <input
+                    type="date"
+                    name="round_deadline_date"
+                    required
+                    defaultValue={suggestedDeadline ?? ''}
+                    className={inputCls}
+                  />
+                  <p className="mt-1 text-[11px] text-stone-400">
+                    By this date the next EMD must be issued, or the tickets.
+                    {suggestedDeadline && ' Pre-filled from the airline’s policy.'}
+                  </p>
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-stone-600 mb-1.5">
