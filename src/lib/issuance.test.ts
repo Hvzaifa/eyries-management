@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  FINAL_EMD_ROUND,
+  nextStep,
   ordinal,
   nextEmdLabel,
   emdsToIssueOn,
@@ -154,5 +156,49 @@ describe('issuanceDates', () => {
 
   it('returns nothing when no booking has a deadline', () => {
     expect(issuanceDates([row({ nextIssuanceDeadline: null })])).toEqual([]);
+  });
+});
+
+describe('nextStep — the time limit in force is the latest round’s', () => {
+  const r = (roundNumber: number, deadlineDate: string | null) => ({ roundNumber, deadlineDate });
+  const base = { pnrTlDate: '2026-10-01', ticketIssuanceDeadline: '2026-11-17' };
+
+  it('no rounds: the 1st EMD, by the PNR TL', () => {
+    expect(nextStep({ ...base, rounds: [] })).toEqual({ kind: 'emd', emdRound: 1, deadline: '2026-10-01' });
+  });
+
+  it('one round: the 2nd EMD, by the time limit round 1 secured', () => {
+    expect(nextStep({ ...base, rounds: [r(1, '2026-10-15')] })).toEqual({ kind: 'emd', emdRound: 2, deadline: '2026-10-15' });
+  });
+
+  it('a round with no recorded time limit falls back to the PNR TL', () => {
+    expect(nextStep({ ...base, rounds: [r(1, null)] }).deadline).toBe('2026-10-01');
+  });
+
+  it('the owner’s case: round 2 issued meets round 1’s passed time limit — nothing overdue, no 3rd EMD', () => {
+    // 9FF8DS: round 1 secured to 1 Sep and is not yet recorded as refunded;
+    // round 2 was issued 1 Sep.
+    const s = nextStep({ ...base, rounds: [r(1, '2026-09-01'), r(2, null)] });
+    expect(s.kind).toBe('tickets');
+    expect(s.emdRound).toBeNull();
+    expect(s.deadline).toBe('2026-11-17');
+  });
+
+  it('after the final EMD, the ticketing record’s deadline is shown, else the last round’s time limit', () => {
+    expect(nextStep({ ...base, rounds: [r(1, '2026-09-01'), r(2, '2026-10-20')] }).deadline).toBe('2026-11-17');
+    expect(
+      nextStep({ ...base, ticketIssuanceDeadline: null, rounds: [r(1, '2026-09-01'), r(2, '2026-10-20')] }).deadline
+    ).toBe('2026-10-20');
+  });
+
+  it('a 3rd round staff created still never leads to a 4th being suggested', () => {
+    const s = nextStep({ ...base, ticketIssuanceDeadline: null, rounds: [r(1, null), r(2, null), r(3, '2026-10-25')] });
+    expect(s).toEqual({ kind: 'tickets', emdRound: null, deadline: '2026-10-25' });
+    expect(FINAL_EMD_ROUND).toBe(2);
+  });
+
+  it('round order in the input does not matter', () => {
+    expect(nextStep({ ...base, rounds: [r(1, '2026-10-20')] }).deadline).toBe('2026-10-20');
+    expect(nextStep({ ...base, ticketIssuanceDeadline: null, rounds: [r(2, '2026-10-20'), r(1, '2026-09-01')] }).deadline).toBe('2026-10-20');
   });
 });

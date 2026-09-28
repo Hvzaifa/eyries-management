@@ -202,29 +202,29 @@ Restoring means re-inserting from those JSON files in FK-safe order:
 
 ## Re-importing the master sheet
 
-**The importer was removed on 2026-09-25**, with the data it imported: bookings
-are entered through the app since the 2026-09-20 reset. The owner intends to
-re-import once the sheet has been cleaned into a proper format. When that
-happens:
+`scripts/import-master-sheet.ts` (rules in `src/lib/master-sheet-import.ts`,
+unit-tested) loads `Groups EMD Master Sheet.xlsx`, tab "OB 01JUN26 Onward".
+Last run 2026-09-28; the owner's rulings it encodes are in `decisions.md` under
+that date.
 
-1. Restore the tooling (see "Retired one-off scripts" above):
-   `git checkout 9a6c1e0 -- scripts/import-legacy.ts src/lib/legacy-import.ts src/lib/legacy-import.test.ts scripts/apply-completion-rule.ts`
-   and, for agents, `git checkout archive/one-off-scripts -- scripts/map-legacy-agents.ts src/lib/legacy-agents.ts src/lib/legacy-agents.test.ts`.
-2. **Check it against the current schema before trusting it.** It was written
-   before phases 6–7 (agents, recoveries), the two-status EMD model, the IATA
-   `payment_date` and the per-round agent schedule. Run its tests, then a dry
-   run, and compare what it proposes against `docs/data-model.md`.
-3. **Back up first.** The wipe is irreversible.
-4. Delete transactional tables only — **keep the lookup tables**. User accounts
-   resolve their branch by *name* against `branches`, so dropping those rows
-   locks every branch account out.
-5. Reset the serial: `ALTER SEQUENCE pnrs_sr_no_seq RESTART WITH 1` — the
-   importer never set `sr_no`.
-6. Import with `--commit`, then run `scripts/apply-completion-rule.ts --commit`.
+1. **Dry run first** — `npx tsx scripts/import-master-sheet.ts` prints the plan
+   and writes `Master Sheet Import — Rows to Check (<date>).xlsx` (summary, rows
+   to check, rows left out by rule, IATA payments assumed). Nothing is written.
+2. Optional independent check: `--dump=plan.json` writes the full plan so it can
+   be compared cell by cell against the sheet (done on 2026-09-28: 13,339 values,
+   0 mismatches).
+3. **The database must hold no bookings and no agents** — the script refuses
+   otherwise, because it loads rather than merges. Clear it with
+   `scripts/reset-bookings.ts --commit` (backs up first) and delete agents
+   separately if they are to be re-created from the sheet.
+4. `--commit` writes everything in one transaction.
 
-The importer **flagged rather than guessed**: rows with an incomplete EMD round
-or a duplicate PNR code were reported and left out, never silently repaired.
-Keep that behaviour for the cleaned data.
+"Today" is the PKT date the script runs on: which rows count as travelled, and
+which IATA remittance days count as passed, both depend on it.
+
+The earlier importer (`scripts/import-legacy.ts`, retired 2026-09-25) is still
+recoverable from `9a6c1e0` but predates agents, the two-status EMD model and
+the IATA columns; use the script above instead.
 
 ## Deploying to Vercel
 

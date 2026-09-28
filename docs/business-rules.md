@@ -109,9 +109,30 @@ A PNR is not limited to a fixed number of rounds. The real cycle:
 ### PNR TL as the EMD-1 deadline (owner rule, 2026-08-24, restated 2026-09-21)
 
 `pnrs.pnr_tl_date` **is** the deadline to issue the first EMD, and it is what a
-new booking is created with. Once rounds exist it follows the earliest one still
-outstanding, so it is always "the next EMD issuance deadline" — which is what
-the booking page shows above the rounds.
+new booking is created with. Once rounds exist it is **the latest round's
+deadline** — each EMD secures the PNR to a new time limit, so issuing round 2
+meets round 1's whether or not round 1's refund has been recorded (corrected
+2026-09-28; it used to follow the earliest round still `issued`, which called
+such bookings overdue).
+
+### What the dashboard lists, and the Refunds page (owner, 2026-09-28)
+
+The dashboard is kept to work still to be done there: **active bookings with an
+EMD still to issue, or an IATA payment not yet recorded** (`isDashboardWork` in
+`src/lib/dashboard.ts`). A round that is **issued, paid to IATA and not yet
+refunded** is listed on the Refunds page under **To be refunded**; the page's
+other button, **Refunds recorded**, is the refund log. Cancelled and completed
+bookings appear on the dashboard when the status filter asks for them, and the
+search box finds any booking.
+
+### Two EMDs, then tickets (owner, 2026-09-28)
+
+The policy has two EMDs. Once two rounds exist, **no 3rd or 4th EMD is
+suggested** anywhere — one exists only if staff create it. What remains is
+issuing the tickets, and the system keeps no record of whether tickets have
+been issued, so that deadline is shown **for information only**: grey, never
+red or amber, not in the "needs attention" banner, not in the daily EMD alert.
+The rule is `nextStep()` in `src/lib/issuance.ts`.
 
 ### EMD-2 auto-generation (owner rule, 2026-08-24 — Phase 3 scope)
 
@@ -237,7 +258,9 @@ would hide whichever is not driving it.
 
 **Every active booking has a next issuance deadline, whether or not it has an
 EMD yet.** A booking with no rounds carries `pnr_tl_date`, the time limit for
-its *first* EMD; once rounds exist the deadline follows the earliest open one.
+its *first* EMD; after round 1 it is the time limit round 1 secured; after the
+2nd EMD there is no EMD deadline, and the column reads "2 EMDs issued · Tickets
+by …" in grey (see "Two EMDs, then tickets").
 The dashboard's **Next Deadline** column shows that date and, underneath it,
 **which** EMD is due — "1st EMD", "2nd EMD" — with what the policy says it is
 worth.

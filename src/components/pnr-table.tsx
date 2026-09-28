@@ -20,6 +20,7 @@ import { diffInDays, getUrgency, type Urgency } from '@/lib/urgency';
 import type { PnrListRow } from '@/lib/pnrs';
 import { formatNumber, formatPkr } from '@/lib/format';
 import DashboardCards from '@/components/dashboard-cards';
+import { isDashboardWork } from '@/lib/dashboard';
 
 const URGENCY_STYLES = {
   red: {
@@ -55,7 +56,7 @@ function fmtDate(v: unknown): string {
 }
 
 export default function PnrTable({
-  rows,
+  rows: allRows,
   todayIso,
   canIssueEmds = false,
 }: {
@@ -67,6 +68,24 @@ export default function PnrTable({
   const [sorting, setSorting] = useState<SortingState>([{ id: 'outboundDate', desc: false }]);
   const [globalFilter, setGlobalFilter] = useState('');
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+
+  /**
+   * The dashboard is kept to work still to be done here (owner, 2026-09-28):
+   * active bookings with an EMD to issue or an IATA payment not recorded
+   * (`isDashboardWork`). Bookings with only refunds left are worked from the
+   * Refunds page. Cancelled and completed ones appear when the status filter
+   * asks for them — and **the search box looks through every booking**, so a
+   * PNR typed in is always found, whichever list it is working from.
+   */
+  const statusChoice = (columnFilters.find((f) => f.id === 'status')?.value as string | undefined) ?? '';
+  const searching = globalFilter.trim() !== '';
+  const rows = useMemo(
+    () =>
+      searching
+        ? allRows
+        : allRows.filter((r) => (r.status === 'active' ? isDashboardWork(r) : r.status === statusChoice)),
+    [allRows, statusChoice, searching]
+  );
   /**
    * The holder in view, held here rather than read back out of `columnFilters`.
    * It drives two things at once — which rows the table keeps AND how each row
@@ -188,19 +207,6 @@ export default function PnrTable({
           <span className="font-mono text-[11px]">{c.getValue<string>() ?? '—'}</span>
         ) },
       { accessorKey: 'pnrTlDate', header: 'PNR TL Date', cell: (c) => fmtDate(c.getValue()) },
-      { accessorKey: 'dealPct', header: 'Deal %', cell: (c) => {
-          const v = c.getValue<number | null>();
-          return v === null || v === undefined ? '—' : `${v}%`;
-        } },
-      { accessorKey: 'issuedStatus', header: 'Issued', cell: (c) => (
-          <span className={`text-[11px] px-1.5 py-0.5 rounded-full border ${
-            c.getValue<string>() === 'issued'
-              ? 'bg-sky-50 text-sky-700 border-sky-200'
-              : 'bg-stone-100 text-stone-500 border-stone-200'
-          }`}>
-            {c.getValue<string>()}
-          </span>
-        ) },
       { accessorKey: 'airlineTaxes', header: 'Taxes (PKR)', cell: (c) => {
           const v = c.getValue<number | null>();
           return v === null || v === undefined ? '—' : formatNumber(v);
@@ -249,6 +255,24 @@ export default function PnrTable({
               <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[11px] whitespace-nowrap font-medium ${s.badge}`}>
                 <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
                 {row.status === 'cancelled' ? 'Cancelled' : 'Completed'}
+              </span>
+            );
+          }
+
+          // Every EMD issued: the time limit left governs the tickets, which
+          // the system does not track — shown for information, never urgent
+          // (owner, 2026-09-28).
+          if (row.emdsComplete) {
+            const s = URGENCY_STYLES.grey;
+            return (
+              <span className="inline-flex flex-col gap-0.5">
+                <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[11px] whitespace-nowrap font-medium ${s.badge}`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
+                  {row.roundsIssued} EMDs issued
+                </span>
+                <span className="text-[10px] text-stone-400">
+                  {row.ticketsBy ? `Tickets by ${row.ticketsBy}` : 'Tickets next'}
+                </span>
               </span>
             );
           }
@@ -460,6 +484,7 @@ export default function PnrTable({
         statusFilter={statusFilter}
         holder={holderFilter || null}
         issuanceDate={issuanceDate || null}
+        showIssuance={canIssueEmds}
         onClear={() => setHolder('')}
       />
 
@@ -507,7 +532,7 @@ export default function PnrTable({
         </div>
 
         {[
-          { id: 'status', label: 'All statuses', options: ['active', 'cancelled', 'completed'] },
+          { id: 'status', label: 'Needing action', options: ['cancelled', 'completed'] },
           { id: 'branchName', label: 'All branches', options: branchOptions },
           { id: 'airlineCode', label: 'All airlines', options: airlineOptions },
         ].map((sel) => (
@@ -539,7 +564,8 @@ export default function PnrTable({
 
         {/* EMDs to be issued on one day. Picking a date narrows the table to
             that day's bookings and fills the card above with what they are
-            worth (owner, 2026-09-23). */}
+            worth (owner, 2026-09-23). Head Office only (owner, 2026-09-26). */}
+        {canIssueEmds && (
         <div className="flex items-center gap-1.5">
           <label
             htmlFor="issuance-date"
@@ -572,6 +598,7 @@ export default function PnrTable({
             </button>
           )}
         </div>
+        )}
 
         <span className="ml-auto text-[11px] font-medium text-stone-500">
           Showing {visibleRows.length} of {rows.length}
@@ -626,7 +653,7 @@ export default function PnrTable({
               </tr>
             ) : (
               visibleRows.map((row) => {
-                const u = getUrgency(todayIso, row.original.nextPendingDeadline, row.original.status);
+                const u = getUrgency(todayIso, row.original.nextIssuanceDeadline, row.original.status);
                 return (
                   <tr
                     key={row.id}

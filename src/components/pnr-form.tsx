@@ -10,6 +10,14 @@ import {
   clampEmd2Deadline,
 } from '@/lib/emd';
 import { SEGMENTS } from '@/lib/booking-entry';
+import {
+  TRIP_TYPES,
+  TRIP_TYPE_LABELS,
+  BAGGAGE_MAX_KG,
+  BAGGAGE_MAX_PIECES,
+  buildSector,
+  isAirportCode,
+} from '@/lib/flight-details';
 import { diffInDays, todayIsoInPkt } from '@/lib/urgency';
 import type { PnrFormOptions } from '@/lib/pnrs';
 import type { FieldConfidence } from '@/lib/ai/parse-booking';
@@ -75,6 +83,154 @@ function SectionCard({
     </section>
   );
 }
+
+type LegKey = 'outbound' | 'inbound';
+type LegField = 'date' | 'departureCity' | 'departureTime' | 'arrivalCity' | 'arrivalTime' | 'flightCode';
+
+const LEG_FIELD_NAMES: Record<LegField, string> = {
+  date: 'date',
+  departureCity: 'departure_city',
+  departureTime: 'departure_time',
+  arrivalCity: 'arrival_city',
+  arrivalTime: 'arrival_time',
+  flightCode: 'flight_code',
+};
+
+const LEG_FIELD_LABELS: Record<Exclude<LegField, 'flightCode'>, string> = {
+  date: 'Departure date',
+  departureCity: 'Departure city',
+  departureTime: 'Departure time',
+  arrivalCity: 'Arrival city',
+  arrivalTime: 'Arrival time',
+};
+
+function legValueKey(leg: LegKey, field: LegField): keyof PnrFormValues {
+  return `${leg}${field[0].toUpperCase()}${field.slice(1)}` as keyof PnrFormValues;
+}
+
+/**
+ * One flight's fields. The field order is the owner's, per section, which is
+ * why it is passed in rather than fixed here.
+ */
+function FlightSection({
+  title,
+  leg,
+  order,
+  flightCodeLabel,
+  dateHint,
+  minDate,
+  values,
+  onChange,
+  conf,
+}: {
+  title: string;
+  leg: LegKey;
+  order: LegField[];
+  flightCodeLabel: string;
+  dateHint?: string;
+  minDate?: string;
+  values: PnrFormValues;
+  onChange: (key: keyof PnrFormValues, value: string) => void;
+  conf: (key: keyof PnrFormValues) => FieldConfidence | undefined;
+}) {
+  const input = (field: LegField) => {
+    const key = legValueKey(leg, field);
+    const name = `${leg}_${LEG_FIELD_NAMES[field]}`;
+    const value = values[key] ?? '';
+    switch (field) {
+      case 'date':
+        return (
+          <input type="date" name={name} required min={minDate || undefined} value={value} onChange={(e) => onChange(key, e.target.value)} className={inputCls} />
+        );
+      case 'departureTime':
+      case 'arrivalTime':
+        return (
+          <input type="time" name={name} value={value} onChange={(e) => onChange(key, e.target.value)} className={inputCls} />
+        );
+      case 'departureCity':
+      case 'arrivalCity':
+        return (
+          <input
+            name={name}
+            required
+            maxLength={3}
+            pattern="[A-Za-z]{3}"
+            title="3-letter airport code, e.g. ISB"
+            placeholder={field === 'departureCity' ? 'e.g. ISB' : 'e.g. JED'}
+            value={value}
+            onChange={(e) => onChange(key, e.target.value.toUpperCase())}
+            className={`${inputCls} font-mono uppercase placeholder:normal-case`}
+          />
+        );
+      case 'flightCode':
+        return (
+          <input
+            name={name}
+            required
+            maxLength={10}
+            placeholder="e.g. SV727"
+            value={value}
+            onChange={(e) => onChange(key, e.target.value.toUpperCase())}
+            className={`${inputCls} font-mono uppercase placeholder:normal-case`}
+          />
+        );
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-stone-200 p-4">
+      <h3 className="text-xs font-semibold text-stone-800 mb-3">{title}</h3>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-4">
+        {order.map((field) => (
+          <Field
+            key={field}
+            label={field === 'flightCode' ? flightCodeLabel : LEG_FIELD_LABELS[field]}
+            required={field !== 'departureTime' && field !== 'arrivalTime'}
+            hint={field === 'date' ? dateHint : undefined}
+            confidence={conf(legValueKey(leg, field))}
+          >
+            {input(field)}
+          </Field>
+        ))}
+      </div>
+
+      <div className="mt-4 pt-3 border-t border-stone-100">
+        <h4 className="text-[11px] font-semibold uppercase tracking-wide text-stone-500 mb-2">Baggage</h4>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-4">
+          <Field label="Bags" hint="Checked bags per passenger." confidence={conf(`${leg}BaggagePieces`)}>
+            <input
+              type="number"
+              name={`${leg}_baggage_pieces`}
+              min={0}
+              max={BAGGAGE_MAX_PIECES}
+              step={1}
+              placeholder="e.g. 2"
+              value={values[`${leg}BaggagePieces`]}
+              onChange={(e) => onChange(`${leg}BaggagePieces`, e.target.value)}
+              className={inputCls}
+            />
+          </Field>
+          <Field label="Weight (kg)" hint="Limit for each bag — e.g. 2 bags × 23 kg means 23 kg per bag, not 23 kg in total." confidence={conf(`${leg}BaggageKg`)}>
+            <input
+              type="number"
+              name={`${leg}_baggage_kg`}
+              min={1}
+              max={BAGGAGE_MAX_KG}
+              step={1}
+              placeholder="e.g. 23"
+              value={values[`${leg}BaggageKg`]}
+              onChange={(e) => onChange(`${leg}BaggageKg`, e.target.value)}
+              className={inputCls}
+            />
+          </Field>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const ONE_WAY_ORDER: LegField[] = ['date', 'departureTime', 'arrivalTime', 'departureCity', 'arrivalCity', 'flightCode'];
+const ROUND_TRIP_ORDER: LegField[] = ['date', 'departureCity', 'departureTime', 'arrivalCity', 'arrivalTime', 'flightCode'];
 
 export default function PnrForm({
   mode,
@@ -185,6 +341,25 @@ export default function PnrForm({
   const set = (key: keyof PnrFormValues) => (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
   ) => setValues((v) => ({ ...v, [key]: e.target.value }));
+  const setValue = (key: keyof PnrFormValues, value: string) =>
+    setValues((v) => ({ ...v, [key]: value }));
+
+  // The sector the save will build, shown so staff can check the route reads
+  // the way it always has. Same function as the server.
+  const sectorPreview = useMemo(() => {
+    const out = { departureCity: values.outboundDepartureCity, arrivalCity: values.outboundArrivalCity };
+    if (!isAirportCode(out.departureCity) || !isAirportCode(out.arrivalCity)) return null;
+    if (values.tripType !== 'round_trip') return buildSector(out, null);
+    const inb = { departureCity: values.inboundDepartureCity, arrivalCity: values.inboundArrivalCity };
+    if (!isAirportCode(inb.departureCity) || !isAirportCode(inb.arrivalCity)) return null;
+    return buildSector(out, inb);
+  }, [
+    values.tripType,
+    values.outboundDepartureCity,
+    values.outboundArrivalCity,
+    values.inboundDepartureCity,
+    values.inboundArrivalCity,
+  ]);
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -212,6 +387,11 @@ export default function PnrForm({
 
   return (
     <form id="pnr-form" onSubmit={handleSubmit} className="space-y-5">
+      {/* updatePnr reads the booking to change from the form. Missing since
+          the form was first written (2026-08-23), so every edit was refused
+          with "Missing booking id." (2026-09-26). The server still checks this
+          user may edit this booking — the id is not trusted for that. */}
+      {mode === 'edit' && initial.id && <input type="hidden" name="id" value={initial.id} />}
       {rawAirlineText && (
         <input type="hidden" name="raw_airline_text" value={rawAirlineText} />
       )}
@@ -291,15 +471,6 @@ export default function PnrForm({
         <Field label="Seats" required confidence={conf('seats')}>
           <input type="number" name="seats" required min="0" value={values.seats} onChange={set('seats')} className={inputCls} />
         </Field>
-        <Field label="Outbound date" hint="Drives the EMD-1 suggestion below." confidence={conf('outboundDate')}>
-          <input type="date" name="outbound_date" value={values.outboundDate} onChange={set('outboundDate')} className={inputCls} />
-        </Field>
-        <Field label="Inbound date" confidence={conf('inboundDate')}>
-          <input type="date" name="inbound_date" value={values.inboundDate} onChange={set('inboundDate')} className={inputCls} />
-        </Field>
-        <Field label="Sector" hint="e.g. ISB-JED-MED-ISB" confidence={conf('sector')}>
-          <input name="sector" value={values.sector} onChange={set('sector')} className={`${inputCls} font-mono`} />
-        </Field>
         {/* On a NEW booking this date is the first EMD's issuance deadline and is
             entered in its own section below, so it is not asked for twice. On an
             existing booking it is the live time limit, kept in sync with the
@@ -313,15 +484,6 @@ export default function PnrForm({
             <input type="date" name="pnr_tl_date" value={values.pnrTlDate} onChange={set('pnrTlDate')} className={inputCls} />
           </Field>
         )}
-        <Field label="Deal %" confidence={conf('dealPct')}>
-          <input type="number" name="deal_pct" step="0.01" min="0" max="100" value={values.dealPct} onChange={set('dealPct')} className={inputCls} />
-        </Field>
-        <Field label="Issued status">
-          <select name="issued_status" value={values.issuedStatus} onChange={set('issuedStatus')} className={`${inputCls} cursor-pointer`}>
-            <option value="unissued">unissued</option>
-            <option value="issued">issued</option>
-          </select>
-        </Field>
         <Field label="Status">
           <select name="status" value={values.status} onChange={set('status')} className={`${inputCls} cursor-pointer`}>
             <option value="active">active</option>
@@ -329,6 +491,77 @@ export default function PnrForm({
             <option value="completed">completed</option>
           </select>
         </Field>
+
+        <div className="sm:col-span-2 lg:col-span-3 border-t border-stone-100 pt-4 space-y-4">
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="text-xs font-medium text-stone-600">
+              Trip type<span className="text-red-500"> *</span>
+            </span>
+            <div role="radiogroup" aria-label="Trip type" className="inline-flex rounded-xl border border-stone-300 bg-stone-100 p-0.5">
+              {TRIP_TYPES.map((t) => {
+                const active = values.tripType === t;
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => setValue('tripType', t)}
+                    className={`px-4 py-1.5 rounded-[10px] text-xs font-semibold transition-colors cursor-pointer ${
+                      active ? 'bg-white text-indigo-700 shadow-sm' : 'text-stone-500 hover:text-stone-800'
+                    }`}
+                  >
+                    {TRIP_TYPE_LABELS[t]}
+                  </button>
+                );
+              })}
+            </div>
+            <input type="hidden" name="trip_type" value={values.tripType} />
+            {sectorPreview && (
+              <span className="text-[11px] text-stone-400">
+                Sector <span className="font-mono text-stone-600">{sectorPreview}</span>
+              </span>
+            )}
+          </div>
+
+          {values.tripType === 'one_way' ? (
+            <FlightSection
+              title="Flight details"
+              leg="outbound"
+              order={ONE_WAY_ORDER}
+              flightCodeLabel="Flight code"
+              dateHint={mode === 'create' ? 'Drives the EMD-1 suggestion below.' : undefined}
+              values={values}
+              onChange={setValue}
+              conf={conf}
+            />
+          ) : values.tripType === 'round_trip' ? (
+            <>
+              <FlightSection
+                title="Outbound"
+                leg="outbound"
+                order={ROUND_TRIP_ORDER}
+                flightCodeLabel="Outbound flight code"
+                dateHint={mode === 'create' ? 'Drives the EMD-1 suggestion below.' : undefined}
+                values={values}
+                onChange={setValue}
+                conf={conf}
+              />
+              <FlightSection
+                title="Inbound"
+                leg="inbound"
+                order={ROUND_TRIP_ORDER}
+                flightCodeLabel="Inbound flight code"
+                minDate={values.outboundDate}
+                values={values}
+                onChange={setValue}
+                conf={conf}
+              />
+            </>
+          ) : (
+            <p className="text-[11px] text-stone-400">Choose one way or round trip to enter the flights.</p>
+          )}
+        </div>
       </SectionCard>
 
       <SectionCard title="Money (PKR)">
@@ -354,7 +587,7 @@ export default function PnrForm({
                 {policyDays} day{policyDays === 1 ? '' : 's'} less the 3-day margin. Editable.
               </span>
             ) : suggestion.reason === 'missing-dates' ? (
-              <span>Pick the request date, outbound date and airline to check for a policy.</span>
+              <span>Pick the request date, departure date and airline to check for a policy.</span>
             ) : (
               <span>
                 No EMD policy stored for this airline yet, so enter the issuance deadline the

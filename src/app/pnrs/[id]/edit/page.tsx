@@ -4,6 +4,7 @@ import { canEditPnr } from '@/lib/auth';
 import { getPnrDetail, getPnrFormOptions } from '@/lib/pnrs';
 import PnrForm from '@/components/pnr-form';
 import type { PnrFormValues } from '@/lib/pnr-form-values';
+import { citiesFromSector, isTripType } from '@/lib/flight-details';
 import AppHeader from '@/components/app-header';
 import { updatePnr } from '../../actions/pnr';
 
@@ -23,6 +24,8 @@ export default async function EditPnrPage({
     redirect(`/pnrs/${id}`);
   }
 
+  const fromSector = detail.tripType ? null : citiesFromSector(detail.sector);
+
   const initial: PnrFormValues = {
     id: detail.id,
     requestDate: detail.requestDate,
@@ -34,13 +37,29 @@ export default async function EditPnrPage({
     segment: detail.segment ?? '',
     airlineId: detail.airlineId ?? '',
     seats: String(detail.seats),
-    outboundDate: detail.outboundDate ?? '',
-    inboundDate: detail.inboundDate ?? '',
-    sector: detail.sector ?? '',
     pnrTlDate: detail.pnrTlDate ?? '',
-    dealPct: detail.dealPct === null ? '' : String(detail.dealPct),
-    issuedStatus: detail.issuedStatus,
     status: detail.status,
+    // A booking saved before flight details existed has no trip type or cities.
+    // Its trip type follows from whether it has a return date, and its cities
+    // are read back from the sector it was saved with; the flight codes and
+    // times are asked for on this save.
+    tripType: isTripType(detail.tripType) ? detail.tripType : detail.inboundDate ? 'round_trip' : 'one_way',
+    outboundDate: detail.outboundDate ?? '',
+    outboundDepartureCity: detail.outboundDepartureCity ?? fromSector?.outboundDepartureCity ?? '',
+    outboundArrivalCity: detail.outboundArrivalCity ?? fromSector?.outboundArrivalCity ?? '',
+    outboundDepartureTime: detail.outboundDepartureTime ?? '',
+    outboundArrivalTime: detail.outboundArrivalTime ?? '',
+    outboundFlightCode: detail.outboundFlightCode ?? '',
+    outboundBaggagePieces: detail.outboundBaggagePieces?.toString() ?? '',
+    outboundBaggageKg: detail.outboundBaggageKg?.toString() ?? '',
+    inboundDate: detail.inboundDate ?? '',
+    inboundDepartureCity: detail.inboundDepartureCity ?? fromSector?.inboundDepartureCity ?? '',
+    inboundArrivalCity: detail.inboundArrivalCity ?? fromSector?.inboundArrivalCity ?? '',
+    inboundDepartureTime: detail.inboundDepartureTime ?? '',
+    inboundArrivalTime: detail.inboundArrivalTime ?? '',
+    inboundFlightCode: detail.inboundFlightCode ?? '',
+    inboundBaggagePieces: detail.inboundBaggagePieces?.toString() ?? '',
+    inboundBaggageKg: detail.inboundBaggageKg?.toString() ?? '',
     fare: String(detail.fare),
     airlineTaxes: detail.airlineTaxes === null ? '' : String(detail.airlineTaxes),
     psf: detail.psf === null ? '' : String(detail.psf),

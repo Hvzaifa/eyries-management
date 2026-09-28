@@ -1332,6 +1332,122 @@ Result: booking page data **3,740 ms → 212 ms**, dashboard **2,067 ms → 117 
 
 **Also this day:** the Content-Security-Policy moved from Report-Only to enforced after the owner saw no violations in the deployed app; the built login page references no external resource. The Supabase project was found to be already on asymmetric (ES256) JWT signing keys with a new-style publishable API key, so the "rotate keys" owner step was unnecessary.
 
+### 2026-09-26 — Booking form: trip type and flight details; Deal % and Issued status removed
+
+**Request (owner):** remove Issued status and Deal % from the new-booking form; add a one way / round trip toggle at the end of Booking details. One way shows a *Flight details* section (departure date*, departure time, arrival time, departure city*, arrival city*, flight code*); round trip shows *Outbound* (departure date*, departure city*, departure time, arrival city*, arrival time, outbound flight code*) and *Inbound* (departure date*, departure city*, departure time*, arrival city*, arrival time, inbound flight code*). Fields these replace leave the main section.
+
+**Answered by the owner before building:**
+1. **The edit page gets the same form.** An old booking opens as round trip if it has an inbound date, else one way; its cities are read back from the stored sector; flight codes and times must be filled in on its next save.
+2. **Deal % and Issued status go from every screen** — form, dashboard columns, booking page, AI parser — but **the database columns stay**, so imported values are not lost. New bookings take `issued_status`'s default.
+3. **Cities are 3-letter airport codes**, and the sector is **built from them** rather than typed.
+4. **The AI intake drafts the flights** (codes, times, cities, trip type) like any other field.
+
+**How it fits the existing model.** The outbound departure date *is* `outbound_date` and the inbound departure date *is* `inbound_date`, so the EMD-1 policy, SV ticketing deadline, emails and dashboard needed no change. `sector` stays a column (emails, the refund view and three tables read it) but is now derived: `buildSector()` drops the inbound departure when it equals the outbound arrival, so ISB→JED/JED→ISB is `ISB-JED-ISB` and the open jaw ISB→JED/MED→ISB is `ISB-JED-MED-ISB` — the sheet's own convention. `citiesFromSector()` is its exact inverse and reads only 2/3/4-code sectors; anything else leaves the cities blank rather than guessed. Eleven nullable columns added (`trip_type` with a check constraint, then city/time/flight-code per leg); nothing backfilled, since a flight code or time cannot be derived from a sector.
+
+**Taken as written, flagged for the owner:** the inbound departure time is required and the outbound one is not, exactly as specified. Easy to make symmetrical if that was not intended. *Resolved the same day: no flight time is required on either leg (see the entry below).*
+
+**Validation added (not business rules, but stated so they can be challenged):** departure and arrival city on one leg cannot be the same; the inbound flight cannot depart before the outbound (same day allowed); a flight code must look like one — a 2-character IATA or 3-letter ICAO designator, 1–4 digits, optional suffix letter (`SV727`, `9P842`, `SVA727`). Switching a booking to one way clears every inbound column, so no return flight is left behind.
+
+**Found while building:** the edit action's change-history diff printed every `Date` as `YYYY-MM-DD`, which for a `time` column is always `1970-01-01` — a time change would never have been logged. Time columns are now logged as `HH:MM`. A split copies the parent's flights to the child, and a one-way parent's child can no longer be given an inbound date.
+
+### 2026-09-26 — Booking pages bounced to the dashboard; Deal % and Issued status dropped; flight times optional
+
+**Report:** "The PNR details page isn't opening up for any PNR."
+
+**Cause.** The booking page fetched its agent list through `listAssignableAgents()`, an exported *server action* that began with `requireUser()` — the write guard, which asks the Auth server (`getUser()`). The page itself authenticates with `getClaims()`, a local signature check (2026-09-24). When the Auth server refused a session whose token was still validly signed — a session ended or revoked server-side keeps a good signature until the token expires — the page's own check passed, the agent list's did not, and it redirected to `/login`; the middleware, which also checks locally, saw a signed-in user on `/login` and sent them to `/`. Every booking page therefore "did not open" and landed back on the dashboard with no error shown. Confirmed from the dev server's request trace: each `/pnrs/<id>` request was immediately followed by `/login` then `/`. The same page code rendered all five bookings correctly in an isolated server, so the fault was never the flight-details change or the data.
+
+**Fix.** `listAssignableAgents(user)` moved to `lib/pnrs.ts` as a plain page query taking the user the page verified — no Auth round trip, and no longer a browser-callable action. The Issue EMDs screen had the identical defect (`getBulkEmdCandidates` → `requireHeadOffice()`) and got the same fix (`lib/server/bulk-emd-candidates.ts`). No page now calls a write guard while rendering. Server actions that *write* keep `getUser()` on purpose: a user whose session the Auth server refuses still cannot save — they are sent to sign in again.
+
+**Deal % and Issued status removed entirely (owner instruction).** Beyond the screens (earlier entry), the columns go too: `alter table pnrs drop column if exists deal_pct / issued_status` in `db/schema.sql`, fields removed from Prisma. Nothing was lost — no booking held a deal %, and `issued_status` was a label nothing read; the five rows' values are backed up in `backups/2026-09-26-deal-issued/`. **Order matters:** the build currently deployed selects both columns on every booking query, so the drop is applied only *after* the new code is live.
+
+**Flight times optional (owner).** No departure or arrival time is required on any leg; date, both cities and the flight code remain required.
+
+### 2026-09-26 — "EMDs to issue on" is Head Office only
+
+**Instruction (owner):** remove the "EMDs to issue on" filter from branch accounts.
+
+**Done:** the date filter renders only for Head Office, using the same flag that already gates the bulk *Issue EMDs* checkboxes (`canIssueEmds = isHeadOffice`) — issuing EMDs is Head Office's job (2026-09-21). **The "EMDs To Issue" card is hidden for branches too:** it shows a figure only once a date is picked in that filter, so without it the card would sit permanently blank telling the user to pick a date they cannot pick. Branches keep the other five cards (grid drops to five columns). Nothing server-side changed: the filter only narrowed rows a branch could already see, so this is a presentation rule, not an access control.
+
+### 2026-09-26 — Editing a booking always failed: "Missing booking id."
+
+**Report:** saving an edited booking showed "Missing booking id." at the top of the form.
+
+**Cause:** `updatePnr` reads the booking to change from a form field `id`, but the shared booking form has **never posted one** — checked in every version back to the form's first commit (64ba158, 2026-08-23). The edit page put the id into the form's initial values, which only fill visible fields. So no edit could ever be saved from the UI; it went unnoticed until now.
+
+**Fix:** the form posts `id` as a hidden field in edit mode. The id only says *which* booking; whether this user may edit it is still decided on the server by `requirePnrEditor()` (branch scope and the EMD lock), so a tampered id gains nothing.
+
+**Verified** by running `updatePnr` on a real imported booking inside a rolled-back transaction: it saved, redirected to the booking page, and the change history recorded each new flight field — the time as `08:30`, confirming the earlier `1970-01-01` logging fix.
+
+### 2026-09-26 — Dashboard cards: "All statuses" now means all statuses (reverses 2026-09-09)
+
+**Report (owner):** Total EMD Value showed the same amount with the status filter on *Active* and on *All statuses*; cards should reflect exactly the chosen status.
+
+**Why it looked broken:** Active, Cancelled and Completed already totalled only their own bookings. *All statuses* deliberately totalled **active only** — the owner's 2026-09-09 ruling, so cancelled bookings would not inflate the headline figures — which made it indistinguishable from *Active*.
+
+**Answer (owner, asked before changing):** *All statuses* totals **every booking** the table lists. The 2026-09-09 ruling is reversed. The count card reads "All PNRs" with no status chosen. `summarizeDashboard` lost its `statusFilter` argument — it now simply totals the rows the table's filters leave, so the cards and the table can never disagree. On the live data: Active PNR 39,646,000 (5 bookings), All PNR 46,346,000 (adds the one cancelled booking's 6,700,000).
+
+Unchanged: the "EMDs To Issue" card still counts active bookings only — an EMD is never issued against a cancelled booking, and the owner's 2026-09-23 definition of that card said so.
+
+### 2026-09-26 — Baggage allowance per flight
+
+**Request (owner):** add a Baggage section with *bags* and *weight* to the outbound and inbound flight sections, with a note that the weight is the limit for each bag.
+
+**Answered by the owner before building:** the allowance is **per passenger** — bags each passenger may check, and the kg limit of each bag (the airline's "2PC 23KG"); it is **optional**; the **one-way** section gets it too; the **AI intake drafts it**.
+
+**Built:** four nullable integer columns (`outbound_/inbound_baggage_pieces`, `…_baggage_kg`), validated in `readFlightDetails` like the rest of the flight. The booking page shows "Baggage 2 × 23 kg per passenger" on each flight line. A split copies it to the child; switching to one way clears the inbound pair.
+
+**Defaults chosen, stated so they can be challenged:** bags 0–10 (0 = no checked bag, which is a real fare type), weight 1–100 kg, whole numbers only — the database enforces the same bounds. Either half may be entered alone, because some airlines state only a weight ("30KG", weight concept). The AI is told to ignore hand/cabin baggage and to apply a single stated allowance to both flights.
+
+**Applied without `npm run db:apply`**, deliberately: that script would also run the pending Deal %/Issued column drop, which must wait until the new code is deployed. Only the baggage block of `schema.sql` was executed.
+
+**Verified:** saved and read back in a rolled-back transaction (2/23 outbound, —/30 inbound), the database refused 0 kg; a live AI parse of "BAG 2PC 23KG" / "BAG 1PC 30KG" with "HAND BAGGAGE 7KG" drafted 2 × 23 and 1 × 30 and ignored the hand baggage.
+
+### 2026-09-28 — Master sheet imported: what was left out, and the four rulings behind it
+
+**Instruction (owner):** load `Groups EMD Master Sheet.xlsx` into the (emptied) database, leaving out rows whose EMD value is 0 and bookings whose refund is complete and outbound has passed; add the agents; flag every row that needs checking in a separate Excel file. *"Any questions raised should be asked."*
+
+**Asked and answered before anything was written:**
+1. **"Total value of EMDs 0" meant both readings.** Left out: 109 rows whose *Total EMD Value* column is 0 (all 0-seat rows) **and** 59 rows where no EMD was ever issued (every round amount 0 — all had a past outbound date).
+2. **Outbound passed but an EMD still unrefunded (16 bookings): imported active, flagged.**
+3. **IATA: paid on time where the remittance day has passed.** The sheet has no payment dates; left blank, the IATA page would have shown 545 rounds (PKR 695M) overdue. Each such round records `payment_date` = its remittance day — **an assumption, not a record**, listed round by round in the issues file's "IATA paid (assumed)" tab. The 156 rounds whose day is still ahead stay owed. This knowingly departs from the 2026-09-22 "nothing backfilled" stance, at the owner's instruction.
+4. **`2ND EMD TL` is the date the 2nd EMD must be issued by** — the time limit EMD-1 secured — so it is round 1's `deadline_date`. The PNR TL then follows the app's own rule (`syncPnrTlDate`): the earliest unrefunded round's deadline, else the last round's. Rounds 2–4 have no recorded deadline, so a booking whose round 1 is refunded and round 2 held has no PNR TL — 297 of the 714 have none, almost all for that reason (the rest have a blank 2ND EMD TL, flagged).
+
+**Applied from earlier rulings without re-asking:** agents named verbatim, one agent per spelling-insensitive name, each holding the booking's whole seat count, including shared names like `KJ/QFC/MAQBOOL` (2026-09-19); `Company investment` in any case is the company; round percentages over 100% imported as recorded (2026-08-25 "sheet data is immutable"); children linked only to a parent that is itself imported; `PK` → the PIA row; CANCELLED (10%) TICKETS and PENALTY EMD not imported (selling side, out of scope) but listed; the EMD REFUND tab not imported (2026-08-21). A booking whose EMDs are all refunded but whose flight has not happened is imported **active** — completion needs the outbound to have passed.
+
+**Not set, deliberately:** trip type, cities and flight codes (the sheet has only a sector) — the edit form reads cities back from the sector and asks for the rest; per-round license (the sheet records one per booking); agent terms, recoveries and branch (Head Office sees them).
+
+**Result:** 1,757 rows → 1,043 left out by rule (875 refunded + travelled, 109 zero value, 59 never issued), **0 blocked**, **714 bookings imported** (SR#1–714, all active) with 1,101 rounds (604 held / 497 refunded), 704 ticketing rows, 10 parent links, **27 agents on 73 bookings**. 92 imported bookings are flagged in `Master Sheet Import — Rows to Check (2026-09-28).xlsx`: 27 percentages over 100%, 25 agent names to check (shared, placeholder `Agent Investment`, look-alikes `Hananah`/`Hanangh`, `MAQBOOL`/`MABOOL`), 16 past-but-unrefunded, 16 selling-side columns, 14 parent links not made (9 of them the booking naming itself), 12 missing EMD numbers, 10 without ticketing deadlines, 8 deadline oddities, 2 refunds dated before issue, 1 inbound before outbound.
+
+**Verified:** every one of the 13,339 values written was compared against an independent read of the workbook (openpyxl): 0 mismatches. After commit, through the app's own queries: all 714 booking pages load, the IATA page shows 156 owed and none overdue, no booking is over-allocated to agents.
+
+### 2026-09-28 — "Overdue" after the next EMD was issued; no 3rd/4th EMD suggested; ticket deadlines never red
+
+**Report (owner):** (1) bookings whose EMD was issued, paid to IATA, but not yet recorded as refunded read "Overdue since <date>" on the dashboard; (2) 3rd and 4th EMD rounds were being suggested though staff never created them; (3) bookings marked red because of the ticketing deadline — which the system cannot judge, since it keeps no record of tickets being issued.
+
+**Cause of (1):** the Next Deadline column, the row colour, the booking page badge, `syncPnrTlDate` and the daily alert all took the deadline of the **earliest round still `issued`**. When round 2 was issued before round 1's refund was recorded, round 1's passed time limit stayed "in force" (69 bookings, e.g. 9FF8DS). Issuing an EMD secures the PNR to a new time limit, so the later round supersedes the earlier. **(2) and (3)** were the same gap: after the 2nd EMD, the next step is the tickets, but the dashboard labelled it "3rd EMD" and coloured the remaining time limit — which is the ticket deadline — by urgency.
+
+**Answer (owner, asked):** after the final EMD, show the booking **neutrally, never red**: "2 EMDs issued · Tickets by <date>", no suggestion, not in the needs-attention banner.
+
+**Built:** one rule, `nextStep()` in `lib/issuance.ts` (7 tests), used by the dashboard rows, the booking page banner and badge, and the daily alert: the time limit in force is the **latest** round's; with fewer than `FINAL_EMD_ROUND` (2) rounds the next EMD is due by it; with 2 or more, the step is "tickets", dated from the ticketing record's deadline (else the last round's time limit) for information only. `syncPnrTlDate` now sets the PNR TL to the latest round's deadline (reversing the "earliest outstanding" wording of 2026-09-07), and 73 imported bookings' TLs were re-synced through it, each change logged — all now blank, because the sheet records no time limit after round 1. The daily EMD alert now reports only a booking's latest round, and only while an EMD is still due; status is no longer the test, so a refunded round's time limit still alerts until the next EMD is issued.
+
+**Result on live data:** 0 bookings suggest a 3rd/4th EMD; 359 read "EMDs issued" in grey; 34 remain red, all genuinely awaiting their 2nd EMD (6 past the time limit, 28 due within 2 days).
+
+**Noticed, not changed:** the daily `backfillEmd2Deadlines` job (2026-08-25) writes the SV EMD-2 policy date onto round 2's `deadline_date` — a meaning that predates the 2026-09-21 redefinition of a round's deadline as the time limit it secures. It no longer affects urgency (round 2's time limit is never urgent now), and "Tickets by" reads the ticketing record first so it cannot show that date; whether the job should keep running is for the owner.
+
+### 2026-09-28 — Refunds page split in two; the dashboard lists only work still to do there
+
+**Instruction (owner):** move every PNR left to be refunded to the Refunds page, divide that page into *Refunds recorded* and *to be refunded*, and keep the main dashboard as clean as possible.
+
+**Asked, and answered in the owner's own words:** a round belongs in *To be refunded* when it **has been issued, paid to IATA, and is still unrefunded**; the dashboard shows **the PNRs whose EMD has to be issued, or whose IATA payment is not recorded**.
+
+**Built:**
+- `/refunds` has two buttons — *Refunds recorded* (the existing log, 497 rounds) and *To be refunded* (`listRoundsToRefund`: `status = 'issued'` and `payment_date` set, branch-scoped, oldest issuance first — 449 rounds on 421 bookings, PKR 575M). Head Office can tick bookings there and open the bulk refund screen already filled in; arriving that way it pre-ticks only the rounds already paid to IATA, since the screen fetches every held round of those PNRs. The dashboard's *Bulk refund* button moved to the Refunds page.
+- The dashboard lists `isDashboardWork` rows only: 468 of 714 bookings (355 with an EMD to issue, 113 with IATA payment not recorded). The status filter's default now reads *Needing action*; *cancelled* / *completed* still list those bookings when chosen. The count card reads "PNRs Needing Action".
+
+**Two calls made so nothing becomes unreachable, flagged for the owner:** (1) the **search box looks through every booking**, not only the listed ones — otherwise typing the PNR of a booking that left the dashboard would find nothing; (2) cancelled/completed bookings remain available through the status filter. 15 bookings are on neither list (EMDs complete, all refunded, IATA settled) — they are found by search, in *Refunds recorded*, or by link.
+
+**Consequence of the owner's definition, stated so it is not a surprise:** a round 1 that is held and paid while its booking still awaits the 2nd EMD appears in *To be refunded* **and** the booking stays on the dashboard for the EMD. Both are true at once.
+
 ## Template for new entries
 
 ```

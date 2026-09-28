@@ -19,6 +19,7 @@ export default function DashboardCards({
   statusFilter,
   holder,
   issuanceDate,
+  showIssuance = true,
   onClear,
 }: {
   rows: PnrListRow[];
@@ -31,6 +32,12 @@ export default function DashboardCards({
    */
   issuanceDate?: string | null;
   /**
+   * Whether the "EMDs To Issue" card appears. Head Office only (owner,
+   * 2026-09-26): issuing EMDs is Head Office's job, and the card has nothing to
+   * show without the date filter branch accounts no longer get.
+   */
+  showIssuance?: boolean;
+  /**
    * The one holder in view, or null for all of them. When set, `rows` are
    * already projected to that holder's share (`lib/holder-view.ts`), so the
    * totals below are theirs — and the labels have to say so. A card reading
@@ -40,11 +47,17 @@ export default function DashboardCards({
   holder?: string | null;
   onClear?: () => void;
 }) {
-  const summary = summarizeDashboard(rows, statusFilter);
+  const summary = summarizeDashboard(rows);
   const share = Boolean(holder);
   const issuance = emdsToIssueOn(rows, issuanceDate ?? null);
 
-  const cards = [
+  const cards: {
+    label: string;
+    value: string;
+    hint?: string;
+    icon: typeof FileText;
+    tint: string;
+  }[] = [
     {
       label: pnrCountLabel(statusFilter),
       value: String(summary.pnrCount),
@@ -75,6 +88,8 @@ export default function DashboardCards({
       icon: RotateCcw,
       tint: 'bg-amber-100 text-amber-600',
     },
+  ];
+  if (showIssuance) cards.push(
     {
       // Blank until a date is picked (owner's choice, 2026-09-23) — a figure
       // with no date against it would be a different question answered.
@@ -89,7 +104,7 @@ export default function DashboardCards({
       icon: CalendarClock,
       tint: 'bg-rose-100 text-rose-600',
     },
-  ];
+  );
 
   return (
     <div className="space-y-3">
@@ -109,7 +124,7 @@ export default function DashboardCards({
           )}
         </div>
       )}
-      <section className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
+      <section className={`grid grid-cols-2 md:grid-cols-3 gap-4 ${showIssuance ? 'xl:grid-cols-6' : 'xl:grid-cols-5'}`}>
       {cards.map((card) => (
         <div
           key={card.label}

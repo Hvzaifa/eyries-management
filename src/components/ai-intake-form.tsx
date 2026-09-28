@@ -7,6 +7,7 @@ import type { PnrFormValues } from '@/lib/pnr-form-values';
 import { normalizeSegment } from '@/lib/booking-entry';
 import type { PnrFormOptions } from '@/lib/pnrs';
 import type { ParsedBookingDraft, FieldConfidence } from '@/lib/ai/parse-booking';
+import { draftFlightValues } from '@/lib/ai/draft-flights';
 
 type Phase = 'paste' | 'review';
 
@@ -34,6 +35,9 @@ function draftToFormValues(
   const branchName = draft.branchName.value?.toUpperCase() ?? '';
   const matchedBranch = options.branches.find((b) => b.name.toUpperCase() === branchName);
 
+  const flights = draftFlightValues(draft);
+  const oneWay = flights.values.tripType === 'one_way';
+
   const values: PnrFormValues = {
     requestDate: draft.requestDate.value ?? '',
     investorCompany: draft.investorCompany.value ?? '',
@@ -48,11 +52,9 @@ function draftToFormValues(
     airlineId: matchedAirline?.id ?? '',
     seats: draft.seats.value !== null ? String(draft.seats.value) : '',
     outboundDate: draft.outboundDate.value ?? '',
-    inboundDate: draft.inboundDate.value ?? '',
-    sector: draft.sector.value ?? '',
+    inboundDate: oneWay ? '' : draft.inboundDate.value ?? '',
+    ...flights.values,
     pnrTlDate: draft.pnrTlDate.value ?? '',
-    dealPct: draft.dealPct.value !== null ? String(draft.dealPct.value) : '',
-    issuedStatus: 'unissued',
     status: 'active',
     fare: draft.fare.value !== null ? String(draft.fare.value) : '',
     airlineTaxes: draft.airlineTaxes.value !== null ? String(draft.airlineTaxes.value) : '',
@@ -70,10 +72,9 @@ function draftToFormValues(
     airlineId: matchedAirline ? draft.airlineCode.confidence : 'low',
     seats: draft.seats.confidence,
     outboundDate: draft.outboundDate.confidence,
-    inboundDate: draft.inboundDate.confidence,
-    sector: draft.sector.confidence,
+    ...(oneWay ? {} : { inboundDate: draft.inboundDate.confidence }),
+    ...flights.confidence,
     pnrTlDate: draft.pnrTlDate.confidence,
-    dealPct: draft.dealPct.confidence,
     fare: draft.fare.confidence,
     airlineTaxes: draft.airlineTaxes.confidence,
     psf: draft.psf.confidence,

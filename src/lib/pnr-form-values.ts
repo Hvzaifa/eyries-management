@@ -22,13 +22,29 @@ export interface PnrFormValues {
   segment: string;
   airlineId: string;
   seats: string;
-  outboundDate: string;
-  inboundDate: string;
-  sector: string;
   pnrTlDate: string;
-  dealPct: string;
-  issuedStatus: string;
   status: string;
+  /** 'one_way' | 'round_trip' — see src/lib/flight-details.ts */
+  tripType: string;
+  /** The outbound departure date; on a one-way trip, the only flight's. */
+  outboundDate: string;
+  outboundDepartureCity: string;
+  outboundArrivalCity: string;
+  outboundDepartureTime: string;
+  outboundArrivalTime: string;
+  outboundFlightCode: string;
+  /** Bags per passenger, and the kg limit per bag. */
+  outboundBaggagePieces: string;
+  outboundBaggageKg: string;
+  /** The inbound departure date. */
+  inboundDate: string;
+  inboundDepartureCity: string;
+  inboundArrivalCity: string;
+  inboundDepartureTime: string;
+  inboundArrivalTime: string;
+  inboundFlightCode: string;
+  inboundBaggagePieces: string;
+  inboundBaggageKg: string;
   fare: string;
   airlineTaxes: string;
   psf: string;
@@ -44,13 +60,25 @@ export const EMPTY_PNR: PnrFormValues = {
   segment: '',
   airlineId: '',
   seats: '',
-  outboundDate: '',
-  inboundDate: '',
-  sector: '',
   pnrTlDate: '',
-  dealPct: '',
-  issuedStatus: 'unissued',
   status: 'active',
+  tripType: 'round_trip',
+  outboundDate: '',
+  outboundDepartureCity: '',
+  outboundArrivalCity: '',
+  outboundDepartureTime: '',
+  outboundArrivalTime: '',
+  outboundFlightCode: '',
+  outboundBaggagePieces: '',
+  outboundBaggageKg: '',
+  inboundDate: '',
+  inboundDepartureCity: '',
+  inboundArrivalCity: '',
+  inboundDepartureTime: '',
+  inboundArrivalTime: '',
+  inboundFlightCode: '',
+  inboundBaggagePieces: '',
+  inboundBaggageKg: '',
   fare: '',
   airlineTaxes: '',
   psf: '',

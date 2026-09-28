@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { AlertTriangle, Search, CheckCircle2 } from 'lucide-react';
 import { fetchEmdRoundsByPnrs, processBulkRefunds } from '../actions/emd';
@@ -13,6 +13,7 @@ type FetchedRound = {
   emdAmount: string; // from Prisma Decimal
   emdNumber: string | null;
   status: string;
+  paymentDate: string | null;
   pnr: {
     pnr: string;
     investorCompany: string;
@@ -26,9 +27,9 @@ type RefundState = {
   date: string;
 };
 
-export default function BulkRefundForm() {
+export default function BulkRefundForm({ initialPnrs = [] }: { initialPnrs?: string[] }) {
   const router = useRouter();
-  const [pnrInput, setPnrInput] = useState('');
+  const [pnrInput, setPnrInput] = useState(initialPnrs.join(', '));
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   
@@ -37,11 +38,9 @@ export default function BulkRefundForm() {
   
   const today = new Date().toISOString().slice(0, 10);
 
-  const handleFetch = (e: React.FormEvent) => {
-    e.preventDefault();
+  /** `paidOnly`: arriving from "To be refunded" — pre-tick only rounds already paid to IATA. */
+  const fetchCodes = (codes: string[], paidOnly = false) => {
     setError(null);
-    const codes = pnrInput.split(/[\s,]+/).filter(Boolean);
-    
     if (codes.length === 0) {
       setError('Please enter at least one PNR code.');
       return;
@@ -60,7 +59,7 @@ export default function BulkRefundForm() {
         const initialStates: Record<string, RefundState> = {};
         res.rounds.forEach((r) => {
           initialStates[r.id] = {
-            selected: true,
+            selected: paidOnly ? r.paymentDate !== null : true,
             amount: Number(r.emdAmount).toString(),
             date: today,
           };
@@ -69,6 +68,20 @@ export default function BulkRefundForm() {
       }
     });
   };
+
+  const handleFetch = (e: React.FormEvent) => {
+    e.preventDefault();
+    fetchCodes(pnrInput.split(/[\s,]+/).filter(Boolean));
+  };
+
+  // Opened from the "To be refunded" list: fetch the ticked bookings at once.
+  const autoFetched = useRef(false);
+  useEffect(() => {
+    if (autoFetched.current || initialPnrs.length === 0) return;
+    autoFetched.current = true;
+    fetchCodes(initialPnrs, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on arrival
+  }, []);
 
   const updateState = <K extends keyof RefundState>(
     id: string,

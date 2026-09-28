@@ -34,21 +34,13 @@ function sumMoney(values: number[]): number {
 }
 
 /**
- * Card values for the currently visible rows.
- *
- * `statusFilter` is the status the user picked in the filter bar, or null for
- * "All statuses". With no status chosen the cards fall back to **active PNRs
- * only** — the meaning they have always had, so the headline figures do not move
- * just because the table happens to list cancelled and completed bookings too
- * (owner's ruling, 2026-09-09). Every other filter is already applied to
- * `filteredRows` by the table, including the search box.
+ * Card values for exactly the rows the filter bar leaves visible — status,
+ * branch, airline, holder and the search box are all applied by the table
+ * first. "All statuses" therefore totals every booking, cancelled and
+ * completed included (owner, 2026-09-26, reversing the 2026-09-09 rule that
+ * it meant active only).
  */
-export function summarizeDashboard(
-  filteredRows: PnrListRow[],
-  statusFilter: string | null
-): DashboardSummary {
-  const rows = statusFilter ? filteredRows : filteredRows.filter((r) => r.status === 'active');
-
+export function summarizeDashboard(rows: PnrListRow[]): DashboardSummary {
   return {
     pnrCount: rows.length,
     totalSeats: rows.reduce((sum, r) => sum + r.seats, 0),
@@ -64,6 +56,24 @@ export function summarizeDashboard(
  * dashboard misleads someone.
  */
 export function pnrCountLabel(statusFilter: string | null): string {
-  if (!statusFilter) return 'Active PNRs';
+  if (!statusFilter) return 'PNRs Needing Action';
   return `${statusFilter.charAt(0).toUpperCase()}${statusFilter.slice(1)} PNRs`;
+}
+
+/**
+ * Whether a booking belongs on the dashboard (owner, 2026-09-28: "as clean as
+ * possible"). An active booking is listed only while something is still to be
+ * done on it here:
+ *
+ * - an EMD still has to be issued (`emdsComplete` is false), or
+ * - an IATA payment is not yet recorded (owed, dated or not).
+ *
+ * A booking whose EMDs are all issued and paid has nothing left but refunds,
+ * which are worked from the Refunds page's "To be refunded" list. Cancelled and
+ * completed bookings are not active work either; they appear only when the
+ * status filter asks for them, so they stay reachable.
+ */
+export function isDashboardWork(row: Pick<PnrListRow, 'status' | 'emdsComplete' | 'nextIataPayment' | 'iataUndated'>): boolean {
+  if (row.status !== 'active') return false;
+  return !row.emdsComplete || row.nextIataPayment !== null || row.iataUndated;
 }

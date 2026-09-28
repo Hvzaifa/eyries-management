@@ -31,7 +31,7 @@ export default async function AppHeader({
               <Plane className="w-5 h-5 -rotate-45" />
             </div>
             <div>
-              <span className="font-bold text-base text-stone-900 tracking-tight">Eyries EMD</span>
+              <span className="font-bold text-base text-stone-900 tracking-tight">Eyries</span>
               <span className="hidden sm:inline-block ml-2 text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 border border-indigo-100 font-medium">
                 {subtitle ?? 'PNR Dashboard'}
               </span>

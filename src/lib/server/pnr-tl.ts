@@ -5,11 +5,11 @@ import { sameDate } from '@/lib/urgency';
  * Re-apply the PNR TL rule after anything changes a PNR's EMD rounds.
  *
  * Owner rule (2026-09-07): the PNR TL is the time limit the PNR rests with us.
- * It starts as EMD-1's deadline; once EMD-1 is settled and staff update the
- * round's status, the TL becomes EMD-2's deadline, and so on down the rounds.
- * So the TL is always the deadline of the earliest round still outstanding
- * (status 'issued'). When no round is outstanding, the last round's deadline
- * stands; the TL is never blanked.
+ * It starts as the 1st EMD's deadline; each EMD issued secures the PNR to a new
+ * time limit, so **the TL is the latest round's deadline**. Corrected
+ * 2026-09-28: it used to be the earliest round still `issued`, which left the
+ * TL on round 1's passed date whenever round 2 was issued before round 1's
+ * refund was recorded, and the dashboard called those bookings overdue.
  *
  * Each of those deadlines is an **issuance** time limit — the date the next EMD
  * or the tickets must be issued by — so the TL genuinely is "how long the PNR
@@ -30,10 +30,7 @@ export async function syncPnrTlDate(
   ]);
   if (!pnr || rounds.length === 0) return;
 
-  const outstanding = rounds.find((r) => r.status === 'issued');
-  const newTlDate = outstanding
-    ? outstanding.deadlineDate
-    : rounds[rounds.length - 1].deadlineDate;
+  const newTlDate = rounds[rounds.length - 1].deadlineDate;
 
   // Value comparison — see sameDate(). Comparing Date objects with !== reports a
   // change every time and logs a TL move that never happened.

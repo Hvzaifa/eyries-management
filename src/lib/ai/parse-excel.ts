@@ -63,10 +63,27 @@ export function parseExcelFile(buffer: ArrayBuffer, filename: string): ParsedBoo
       inboundDate: makeDateField(getVal(['inbound', 'return date', 'arr date'])),
       sector: makeField<string>(getVal(['sector', 'route', 'itinerary'])),
       pnrTlDate: makeDateField(getVal(['tl date', 'time limit', 'expiry'])),
-      dealPct: makeNumField(getVal(['deal', 'percentage', 'pct'])),
       airlineTaxes: makeNumField(getVal(['tax', 'taxes'])),
       psf: makeNumField(getVal(['psf', 'service fee'])),
       fare: makeNumField(getVal(['fare', 'price', 'amount'])),
+
+      // A sheet has no agreed columns for the individual flights; the review
+      // form reads the cities back out of the sector and asks for the rest.
+      tripType: { value: null, confidence: 'low' },
+      outboundDepartureCity: { value: null, confidence: 'low' },
+      outboundArrivalCity: { value: null, confidence: 'low' },
+      outboundDepartureTime: { value: null, confidence: 'low' },
+      outboundArrivalTime: { value: null, confidence: 'low' },
+      outboundFlightCode: { value: null, confidence: 'low' },
+      outboundBaggagePieces: { value: null, confidence: 'low' },
+      outboundBaggageKg: { value: null, confidence: 'low' },
+      inboundDepartureCity: { value: null, confidence: 'low' },
+      inboundArrivalCity: { value: null, confidence: 'low' },
+      inboundDepartureTime: { value: null, confidence: 'low' },
+      inboundArrivalTime: { value: null, confidence: 'low' },
+      inboundFlightCode: { value: null, confidence: 'low' },
+      inboundBaggagePieces: { value: null, confidence: 'low' },
+      inboundBaggageKg: { value: null, confidence: 'low' },
 
       roundIssuanceDate: { value: null, confidence: 'low' },
       roundPaymentPct: { value: null, confidence: 'low' },

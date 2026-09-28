@@ -29,12 +29,19 @@ Code, name, contact email(s) for sending deposit-confirmation / extension-reques
 | segment | text | Travel purpose. **A fixed list from 2026-09-20: Umrah / Employment / Tour** (it was free text while the imported sheet's values were inconsistent). Stored as text so an imported value outside the list stays readable and editable |
 | airline_id | fk → airlines | |
 | seats | integer | |
-| outbound_date | date, nullable | |
-| inbound_date | date, nullable | |
-| sector | text | e.g. "ISB-JED-MED-ISB" |
+| outbound_date | date, nullable | **The outbound flight's departure date** (on a one-way trip, the only flight's). Drives the EMD policy and SV ticketing deadline |
+| inbound_date | date, nullable | **The inbound (return) flight's departure date.** Always null on a one-way trip |
+| sector | text | e.g. "ISB-JED-MED-ISB". **Built from the flight cities, never typed** (2026-09-26): one way `ISB-JED`; round trip the outbound pair then the inbound pair, with the inbound departure dropped when it equals the outbound arrival (`ISB-JED-ISB`). Kept as a column because every email, table and the refund view reads it |
+| trip_type | enum('one_way','round_trip'), nullable | Added 2026-09-26. Null only on bookings saved before flight details existed; the edit form asks for it |
+| outbound_departure_city, outbound_arrival_city | text, nullable | 3-letter airport codes, uppercase. Required by the form |
+| outbound_departure_time, outbound_arrival_time | time, nullable | Local times as printed on the booking. Optional |
+| outbound_flight_code | text, nullable | e.g. `SV727` — designator + number, uppercase, no space. Required by the form |
+| inbound_departure_city, inbound_arrival_city | text, nullable | As outbound. Required on a round trip; null on one way |
+| inbound_departure_time, inbound_arrival_time | time, nullable | Optional, like every flight time (owner, 2026-09-26) |
+| inbound_flight_code | text, nullable | Required on a round trip; null on one way |
+| outbound_baggage_pieces, inbound_baggage_pieces | integer 0–10, nullable | **Checked bags per passenger** on that flight (2026-09-26). Optional. `0` means no checked bag. One way uses the outbound pair; inbound is null |
+| outbound_baggage_kg, inbound_baggage_kg | integer 1–100, nullable | **Weight limit of each bag**, in kg — "2PC 23KG" is pieces 2, kg 23, i.e. 23 kg per bag, not in total. Optional, and may be set without a piece count (weight-concept allowances like "30KG") |
 | pnr_tl_date | date, nullable | PNR time-limit / void date |
-| deal_pct | numeric, nullable | Company's cut |
-| issued_status | enum('issued','unissued') | |
 | airline_taxes | numeric, nullable | |
 | psf | numeric, nullable | |
 | fare | numeric | Per-seat base fare |

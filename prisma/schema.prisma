@@ -142,9 +142,22 @@ model Pnr {
   outboundDate    DateTime?   @map("outbound_date") @db.Date
   inboundDate     DateTime?   @map("inbound_date") @db.Date
   sector          String?
+  tripType              String?   @map("trip_type")
+  outboundDepartureCity String?   @map("outbound_departure_city")
+  outboundArrivalCity   String?   @map("outbound_arrival_city")
+  outboundDepartureTime DateTime? @map("outbound_departure_time") @db.Time
+  outboundArrivalTime   DateTime? @map("outbound_arrival_time") @db.Time
+  outboundFlightCode    String?   @map("outbound_flight_code")
+  outboundBaggagePieces Int?      @map("outbound_baggage_pieces")
+  outboundBaggageKg     Int?      @map("outbound_baggage_kg")
+  inboundDepartureCity  String?   @map("inbound_departure_city")
+  inboundArrivalCity    String?   @map("inbound_arrival_city")
+  inboundDepartureTime  DateTime? @map("inbound_departure_time") @db.Time
+  inboundArrivalTime    DateTime? @map("inbound_arrival_time") @db.Time
+  inboundFlightCode     String?   @map("inbound_flight_code")
+  inboundBaggagePieces  Int?      @map("inbound_baggage_pieces")
+  inboundBaggageKg      Int?      @map("inbound_baggage_kg")
   pnrTlDate       DateTime?   @map("pnr_tl_date") @db.Date
-  dealPct         Decimal?    @map("deal_pct") @db.Decimal(5, 2)
-  issuedStatus    String      @default("unissued") @map("issued_status")
   airlineTaxes    Decimal?    @map("airline_taxes") @db.Decimal(12, 2)
   psf             Decimal?    @map("psf") @db.Decimal(12, 2)
   fare            Decimal     @db.Decimal(12, 2)

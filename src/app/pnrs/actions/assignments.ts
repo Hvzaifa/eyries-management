@@ -275,19 +275,6 @@ export async function moveAgentSeats(formData: FormData): Promise<AssignmentActi
   return { ok: result.ok, error: result.error };
 }
 
-/** Agents this user may pick from when assigning (same visibility as /agents). */
-export async function listAssignableAgents(): Promise<{ id: string; name: string }[]> {
-  const user = await requireUser();
-  const { agentVisibilityFilter } = await import('@/lib/agents');
-  const where = agentVisibilityFilter(user);
-  if (where === null) return [];
-  return prisma.agent.findMany({
-    where: { ...where, active: true },
-    orderBy: { name: 'asc' },
-    select: { id: true, name: true },
-  });
-}
-
 /**
  * Sets one agent's commercial terms on one booking (phase 7 step 1).
  *

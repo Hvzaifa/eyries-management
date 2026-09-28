@@ -23,6 +23,7 @@ import {
   validateSegment,
 } from '@/lib/booking-entry';
 import { str, dateVal, numVal } from '@/lib/form';
+import { FLIGHT_TIME_COLUMNS, flightColumns, readFlightDetails } from '@/lib/flight-details';
 import { requireUser, requireHeadOffice, requirePnrEditor, TX_TIMEOUT_MS } from '@/lib/server/guards';
 
 /**
@@ -89,6 +90,12 @@ export async function createPnr(formData: FormData) {
   if (segmentError) return { error: segmentError.error };
   const segment = normalizeSegment(segmentInput);
 
+  // Trip type and flights (owner request, 2026-09-26). The outbound departure
+  // date is `outbound_date`, which the EMD policy below reads.
+  const flights = readFlightDetails((key) => str(formData, key));
+  if ('error' in flights) return { error: flights.error };
+  const flight = flightColumns(flights.details);
+
   // Branch users: force branchId to their own branch. An unresolved branch must
   // block creation — writing an unscoped PNR would leave a record no branch user
   // can see and every branch user could edit.
@@ -114,7 +121,7 @@ export async function createPnr(formData: FormData) {
   // ---------------------------------------------------------------------
   // 2. Read-only lookups for the auto EMD-2 policy (outside the transaction).
   // ---------------------------------------------------------------------
-  const outboundDate = dateVal(formData, 'outbound_date');
+  const outboundDate = flight.outboundDate;
   const airlineId = str(formData, 'airline_id');
   let airlineCode: string | null = null;
   if (airlineId) {
@@ -147,15 +154,11 @@ export async function createPnr(formData: FormData) {
         segment,
         airlineId,
         seats,
-        outboundDate,
-        inboundDate: dateVal(formData, 'inbound_date'),
-        sector: str(formData, 'sector'),
+        ...flight,
         // The PNR TL IS the deadline to issue the first EMD until one exists
         // (owner rule 2026-09-07, restated 2026-09-21). `syncPnrTlDate` moves it
         // on to the next outstanding round as rounds are issued.
         pnrTlDate: firstEmdDeadline,
-        dealPct: numVal(formData, 'deal_pct'),
-        issuedStatus: str(formData, 'issued_status') ?? 'unissued',
         airlineTaxes: numVal(formData, 'airline_taxes'),
         psf: numVal(formData, 'psf'),
         fare,
@@ -263,6 +266,12 @@ export async function updatePnr(formData: FormData) {
   }
   const segment = segmentChanged ? normalizeSegment(segmentInput) : existing.segment;
 
+  // A booking saved before flight details existed has only a sector and two
+  // dates; the edit form pre-fills the cities from the sector and asks for the
+  // rest, so every saved edit leaves a complete set.
+  const flights = readFlightDetails((key) => str(formData, key));
+  if ('error' in flights) return { error: flights.error };
+
   // Tickets issued can never exceed the seats on the booking (owner rule,
   // 2026-09-19), so seats cannot be edited down below what has already been
   // ticketed — that would break the rule from the other side and leave a stored
@@ -301,26 +310,29 @@ export async function updatePnr(formData: FormData) {
     segment,
     airlineId: str(formData, 'airline_id'),
     seats,
-    outboundDate: dateVal(formData, 'outbound_date'),
-    inboundDate: dateVal(formData, 'inbound_date'),
-    sector: str(formData, 'sector'),
+    ...flightColumns(flights.details),
     pnrTlDate: dateVal(formData, 'pnr_tl_date'),
-    dealPct: numVal(formData, 'deal_pct'),
-    issuedStatus: str(formData, 'issued_status') ?? 'unissued',
     airlineTaxes: numVal(formData, 'airline_taxes'),
     psf: numVal(formData, 'psf'),
     fare,
     status: str(formData, 'status') ?? 'active',
   };
 
+  // `time` columns come back as a Date on 1970-01-01, so printing them as a
+  // date would log every time as "1970-01-01" and never see a change.
+  const asLogText = (field: string, v: unknown): string | null => {
+    if (v === null || v === undefined) return null;
+    if (v instanceof Date) {
+      return FLIGHT_TIME_COLUMNS.has(field) ? v.toISOString().slice(11, 16) : v.toISOString().slice(0, 10);
+    }
+    return String(v);
+  };
+
   const changes: { fieldName: string; oldValue: string; newValue: string }[] = [];
   for (const [field, value] of Object.entries(next)) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const before = (existing as any)[field];
-    const beforeStr =
-      before instanceof Date ? before.toISOString().slice(0, 10) : before === null || before === undefined ? null : String(before);
-    const afterStr =
-      value instanceof Date ? value.toISOString().slice(0, 10) : value === null || value === undefined ? null : String(value);
+    const beforeStr = asLogText(field, (existing as any)[field]);
+    const afterStr = asLogText(field, value);
     if (beforeStr !== afterStr) {
       changes.push({ fieldName: field, oldValue: beforeStr ?? '(empty)', newValue: afterStr ?? '(empty)' });
     }
@@ -453,11 +465,25 @@ export async function splitPnr(formData: FormData) {
         airlineId: parent.airlineId,
         seats: seatsToAllocate,
         outboundDate: childOutboundDate ?? parent.outboundDate,
-        inboundDate: childInboundDate ?? parent.inboundDate,
+        // A one-way booking has no return, so its child cannot be given one.
+        inboundDate: parent.tripType === 'one_way' ? null : childInboundDate ?? parent.inboundDate,
         sector: parent.sector,
+        tripType: parent.tripType,
+        outboundDepartureCity: parent.outboundDepartureCity,
+        outboundArrivalCity: parent.outboundArrivalCity,
+        outboundDepartureTime: parent.outboundDepartureTime,
+        outboundArrivalTime: parent.outboundArrivalTime,
+        outboundFlightCode: parent.outboundFlightCode,
+        outboundBaggagePieces: parent.outboundBaggagePieces,
+        outboundBaggageKg: parent.outboundBaggageKg,
+        inboundDepartureCity: parent.inboundDepartureCity,
+        inboundArrivalCity: parent.inboundArrivalCity,
+        inboundDepartureTime: parent.inboundDepartureTime,
+        inboundArrivalTime: parent.inboundArrivalTime,
+        inboundFlightCode: parent.inboundFlightCode,
+        inboundBaggagePieces: parent.inboundBaggagePieces,
+        inboundBaggageKg: parent.inboundBaggageKg,
         pnrTlDate: parent.pnrTlDate,
-        dealPct: parent.dealPct,
-        issuedStatus: 'unissued',
         airlineTaxes: parent.airlineTaxes,
         psf: parent.psf,
         fare: parent.fare,

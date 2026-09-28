@@ -28,7 +28,12 @@ describe('parseRawLlmJson', () => {
       fare: { value: '185000', confidence: 'high' },
       airlineTaxes: { value: '25000', confidence: 'medium' },
       psf: { value: 1500, confidence: 'medium' },
-      dealPct: { value: 2.5, confidence: 'low', notes: 'Inferred cut' },
+      tripType: { value: 'round_trip', confidence: 'high' },
+      outboundDepartureCity: { value: 'ISB', confidence: 'high' },
+      outboundArrivalCity: { value: 'JED', confidence: 'high' },
+      outboundDepartureTime: { value: '08:30', confidence: 'high' },
+      outboundFlightCode: { value: 'SV727', confidence: 'high' },
+      inboundFlightCode: { value: 'SV726', confidence: 'medium' },
       roundIssuanceDate: { value: '2026-08-20', confidence: 'high' },
       roundPaymentPct: { value: 15, confidence: 'high' },
       roundEmdAmount: { value: '1248750', confidence: 'high' },
@@ -51,7 +56,14 @@ describe('parseRawLlmJson', () => {
     expect(parsed.fare.value).toBe(185000);
     expect(parsed.airlineTaxes.value).toBe(25000);
     expect(parsed.psf.value).toBe(1500);
-    expect(parsed.dealPct.value).toBe(2.5);
+    expect(parsed.tripType.value).toBe('round_trip');
+    expect(parsed.outboundDepartureCity.value).toBe('ISB');
+    expect(parsed.outboundArrivalCity.value).toBe('JED');
+    expect(parsed.outboundDepartureTime.value).toBe('08:30');
+    expect(parsed.outboundFlightCode.value).toBe('SV727');
+    expect(parsed.inboundFlightCode).toEqual({ value: 'SV726', confidence: 'medium', notes: undefined });
+    // Absent from the reply: null with low confidence, never invented.
+    expect(parsed.inboundArrivalTime).toEqual({ value: null, confidence: 'low' });
 
     expect(parsed.roundIssuanceDate.value).toBe('2026-08-20');
     expect(parsed.roundPaymentPct.value).toBe(15);

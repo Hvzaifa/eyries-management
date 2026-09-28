@@ -5,7 +5,7 @@ import { listPnrs } from '@/lib/pnrs';
 import { todayIsoInPkt } from '@/lib/urgency';
 import PnrTable from '@/components/pnr-table';
 import AppHeader from '@/components/app-header';
-import { RotateCcw, PlusCircle, Mail } from 'lucide-react';
+import { PlusCircle, Mail } from 'lucide-react';
 
 export default async function HomePage() {
   const { user, authUser } = await requirePageUser();
@@ -36,13 +36,6 @@ export default async function HomePage() {
                   <Mail className="w-4" />
                   Batch emails
                 </Link>
-                <Link
-                  href="/pnrs/bulk-refund"
-                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-stone-700 bg-white border border-stone-200 hover:bg-stone-50 shadow-sm transition-all"
-                >
-                  <RotateCcw className="w-4" />
-                  Bulk refund
-                </Link>
               </>
             )}
             <Link
@@ -60,8 +53,14 @@ export default async function HomePage() {
         <PnrTable rows={rows} todayIso={todayIsoInPkt()} canIssueEmds={isHeadOffice(authUser)} />
 
         <p className="text-[11px] text-stone-400">
-          Cards follow the filters above and show active PNRs unless a status is chosen. Total paid
-          includes rounds later refunded (gross, never netted).
+          Listed: active bookings with an EMD still to issue or an IATA payment not yet recorded.
+          Bookings with only refunds left are on the{' '}
+          <Link href="/refunds?tab=pending" className="underline underline-offset-2 hover:text-stone-600">
+            Refunds page
+          </Link>
+          ; cancelled and completed ones appear when chosen in the status filter, and the search box
+          finds any booking. Cards total exactly
+          the bookings listed. EMD Issued is the deposit the airline currently holds.
         </p>
       </main>
 

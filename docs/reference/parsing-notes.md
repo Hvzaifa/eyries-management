@@ -29,11 +29,10 @@ The AI Intake parser (`/api/ai/parse-pnr`) handles structured and semi-structure
 | `investorCompany` | Rarely present in airline confirmations (it's the agent's internal data, not the airline's). Almost always needs manual entry. |
 | `licenseName` / `branchName` | Almost never in airline messages — always needs manual entry. |
 | `gdsPnr` | Only present when the booking goes through a GDS; absent in direct airline messages. |
-| `dealPct` | Internal business metric — never in airline output. |
 | `psf` | Rarely broken out separately in informal confirmations. |
 
 ## Recommendations
 
 1. **SV Umrah bulk lists** (like the 15-PNR screenshot): Best handled via Excel upload or structured text paste. The deterministic Excel parser (`parse-excel.ts`) is 100% reliable for tabular data, whereas an LLM can get overwhelmed by huge blocks of text.
-2. **Single PNR confirmations**: LLM parsing works well for extracting PNR, dates, seats, sector, and fare. Staff should expect to manually fill investor, license, branch, and deal%.
+2. **Single PNR confirmations**: LLM parsing works well for extracting PNR, dates, seats, sector, and fare. Staff should expect to manually fill investor, license and branch.
 3. **Model choice**: the fallback chain's model ids have never been verified against the providers' current catalogues — worth checking, since an invalid id fails silently and simply falls through to the next candidate.

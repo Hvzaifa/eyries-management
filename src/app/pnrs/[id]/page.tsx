@@ -2,8 +2,7 @@ import { requirePageUser } from '@/lib/server/session';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { canEditPnr, canManageEmd, canSplitPnr, isHeadOffice } from '@/lib/auth';
-import { listAssignableAgents } from '../actions/assignments';
-import { getPnrDetail, getPnrFormOptions } from '@/lib/pnrs';
+import { getPnrDetail, getPnrFormOptions, listAssignableAgents } from '@/lib/pnrs';
 import { diffInDays, getUrgency, todayIsoInPkt } from '@/lib/urgency';
 import { cancelledTickets, svTicketIssuanceDeadline } from '@/lib/ticketing';
 import { nextEmdSuggestion } from '@/lib/emd';
@@ -25,6 +24,8 @@ import { iataPaymentState } from '@/lib/iata-payments';
 import SplitPnrButton from './split-pnr-button';
 import EditTicketingButton from './edit-ticketing-button';
 import SeatOwnership from './seat-ownership';
+import { TRIP_TYPE_LABELS, formatBaggage, isTripType } from '@/lib/flight-details';
+import { nextStep, ordinal, type NextStep } from '@/lib/issuance';
 
 // Two statuses only (owner ruling, 2026-09-21): an EMD is issued until the
 // airline refunds it.
@@ -90,36 +91,40 @@ function DeadlineValue({
   );
 }
 
-/** 1st, 2nd, 3rd, 4th … for the EMD about to be issued. */
-function ordinal(n: number): string {
-  const suffix = n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th';
-  return `${n}${suffix}`;
-}
-
 /**
  * What has to be issued next on this booking, and by when.
  *
  * With no rounds yet it is the 1st EMD, due by the date the booking was created
- * with (`pnr_tl_date`, from the airline's policy or typed in). Once a round
- * exists it is the next one, due by the time limit that round secured — which
- * is the same field, because `syncPnrTlDate` keeps the PNR TL on the earliest
- * outstanding round (owner rulings, 2026-09-07 and 2026-09-21).
+ * with (`pnr_tl_date`, from the airline's policy or typed in). After round 1 it
+ * is the 2nd, due by the time limit round 1 secured. After the 2nd, no EMD is
+ * suggested — only the tickets remain (`nextStep`, owner 2026-09-28).
  *
  * Tickets issued in time end the cycle instead, which is why the wording says
  * "or the tickets" rather than naming the EMD alone.
  */
 function NextIssuance({
+  step,
   roundsIssued,
-  deadline,
   today,
   pnrStatus,
 }: {
+  step: NextStep;
   roundsIssued: number;
-  deadline: string | null;
   today: string;
   pnrStatus: string;
 }) {
-  const label = `${ordinal(roundsIssued + 1)} EMD`;
+  // Every EMD issued: what is left is the tickets, which this system keeps no
+  // record of — so the date is information, never a warning (owner, 2026-09-28).
+  if (step.kind === 'tickets') {
+    return (
+      <div className="mb-4 rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-xs text-stone-600">
+        <strong className="font-semibold text-stone-700">{roundsIssued} EMDs issued</strong> — no further
+        EMD is due. {step.deadline ? <>Tickets are due by <span className="font-semibold tabular-nums">{step.deadline}</span>.</> : 'Tickets are next.'}
+      </div>
+    );
+  }
+  const deadline = step.deadline;
+  const label = `${ordinal(step.emdRound!)} EMD`;
 
   if (!deadline) {
     return (
@@ -167,6 +172,53 @@ function NextIssuance({
   );
 }
 
+/** One flight on the booking; parts not recorded are simply left out. */
+function FlightLegView({
+  title,
+  date,
+  from,
+  to,
+  departs,
+  arrives,
+  flightCode,
+  baggage,
+}: {
+  title: string;
+  date: string | null;
+  from: string | null;
+  to: string | null;
+  departs: string | null;
+  arrives: string | null;
+  flightCode: string | null;
+  baggage: string | null;
+}) {
+  return (
+    <div className="flex items-baseline gap-x-4 gap-y-1 flex-wrap text-sm">
+      <span className="w-20 shrink-0 text-[11px] font-medium uppercase tracking-wide text-stone-400">{title}</span>
+      <span className="text-stone-800">{date ?? '—'}</span>
+      {(from || to) && (
+        <span className="font-mono text-[13px] text-stone-800">
+          {from ?? '?'}
+          {departs && <span className="text-stone-500"> {departs}</span>}
+          <span className="text-stone-400"> → </span>
+          {to ?? '?'}
+          {arrives && <span className="text-stone-500"> {arrives}</span>}
+        </span>
+      )}
+      {flightCode && (
+        <span className="font-mono text-[12px] px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-100">
+          {flightCode}
+        </span>
+      )}
+      {baggage && (
+        <span className="text-[12px] text-stone-600" title="Checked baggage per passenger">
+          Baggage {baggage} <span className="text-stone-400">per passenger</span>
+        </span>
+      )}
+    </div>
+  );
+}
+
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div>
@@ -190,7 +242,7 @@ export default async function PnrDetailPage({
   const [detail, options, assignableAgents] = await Promise.all([
     getPnrDetail(id, authUser),
     getPnrFormOptions(authUser),
-    listAssignableAgents(),
+    listAssignableAgents(authUser),
   ]);
   if (!detail) notFound();
 
@@ -206,7 +258,14 @@ export default async function PnrDetailPage({
     (detail.branchId !== null && authUser.branchIds.includes(detail.branchId));
 
   const today = todayIsoInPkt();
-  const urgency = getUrgency(today, detail.rounds.find((r) => r.status === 'issued')?.deadlineDate ?? null, detail.status);
+  // The latest round's time limit governs, and once every EMD is issued it is
+  // the tickets' — not tracked here, so never urgent (lib/issuance.ts nextStep).
+  const step = nextStep({
+    rounds: detail.rounds.map((r) => ({ roundNumber: r.roundNumber, deadlineDate: r.deadlineDate })),
+    pnrTlDate: detail.pnrTlDate,
+    ticketIssuanceDeadline: detail.ticketing?.ticketIssuanceDeadline ?? null,
+  });
+  const urgency = getUrgency(today, step.kind === 'emd' ? step.deadline : null, detail.status);
 
   // What the next EMD should look like, for the Add Round form to pre-fill.
   // Shared with the bulk issuance screen so the two cannot propose different
@@ -308,21 +367,40 @@ export default async function PnrDetailPage({
                   )}
                 </>
               } />
-              <Field label="Outbound" value={detail.outboundDate} />
-              <Field label="Inbound" value={detail.inboundDate} />
-              <Field label="Sector" value={<span className="font-mono text-[13px]">{detail.sector}</span>} />
+              <Field label="Trip type" value={isTripType(detail.tripType) ? TRIP_TYPE_LABELS[detail.tripType] : null} />
+              <Field label="Sector" value={detail.sector ? <span className="font-mono text-[13px]">{detail.sector}</span> : null} />
               <Field label="PNR TL date" value={detail.pnrTlDate} />
               <Field label="GDS PNR" value={detail.gdsPnr ? <span className="font-mono">{detail.gdsPnr}</span> : null} />
-              <Field label="Issued status" value={
-                <span className={`text-[11px] px-2 py-0.5 rounded-full border ${
-                  detail.issuedStatus === 'issued'
-                    ? 'bg-sky-50 text-sky-700 border-sky-200'
-                    : 'bg-stone-100 text-stone-500 border-stone-200'
-                }`}>
-                  {detail.issuedStatus}
-                </span>
-              } />
-              <Field label="Deal %" value={detail.dealPct !== null ? `${detail.dealPct}%` : null} />
+            </div>
+
+            <div className="mt-5 pt-4 border-t border-stone-100 space-y-3">
+              <FlightLegView
+                title={detail.tripType === 'one_way' ? 'Flight' : 'Outbound'}
+                date={detail.outboundDate}
+                from={detail.outboundDepartureCity}
+                to={detail.outboundArrivalCity}
+                departs={detail.outboundDepartureTime}
+                arrives={detail.outboundArrivalTime}
+                flightCode={detail.outboundFlightCode}
+                baggage={formatBaggage(detail.outboundBaggagePieces, detail.outboundBaggageKg)}
+              />
+              {detail.tripType !== 'one_way' && (detail.tripType === 'round_trip' || detail.inboundDate) && (
+                <FlightLegView
+                  title="Inbound"
+                  date={detail.inboundDate}
+                  from={detail.inboundDepartureCity}
+                  to={detail.inboundArrivalCity}
+                  departs={detail.inboundDepartureTime}
+                  arrives={detail.inboundArrivalTime}
+                  flightCode={detail.inboundFlightCode}
+                  baggage={formatBaggage(detail.inboundBaggagePieces, detail.inboundBaggageKg)}
+                />
+              )}
+              {!detail.tripType && (
+                <p className="text-[11px] text-stone-400">
+                  Saved before flight details were recorded — editing the booking asks for them.
+                </p>
+              )}
             </div>
           </div>
 
@@ -442,12 +520,7 @@ export default async function PnrDetailPage({
               booking rather than on each round: a round card carrying a date
               labelled "deadline" reads as that round's own due date, when it is
               actually the time limit for issuing the NEXT one (owner, 2026-09-21). */}
-          <NextIssuance
-            roundsIssued={detail.rounds.length}
-            deadline={detail.pnrTlDate}
-            today={today}
-            pnrStatus={detail.status}
-          />
+          <NextIssuance step={step} roundsIssued={detail.rounds.length} today={today} pnrStatus={detail.status} />
 
           {detail.rounds.length === 0 ? (
             <p className="text-sm text-stone-400 py-6 text-center">

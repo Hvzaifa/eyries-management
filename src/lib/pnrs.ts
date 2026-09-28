@@ -8,6 +8,9 @@ import { HELD_EMD_STATUS, nextEmdSuggestion } from '@/lib/emd';
 import { iataPaymentDeadline } from '@/lib/iata-calendar';
 import { iataPaymentState } from '@/lib/iata-payments';
 import { todayIsoInPkt } from '@/lib/urgency';
+import { timeFromDb } from '@/lib/flight-details';
+import { nextStep } from '@/lib/issuance';
+import { agentVisibilityFilter } from '@/lib/agents';
 
 /**
  * A stored `charge_type` / `discount_type` as the typed union.
@@ -36,8 +39,6 @@ export interface PnrListRow {
   inboundDate: string | null;
   sector: string | null;
   pnrTlDate: string | null;
-  dealPct: number | null;
-  issuedStatus: string;
   airlineTaxes: number | null;
   psf: number | null;
   fare: number;
@@ -56,10 +57,6 @@ export interface PnrListRow {
   totalIssued: number;
   /** Refunds received back for this PNR. */
   totalRefunded: number;
-  /** Earliest deadline among issued rounds (the only "unresolved" ones). */
-  nextPendingDeadline: string | null;
-  /** True when any issued round exists, even without a recorded deadline. */
-  hasPendingRound: boolean;
   /** Rounds recorded on this booking, refunded ones included. */
   roundsIssued: number;
   /**
@@ -67,15 +64,18 @@ export interface PnrListRow {
    * always meaningful, whether or not a round exists yet.
    *
    * A booking with no rounds still has one: `pnr_tl_date`, set when the booking
-   * was entered, is the time limit for the *first* EMD. The dashboard used to
-   * read `nextPendingDeadline` alone here and so printed "No issued round"
-   * against a booking whose first EMD was due tomorrow — hiding the most urgent
-   * thing on the page behind a phrase that sounded like nothing was pending.
+   * was entered, is the time limit for the *first* EMD.
    *
-   * Prefers the earliest open round's own deadline and falls back to
-   * `pnr_tl_date`; `syncPnrTlDate` keeps the two in step once rounds exist.
+   * **Null once every EMD is issued** (`emdsComplete`): the latest round's time
+   * limit then governs the tickets, which this system does not track, so it is
+   * shown as `ticketsBy` and never counted as urgent (owner, 2026-09-28).
+   * See `nextStep()` in `lib/issuance.ts`.
    */
   nextIssuanceDeadline: string | null;
+  /** Every EMD the policy has (two) is issued; the next step is the tickets. */
+  emdsComplete: boolean;
+  /** When `emdsComplete`: the date the tickets are due, for information only. */
+  ticketsBy: string | null;
   /**
    * What that EMD is worth, from the airline's policy — `seats × fare × the
    * next round's percentage`.
@@ -90,7 +90,7 @@ export interface PnrListRow {
    * Earliest IATA remittance day still owed on this booking, and what it adds
    * up to. Derived from the calendar, never stored.
    *
-   * A wholly separate clock from `nextPendingDeadline`: that one is the
+   * A wholly separate clock from `nextIssuanceDeadline`: that one is the
    * airline's time limit to issue the next EMD, this one is IATA's day to be
    * paid for the EMDs already issued. They get their own columns and their own
    * colours (owner ruling, 2026-09-22), because a booking can be comfortable on
@@ -162,11 +162,13 @@ export async function listPnrs(user?: AuthUser): Promise<PnrListRow[]> {
         license: true,
         branch: true,
         airline: true,
+        ticketing: { select: { ticketIssuanceDeadline: true } },
         // Every round, not just the next issued one: the same pass also totals
         // what was paid and refunded per PNR, so the dashboard cards can
         // re-total the rows a filter leaves visible without a second round-trip.
         emdRounds: {
           select: {
+            roundNumber: true,
             status: true,
             deadlineDate: true,
             emdAmount: true,
@@ -193,15 +195,11 @@ export async function listPnrs(user?: AuthUser): Promise<PnrListRow[]> {
   }
 
   return rows.map((r) => {
-    const issued = r.emdRounds.filter((e) => e.status === 'issued');
-
-    // Earliest *recorded* deadline among issued rounds. Rounds with no deadline
-    // still make the PNR pending, they just cannot be the date shown — which is
-    // what `ORDER BY deadline_date ASC` did before, Postgres sorting NULLs last.
-    const deadlines = issued
-      .map((e) => e.deadlineDate)
-      .filter((d): d is Date => d !== null)
-      .sort((a, b) => a.getTime() - b.getTime());
+    const step = nextStep({
+      rounds: r.emdRounds.map((e) => ({ roundNumber: e.roundNumber, deadlineDate: isoOrNull(e.deadlineDate) })),
+      pnrTlDate: isoOrNull(r.pnrTlDate),
+      ticketIssuanceDeadline: isoOrNull(r.ticketing?.ticketIssuanceDeadline ?? null),
+    });
 
     const totalIssued = r.emdRounds
       .filter((e) => HELD_ROUND_STATUSES.includes(e.status))
@@ -240,7 +238,7 @@ export async function listPnrs(user?: AuthUser): Promise<PnrListRow[]> {
     // same `nextEmdSuggestion` the Add Round modal and the bulk screen use, so
     // a figure on the dashboard cannot differ from the one on the form that
     // issues it.
-    const nextIssuanceDeadline = isoOrNull(deadlines[0] ?? null) ?? isoOrNull(r.pnrTlDate);
+    const nextIssuanceDeadline = step.kind === 'emd' ? step.deadline : null;
     const nextEmd = nextEmdSuggestion({
       roundsIssued: r.emdRounds.length,
       seats: r.seats,
@@ -275,8 +273,6 @@ export async function listPnrs(user?: AuthUser): Promise<PnrListRow[]> {
       inboundDate: iso(r.inboundDate),
       sector: r.sector,
       pnrTlDate: iso(r.pnrTlDate),
-      dealPct: r.dealPct === null ? null : Number(r.dealPct),
-      issuedStatus: r.issuedStatus,
       airlineTaxes: r.airlineTaxes === null ? null : Number(r.airlineTaxes),
       psf: r.psf === null ? null : Number(r.psf),
       fare: Number(r.fare),
@@ -289,9 +285,10 @@ export async function listPnrs(user?: AuthUser): Promise<PnrListRow[]> {
       iataUndated,
       roundsIssued: r.emdRounds.length,
       nextIssuanceDeadline,
-      nextEmdAmount: nextEmd.amount,
-      nextPendingDeadline: iso(deadlines[0] ?? null),
-      hasPendingRound: issued.length > 0,
+      emdsComplete: step.kind === 'tickets',
+      ticketsBy: step.kind === 'tickets' ? step.deadline : null,
+      // Only an EMD the policy still expects is priced; a 3rd or 4th is never suggested.
+      nextEmdAmount: step.kind === 'emd' ? nextEmd.amount : null,
       holder: holderLabel(ledger, holderParts),
       holderKeys: holderFilterKeys(ledger, holderParts),
       agentNames,
@@ -370,8 +367,24 @@ export interface PnrDetail {
   inboundDate: string | null;
   sector: string | null;
   pnrTlDate: string | null;
-  dealPct: number | null;
-  issuedStatus: string;
+  /** Null on bookings saved before flight details existed (2026-09-26). */
+  tripType: string | null;
+  outboundDepartureCity: string | null;
+  outboundArrivalCity: string | null;
+  /** HH:MM */
+  outboundDepartureTime: string | null;
+  outboundArrivalTime: string | null;
+  outboundFlightCode: string | null;
+  /** Per passenger: bags, and kg per bag. */
+  outboundBaggagePieces: number | null;
+  outboundBaggageKg: number | null;
+  inboundDepartureCity: string | null;
+  inboundArrivalCity: string | null;
+  inboundDepartureTime: string | null;
+  inboundArrivalTime: string | null;
+  inboundFlightCode: string | null;
+  inboundBaggagePieces: number | null;
+  inboundBaggageKg: number | null;
   airlineTaxes: number | null;
   psf: number | null;
   fare: number;
@@ -553,8 +566,21 @@ export async function getPnrDetail(id: string, user?: AuthUser): Promise<PnrDeta
     inboundDate: isoOrNull(r.inboundDate),
     sector: r.sector,
     pnrTlDate: isoOrNull(r.pnrTlDate),
-    dealPct: r.dealPct === null ? null : Number(r.dealPct),
-    issuedStatus: r.issuedStatus,
+    tripType: r.tripType,
+    outboundDepartureCity: r.outboundDepartureCity,
+    outboundArrivalCity: r.outboundArrivalCity,
+    outboundDepartureTime: timeFromDb(r.outboundDepartureTime),
+    outboundArrivalTime: timeFromDb(r.outboundArrivalTime),
+    outboundFlightCode: r.outboundFlightCode,
+    outboundBaggagePieces: r.outboundBaggagePieces,
+    outboundBaggageKg: r.outboundBaggageKg,
+    inboundDepartureCity: r.inboundDepartureCity,
+    inboundArrivalCity: r.inboundArrivalCity,
+    inboundDepartureTime: timeFromDb(r.inboundDepartureTime),
+    inboundArrivalTime: timeFromDb(r.inboundArrivalTime),
+    inboundFlightCode: r.inboundFlightCode,
+    inboundBaggagePieces: r.inboundBaggagePieces,
+    inboundBaggageKg: r.inboundBaggageKg,
     airlineTaxes: r.airlineTaxes === null ? null : Number(r.airlineTaxes),
     psf: r.psf === null ? null : Number(r.psf),
     fare: Number(r.fare),
@@ -732,4 +758,94 @@ export async function listRefundedRounds(user?: AuthUser): Promise<RefundedEmdRo
     SELECT * FROM refunded_emd_rounds
     ORDER BY refund_date DESC NULLS LAST, pnr ASC
   `;
+}
+
+/**
+ * Agents this user may pick from when assigning seats (same visibility as
+ * /agents), for the booking page.
+ *
+ * Takes the user the page already verified rather than calling `requireUser()`.
+ * It used to, as an exported server action: `requireUser()` asks the Auth
+ * server (`getUser()`), and when that refused a session the page's own local
+ * check had accepted, it redirected to /login — which the middleware, seeing a
+ * valid token, bounced straight back to the dashboard. Every booking page
+ * "did not open" (2026-09-26). Page reads use the page session; the write
+ * guard is for writes.
+ */
+export async function listAssignableAgents(user: AuthUser): Promise<{ id: string; name: string }[]> {
+  const where = agentVisibilityFilter(user);
+  if (where === null) return [];
+  return prisma.agent.findMany({
+    where: { ...where, active: true },
+    orderBy: { name: 'asc' },
+    select: { id: true, name: true },
+  });
+}
+
+export interface RoundToRefund {
+  roundId: string;
+  pnrId: string;
+  pnr: string;
+  pnrStatus: string;
+  branchName: string | null;
+  airlineCode: string | null;
+  seats: number;
+  sector: string | null;
+  outboundDate: string | null;
+  roundNumber: number;
+  emdNumber: string | null;
+  emdAmount: number;
+  issuanceDate: string;
+  paidToIataOn: string;
+}
+
+/**
+ * EMD rounds waiting on their refund: issued, paid to IATA, and not yet
+ * refunded (owner's definition, 2026-09-28). The Refunds page's second list.
+ * Oldest issuance first — the longest-waiting refund is the one to chase.
+ * Branch-scoped like every other read.
+ */
+export async function listRoundsToRefund(user: AuthUser): Promise<RoundToRefund[]> {
+  const scope = pnrBranchFilter(user);
+  if (scope === null) return [];
+  const rounds = await prisma.emdRound.findMany({
+    where: { status: 'issued', paymentDate: { not: null }, pnr: scope },
+    orderBy: [{ issuanceDate: 'asc' }, { roundNumber: 'asc' }],
+    select: {
+      id: true,
+      roundNumber: true,
+      emdNumber: true,
+      emdAmount: true,
+      issuanceDate: true,
+      paymentDate: true,
+      pnr: {
+        select: {
+          id: true,
+          pnr: true,
+          status: true,
+          seats: true,
+          sector: true,
+          outboundDate: true,
+          branch: { select: { name: true } },
+          airline: { select: { code: true } },
+        },
+      },
+    },
+  });
+  return rounds.map((r) => ({
+    roundId: r.id,
+    pnrId: r.pnr.id,
+    pnr: r.pnr.pnr,
+    pnrStatus: r.pnr.status,
+    branchName: r.pnr.branch?.name ?? null,
+    airlineCode: r.pnr.airline?.code ?? null,
+    seats: r.pnr.seats,
+    sector: r.pnr.sector,
+    outboundDate: isoOrNull(r.pnr.outboundDate),
+    roundNumber: r.roundNumber,
+    emdNumber: r.emdNumber,
+    emdAmount: Number(r.emdAmount),
+    issuanceDate: isoOrNull(r.issuanceDate)!,
+    paidToIataOn: isoOrNull(r.paymentDate)!,
+  }));
 }

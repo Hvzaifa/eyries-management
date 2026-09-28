@@ -10,8 +10,14 @@ export const metadata = {
   title: 'Bulk EMD Refund | Eyries',
 };
 
-export default async function BulkRefundPage() {
+export default async function BulkRefundPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ pnrs?: string }>;
+}) {
   const { user, authUser } = await requirePageUser();
+  // Arrives from the Refunds page's "To be refunded" list with the ticked codes.
+  const initialPnrs = ((await searchParams).pnrs ?? '').split(',').map((s) => s.trim()).filter(Boolean).slice(0, 200);
   if (!isHeadOffice(authUser)) {
     redirect('/');
   }
@@ -22,9 +28,9 @@ export default async function BulkRefundPage() {
 
       <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-6">
         <div>
-          <Link href="/" className="inline-flex items-center gap-1.5 text-sm font-medium text-stone-500 hover:text-stone-800 transition-colors mb-4">
+          <Link href="/refunds?tab=pending" className="inline-flex items-center gap-1.5 text-sm font-medium text-stone-500 hover:text-stone-800 transition-colors mb-4">
             <ArrowLeft className="w-4 h-4" />
-            Back to Dashboard
+            Back to To be refunded
           </Link>
           <h1 className="text-2xl font-bold text-stone-900 tracking-tight">Bulk EMD Refund</h1>
           <p className="text-sm text-stone-500 mt-1">
@@ -32,7 +38,7 @@ export default async function BulkRefundPage() {
           </p>
         </div>
 
-        <BulkRefundForm />
+        <BulkRefundForm initialPnrs={initialPnrs} />
       </main>
 
       <footer className="border-t border-stone-200 py-4 mt-8">

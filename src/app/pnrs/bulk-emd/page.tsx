@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import AppHeader from '@/components/app-header';
 import { isHeadOffice } from '@/lib/auth';
-import { getBulkEmdCandidates } from '../actions/bulk-emd';
+import { getBulkEmdCandidates } from '@/lib/server/bulk-emd-candidates';
 import { MAX_BULK_EMD_ISSUES } from '@/lib/bulk-emd';
 import { getPnrFormOptions } from '@/lib/pnrs';
 import { todayIsoInPkt } from '@/lib/urgency';
@@ -37,7 +37,7 @@ export default async function BulkEmdPage({
 
   // Fetched together rather than one after another.
   const [candidates, options] = await Promise.all([
-    getBulkEmdCandidates(pnrIds),
+    getBulkEmdCandidates(authUser, pnrIds),
     getPnrFormOptions(authUser),
   ]);
   const requested = pnrIds.length;

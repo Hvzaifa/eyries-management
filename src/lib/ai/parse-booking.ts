@@ -21,10 +21,26 @@ export interface ParsedBookingDraft {
   inboundDate: ParsedField<string>; // YYYY-MM-DD
   sector: ParsedField<string>; // e.g. "ISB-JED-MED-ISB"
   pnrTlDate: ParsedField<string>; // YYYY-MM-DD
-  dealPct: ParsedField<number>;
   airlineTaxes: ParsedField<number>;
   psf: ParsedField<number>;
   fare: ParsedField<number>;
+
+  // Flights (2026-09-26). outboundDate/inboundDate above are the departure dates.
+  tripType: ParsedField<string>; // 'one_way' | 'round_trip'
+  outboundDepartureCity: ParsedField<string>; // 3-letter airport code
+  outboundArrivalCity: ParsedField<string>;
+  outboundDepartureTime: ParsedField<string>; // HH:mm
+  outboundArrivalTime: ParsedField<string>;
+  outboundFlightCode: ParsedField<string>; // e.g. SV727
+  outboundBaggagePieces: ParsedField<number>; // checked bags per passenger
+  outboundBaggageKg: ParsedField<number>; // kg limit per bag
+  inboundDepartureCity: ParsedField<string>;
+  inboundArrivalCity: ParsedField<string>;
+  inboundDepartureTime: ParsedField<string>;
+  inboundArrivalTime: ParsedField<string>;
+  inboundFlightCode: ParsedField<string>;
+  inboundBaggagePieces: ParsedField<number>;
+  inboundBaggageKg: ParsedField<number>;
 
   // EMD round 1 (if present in message)
   roundIssuanceDate: ParsedField<string>; // YYYY-MM-DD
@@ -63,7 +79,21 @@ Schema:
   "fare": { "value": number | null, "confidence": "high"|"medium"|"low", "notes": string },
   "airlineTaxes": { "value": number | null, "confidence": "high"|"medium"|"low", "notes": string },
   "psf": { "value": number | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "dealPct": { "value": number | null, "confidence": "high"|"medium"|"low", "notes": string },
+  "tripType": { "value": "one_way" | "round_trip" | null, "confidence": "high"|"medium"|"low", "notes": string },
+  "outboundDepartureCity": { "value": string | null, "confidence": "high"|"medium"|"low", "notes": string },
+  "outboundArrivalCity": { "value": string | null, "confidence": "high"|"medium"|"low", "notes": string },
+  "outboundDepartureTime": { "value": "HH:mm" | null, "confidence": "high"|"medium"|"low", "notes": string },
+  "outboundArrivalTime": { "value": "HH:mm" | null, "confidence": "high"|"medium"|"low", "notes": string },
+  "outboundFlightCode": { "value": string | null, "confidence": "high"|"medium"|"low", "notes": string },
+  "outboundBaggagePieces": { "value": number | null, "confidence": "high"|"medium"|"low", "notes": string },
+  "outboundBaggageKg": { "value": number | null, "confidence": "high"|"medium"|"low", "notes": string },
+  "inboundDepartureCity": { "value": string | null, "confidence": "high"|"medium"|"low", "notes": string },
+  "inboundArrivalCity": { "value": string | null, "confidence": "high"|"medium"|"low", "notes": string },
+  "inboundDepartureTime": { "value": "HH:mm" | null, "confidence": "high"|"medium"|"low", "notes": string },
+  "inboundArrivalTime": { "value": "HH:mm" | null, "confidence": "high"|"medium"|"low", "notes": string },
+  "inboundFlightCode": { "value": string | null, "confidence": "high"|"medium"|"low", "notes": string },
+  "inboundBaggagePieces": { "value": number | null, "confidence": "high"|"medium"|"low", "notes": string },
+  "inboundBaggageKg": { "value": number | null, "confidence": "high"|"medium"|"low", "notes": string },
   "roundIssuanceDate": { "value": "YYYY-MM-DD" | null, "confidence": "high"|"medium"|"low", "notes": string },
   "roundPaymentPct": { "value": number | null, "confidence": "high"|"medium"|"low", "notes": string },
   "roundEmdAmount": { "value": number | null, "confidence": "high"|"medium"|"low", "notes": string },
@@ -80,7 +110,9 @@ Guidelines:
 4. Seats and monetary amounts (fare, taxes, psf, emdAmount) must be numbers without commas or currency symbols.
 5. If a field cannot be found in the text, set value to null and confidence to "low".
 6. Never make up booking codes or amounts. If ambiguous, set confidence to "low" and explain in notes.
-7. Return ONLY the JSON array. Do not include markdown code block formatting or explanation text outside the JSON.`;
+7. Flights: tripType is "round_trip" when the booking has a return flight, "one_way" when it has only one. The outbound fields describe the first flight and outboundDate is its departure date; the inbound fields describe the return flight and inboundDate is its departure date. For one_way, set every inbound field to null. Cities are 3-letter IATA airport codes (e.g. ISB, JED, MED). Times are 24-hour HH:mm local times as printed. Flight codes are the airline designator followed by the flight number with no space (e.g. "SV727", "PK303", "9P842"). If a leg has connecting flights, use the first flight's code and departure, and the final arrival city and time.
+8. Baggage is the checked allowance PER PASSENGER on each flight: BaggagePieces is the number of bags, BaggageKg is the weight limit of EACH bag in kg. "2PC 23KG" or "2 x 23kg" means pieces 2, kg 23. "30KG" alone means pieces null, kg 30. If one allowance is stated for the whole trip, use it for both flights. Do not count hand/cabin baggage. If not stated, null.
+9. Return ONLY the JSON array. Do not include markdown code block formatting or explanation text outside the JSON.`;
 
 export function cleanJsonString(raw: string): string {
   let cleaned = raw.trim();
@@ -195,10 +227,25 @@ export function parseRawLlmJson(jsonText: string, rawPastedText: string, modelUs
       inboundDate: parseField<string>(obj, 'inboundDate', 'date'),
       sector: parseField<string>(obj, 'sector', 'string'),
       pnrTlDate: parseField<string>(obj, 'pnrTlDate', 'date'),
-      dealPct: parseField<number>(obj, 'dealPct', 'number'),
       airlineTaxes: parseField<number>(obj, 'airlineTaxes', 'number'),
       psf: parseField<number>(obj, 'psf', 'number'),
       fare: parseField<number>(obj, 'fare', 'number'),
+
+      tripType: parseField<string>(obj, 'tripType', 'string'),
+      outboundDepartureCity: parseField<string>(obj, 'outboundDepartureCity', 'string'),
+      outboundArrivalCity: parseField<string>(obj, 'outboundArrivalCity', 'string'),
+      outboundDepartureTime: parseField<string>(obj, 'outboundDepartureTime', 'string'),
+      outboundArrivalTime: parseField<string>(obj, 'outboundArrivalTime', 'string'),
+      outboundFlightCode: parseField<string>(obj, 'outboundFlightCode', 'string'),
+      outboundBaggagePieces: parseField<number>(obj, 'outboundBaggagePieces', 'number'),
+      outboundBaggageKg: parseField<number>(obj, 'outboundBaggageKg', 'number'),
+      inboundDepartureCity: parseField<string>(obj, 'inboundDepartureCity', 'string'),
+      inboundArrivalCity: parseField<string>(obj, 'inboundArrivalCity', 'string'),
+      inboundDepartureTime: parseField<string>(obj, 'inboundDepartureTime', 'string'),
+      inboundArrivalTime: parseField<string>(obj, 'inboundArrivalTime', 'string'),
+      inboundFlightCode: parseField<string>(obj, 'inboundFlightCode', 'string'),
+      inboundBaggagePieces: parseField<number>(obj, 'inboundBaggagePieces', 'number'),
+      inboundBaggageKg: parseField<number>(obj, 'inboundBaggageKg', 'number'),
 
       roundIssuanceDate: parseField<string>(obj, 'roundIssuanceDate', 'date'),
       roundPaymentPct: parseField<number>(obj, 'roundPaymentPct', 'number'),

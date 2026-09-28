@@ -5,6 +5,7 @@ import { iataPaymentState, isIataPaymentDueForAlert } from './iata-payments';
 import { duesForAssignment } from './agent-dues';
 import { isAgentNoticeDue } from './agent-notices';
 import { diffInDays } from './urgency';
+import { FINAL_EMD_ROUND } from './issuance';
 
 /**
  * Step 7 — daily deadline alert.
@@ -59,16 +60,26 @@ export interface DeadlineAlert {
 
 export async function findDueRounds(todayIso: string): Promise<DeadlineAlert[]> {
   const horizon = addDaysIso(todayIso, 2);
-  const rounds = await prisma.emdRound.findMany({
+  const candidates = await prisma.emdRound.findMany({
     where: {
-      status: 'issued',
       deadlineDate: { not: null, gte: new Date(`${todayIso}T00:00:00.000Z`), lte: new Date(`${horizon}T00:00:00.000Z`) },
       pnr: { status: 'active' },
     },
     orderBy: { deadlineDate: 'asc' },
     include: {
-      pnr: { include: { airline: true, branch: true } },
+      pnr: { include: { airline: true, branch: true, emdRounds: { select: { roundNumber: true } } } },
     },
+  });
+
+  // Only the time limit in force, and only while an EMD is still due
+  // (`nextStep`, owner 2026-09-28): a round a later round has superseded is
+  // met, and after the final EMD the date is the tickets', which are not
+  // tracked. Status is not the test — a refunded round's time limit still
+  // stands until the next EMD is issued.
+  const rounds = candidates.filter((r) => {
+    const all = r.pnr.emdRounds;
+    const latest = Math.max(...all.map((x) => x.roundNumber));
+    return r.roundNumber === latest && all.length < FINAL_EMD_ROUND;
   });
 
   return rounds.map((r) => {

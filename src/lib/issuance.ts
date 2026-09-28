@@ -19,6 +19,51 @@ export function ordinal(n: number): string {
   return `${n}${suffix}`;
 }
 
+/**
+ * Rounds the airline policy has. After the 2nd EMD the next step is issuing
+ * the tickets, so no 3rd or 4th EMD is ever suggested — one exists only when
+ * staff create it (owner, 2026-09-28).
+ */
+export const FINAL_EMD_ROUND = 2;
+
+export interface NextStep {
+  /**
+   * `emd`: round `emdRound` must be issued by `deadline`.
+   * `tickets`: every EMD is issued; `deadline` is when the tickets are due.
+   * The system keeps no record of tickets being issued, so a `tickets`
+   * deadline is shown for information only — never coloured as urgent.
+   */
+  kind: 'emd' | 'tickets';
+  emdRound: number | null;
+  deadline: string | null;
+}
+
+/**
+ * What a booking is waiting for, and by when.
+ *
+ * **The time limit in force is the latest round's.** Each EMD secures the PNR
+ * to a new time limit, so issuing round 2 meets round 1's — whether or not
+ * round 1's refund has been recorded yet. Reading the earliest unrefunded round
+ * instead showed "Overdue since …" on bookings whose next EMD had been issued
+ * on time and whose IATA payment was done (owner report, 2026-09-28).
+ */
+export function nextStep(input: {
+  rounds: { roundNumber: number; deadlineDate: string | null }[];
+  pnrTlDate: string | null;
+  ticketIssuanceDeadline: string | null;
+}): NextStep {
+  const { rounds, pnrTlDate, ticketIssuanceDeadline } = input;
+  if (rounds.length === 0) return { kind: 'emd', emdRound: 1, deadline: pnrTlDate };
+  const latest = rounds.reduce((a, b) => (b.roundNumber > a.roundNumber ? b : a));
+  if (rounds.length < FINAL_EMD_ROUND) {
+    return { kind: 'emd', emdRound: rounds.length + 1, deadline: latest.deadlineDate ?? pnrTlDate };
+  }
+  // The ticketing record's own deadline first: round 2's `deadline_date` can
+  // hold the EMD-2 policy date written by the daily backfill, which is not a
+  // ticket deadline.
+  return { kind: 'tickets', emdRound: null, deadline: ticketIssuanceDeadline ?? latest.deadlineDate };
+}
+
 /** "1st EMD", "2nd EMD" — which round a booking has to issue next. */
 export function nextEmdLabel(roundsIssued: number): string {
   return `${ordinal(roundsIssued + 1)} EMD`;

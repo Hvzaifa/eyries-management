@@ -57,9 +57,22 @@ create table if not exists pnrs (
   outbound_date date,
   inbound_date date,
   sector text,
+  trip_type text check (trip_type in ('one_way','round_trip')),
+  outbound_departure_city text,
+  outbound_arrival_city text,
+  outbound_departure_time time,
+  outbound_arrival_time time,
+  outbound_flight_code text,
+  outbound_baggage_pieces integer check (outbound_baggage_pieces between 0 and 10),
+  outbound_baggage_kg integer check (outbound_baggage_kg between 1 and 100),
+  inbound_departure_city text,
+  inbound_arrival_city text,
+  inbound_departure_time time,
+  inbound_arrival_time time,
+  inbound_flight_code text,
+  inbound_baggage_pieces integer check (inbound_baggage_pieces between 0 and 10),
+  inbound_baggage_kg integer check (inbound_baggage_kg between 1 and 100),
   pnr_tl_date date,
-  deal_pct numeric(5,2),
-  issued_status text not null default 'unissued' check (issued_status in ('issued','unissued')),
   airline_taxes numeric(12,2),
   psf numeric(12,2),
   fare numeric(12,2) not null,
@@ -125,6 +138,54 @@ create table if not exists emd_rounds (
 -- nothing here. `create table if not exists` does create it on an existing
 -- database — what it cannot do is ALTER one. The moment a column is added to
 -- `agents` after it ships, that column belongs here as well as above.
+
+-- Deal % and Issued status removed entirely (owner instruction, 2026-09-26).
+-- No booking held a deal % and issued_status was a label nothing read; the
+-- values are backed up in backups/2026-09-26-deal-issued/. Must not run before
+-- the code that stops reading them is deployed: the old build selects both
+-- columns on every booking query.
+alter table pnrs drop column if exists deal_pct;
+alter table pnrs drop column if exists issued_status;
+
+-- Flight details (owner request, 2026-09-26). All nullable: bookings saved
+-- before this carry only a sector and two dates, and the form asks for the
+-- rest the next time one is edited. Nothing is backfilled — a flight code or
+-- time cannot be derived from a sector. `outbound_date`/`inbound_date` are the
+-- two departure dates and `sector` is now built from the cities.
+alter table pnrs add column if not exists trip_type text;
+alter table pnrs drop constraint if exists pnrs_trip_type_check;
+alter table pnrs add constraint pnrs_trip_type_check
+  check (trip_type in ('one_way','round_trip'));
+alter table pnrs add column if not exists outbound_departure_city text;
+alter table pnrs add column if not exists outbound_arrival_city text;
+alter table pnrs add column if not exists outbound_departure_time time;
+alter table pnrs add column if not exists outbound_arrival_time time;
+alter table pnrs add column if not exists outbound_flight_code text;
+alter table pnrs add column if not exists inbound_departure_city text;
+alter table pnrs add column if not exists inbound_arrival_city text;
+alter table pnrs add column if not exists inbound_departure_time time;
+alter table pnrs add column if not exists inbound_arrival_time time;
+alter table pnrs add column if not exists inbound_flight_code text;
+
+-- Baggage allowance per passenger, per flight (owner request, 2026-09-26):
+-- pieces each passenger may check, and the kg limit per piece — the airline's
+-- "2PC 23KG". Both optional; a one-way booking uses the outbound pair.
+alter table pnrs add column if not exists outbound_baggage_pieces integer;
+alter table pnrs add column if not exists outbound_baggage_kg integer;
+alter table pnrs add column if not exists inbound_baggage_pieces integer;
+alter table pnrs add column if not exists inbound_baggage_kg integer;
+alter table pnrs drop constraint if exists pnrs_outbound_baggage_pieces_check;
+alter table pnrs add constraint pnrs_outbound_baggage_pieces_check
+  check (outbound_baggage_pieces between 0 and 10);
+alter table pnrs drop constraint if exists pnrs_outbound_baggage_kg_check;
+alter table pnrs add constraint pnrs_outbound_baggage_kg_check
+  check (outbound_baggage_kg between 1 and 100);
+alter table pnrs drop constraint if exists pnrs_inbound_baggage_pieces_check;
+alter table pnrs add constraint pnrs_inbound_baggage_pieces_check
+  check (inbound_baggage_pieces between 0 and 10);
+alter table pnrs drop constraint if exists pnrs_inbound_baggage_kg_check;
+alter table pnrs add constraint pnrs_inbound_baggage_kg_check
+  check (inbound_baggage_kg between 1 and 100);
 
 alter table emd_rounds add column if not exists issuance_time time;
 alter table emd_rounds add column if not exists license_id uuid
