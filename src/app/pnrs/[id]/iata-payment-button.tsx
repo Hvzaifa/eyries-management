@@ -46,7 +46,7 @@ export default function IataPaymentButton({
   };
 
   const inputCls =
-    'w-full bg-stone-50 border border-stone-300 rounded-xl px-3 py-2 text-sm text-stone-800 focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:border-indigo-400 transition-colors';
+    'w-full bg-stone-50 border border-stone-300 rounded-xl px-3 py-2 text-sm text-stone-800 focus:outline-none focus:ring-2 focus:ring-brand-light/50 focus:border-brand-light transition-colors';
 
   if (state.status === 'paid') {
     return (

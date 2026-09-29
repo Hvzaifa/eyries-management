@@ -62,13 +62,13 @@ export default function AgentRoundSchedule({
             <tr
               key={`${r.roundNumber}-${r.issued}`}
               className={`border-b border-stone-100 last:border-0 ${
-                r.issued ? '' : 'bg-indigo-50/40'
+                r.issued ? '' : 'bg-brand-50/40'
               }`}
             >
-              <td className={`${pad} ${r.issued ? 'text-stone-600' : 'text-indigo-700 font-medium'}`}>
+              <td className={`${pad} ${r.issued ? 'text-stone-600' : 'text-brand-dark font-medium'}`}>
                 Round {r.roundNumber}
                 {!r.issued && (
-                  <span className="block text-[10px] text-indigo-500">
+                  <span className="block text-[10px] text-brand">
                     collect before it is issued
                   </span>
                 )}
@@ -78,7 +78,7 @@ export default function AgentRoundSchedule({
               </td>
               <td
                 className={`${pad} text-right tabular-nums font-semibold ${
-                  r.issued ? 'text-stone-900' : 'text-indigo-700'
+                  r.issued ? 'text-stone-900' : 'text-brand-dark'
                 }`}
               >
                 {formatPkr(r.share)}

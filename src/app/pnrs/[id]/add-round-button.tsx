@@ -65,7 +65,7 @@ export default function AddRoundButton({
   };
 
   const inputCls =
-    'w-full bg-stone-50 border border-stone-300 rounded-xl px-3 py-2 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:border-indigo-400 transition-colors';
+    'w-full bg-stone-50 border border-stone-300 rounded-xl px-3 py-2 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-brand-light/50 focus:border-brand-light transition-colors';
 
   return (
     <>
@@ -220,7 +220,7 @@ export default function AddRoundButton({
                 <button
                   type="submit"
                   disabled={isPending}
-                  className="px-4 py-2 text-xs font-semibold rounded-xl text-white bg-indigo-600 hover:bg-indigo-500 transition-colors shadow-sm disabled:opacity-50 cursor-pointer"
+                  className="px-4 py-2 text-xs font-semibold rounded-xl text-white bg-brand hover:bg-brand transition-colors shadow-sm disabled:opacity-50 cursor-pointer"
                 >
                   {isPending ? 'Saving...' : 'Add round'}
                 </button>

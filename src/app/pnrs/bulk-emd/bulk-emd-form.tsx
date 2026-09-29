@@ -10,7 +10,7 @@ import { emdAmountFor } from '@/lib/emd';
 import { formatEmdNumberInput, formatPkr } from '@/lib/format';
 
 const inputCls =
-  'w-full bg-stone-50 border border-stone-300 rounded-lg px-2.5 py-1.5 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:border-indigo-400 transition-colors';
+  'w-full bg-stone-50 border border-stone-300 rounded-lg px-2.5 py-1.5 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-brand-light/50 focus:border-brand-light transition-colors';
 
 interface RowState {
   emdNumber: string;
@@ -175,7 +175,7 @@ export default function BulkEmdForm({
                     <Link
                       href={`/pnrs/${c.pnrId}`}
                       target="_blank"
-                      className="font-mono font-medium text-indigo-600 hover:text-indigo-800 hover:underline"
+                      className="font-mono font-medium text-brand hover:text-brand-dark hover:underline"
                     >
                       {c.pnrCode}
                     </Link>
@@ -301,7 +301,7 @@ export default function BulkEmdForm({
           <button
             type="submit"
             disabled={isPending || readyCount === 0}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-tr from-indigo-500 to-violet-500 hover:from-indigo-400 hover:to-violet-400 shadow-md shadow-indigo-500/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-tr from-brand-dark to-brand hover:from-brand-dark hover:to-brand-dark shadow-md shadow-brand/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <CheckCircle2 className="w-4 h-4" />
             {isPending
@@ -322,7 +322,7 @@ function BlockedRow({ candidate }: { candidate: BulkEmdCandidate }) {
         <Link
           href={`/pnrs/${candidate.pnrId}`}
           target="_blank"
-          className="font-mono text-indigo-600 hover:underline"
+          className="font-mono text-brand hover:underline"
         >
           {candidate.pnrCode}
         </Link>{' '}

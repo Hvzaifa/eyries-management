@@ -40,7 +40,7 @@ export interface AssignmentRow {
 }
 
 const inputCls =
-  'w-full bg-stone-50 border border-stone-300 rounded-xl px-3 py-2 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:border-indigo-400 transition-colors';
+  'w-full bg-stone-50 border border-stone-300 rounded-xl px-3 py-2 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-brand-light/50 focus:border-brand-light transition-colors';
 
 /**
  * Who holds this booking's seats, and the actions that change it.
@@ -130,7 +130,7 @@ export default function SeatOwnership({
         {canAssign && unassignedSeats > 0 && agents.length > 0 && (
           <button
             onClick={() => { setError(null); setDialog({ kind: 'assign' }); }}
-            className="text-[11px] font-medium text-stone-500 hover:text-indigo-600 transition-colors inline-flex items-center gap-1 cursor-pointer border border-stone-200 bg-white px-2.5 py-1.5 rounded-lg hover:bg-indigo-50 hover:border-indigo-200 shadow-sm"
+            className="text-[11px] font-medium text-stone-500 hover:text-brand transition-colors inline-flex items-center gap-1 cursor-pointer border border-stone-200 bg-white px-2.5 py-1.5 rounded-lg hover:bg-brand-50 hover:border-brand-200 shadow-sm"
           >
             <UserPlus className="w-3 h-3" />
             Assign to agent
@@ -146,7 +146,7 @@ export default function SeatOwnership({
       <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-stone-100 mb-3">
         {agentSeats > 0 && (
           <div
-            className="bg-gradient-to-r from-indigo-500 to-violet-500"
+            className="bg-gradient-to-r from-brand-dark to-brand"
             style={{ width: `${pct(agentSeats)}%` }}
             title={`${agentSeats} seats with agents`}
           />
@@ -162,7 +162,7 @@ export default function SeatOwnership({
 
       <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-stone-600 mb-4">
         <span className="inline-flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-indigo-500" />
+          <span className="w-2 h-2 rounded-full bg-brand" />
           {agentSeats} with agents
         </span>
         <span className="inline-flex items-center gap-1.5">
@@ -231,14 +231,14 @@ export default function SeatOwnership({
                         <>
                           <button
                             onClick={() => { setError(null); setDialog({ kind: 'move', row: a }); }}
-                            className="text-stone-400 hover:text-indigo-600 p-1.5 rounded-lg hover:bg-white transition-colors cursor-pointer"
+                            className="text-stone-400 hover:text-brand p-1.5 rounded-lg hover:bg-white transition-colors cursor-pointer"
                             title="Move seats to another agent"
                           >
                             <ArrowLeftRight className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => { setError(null); setDialog({ kind: 'release', row: a }); }}
-                            className="text-stone-400 hover:text-violet-600 p-1.5 rounded-lg hover:bg-white transition-colors cursor-pointer"
+                            className="text-stone-400 hover:text-brand p-1.5 rounded-lg hover:bg-white transition-colors cursor-pointer"
                             title="Take seats back"
                           >
                             <Undo2 className="w-3.5 h-3.5" />
@@ -288,7 +288,7 @@ export default function SeatOwnership({
                     )}
                   </span>
                   {money.credit > 0 ? (
-                    <span className="font-semibold text-indigo-700 tabular-nums">
+                    <span className="font-semibold text-brand-dark tabular-nums">
                       {formatPkr(money.credit)} in credit
                     </span>
                   ) : money.outstanding === 0 ? (
@@ -512,7 +512,7 @@ function Buttons({
       <button
         type="submit"
         disabled={isPending}
-        className="px-4 py-2 text-xs font-semibold rounded-xl text-white bg-indigo-600 hover:bg-indigo-500 transition-colors shadow-sm disabled:opacity-50 cursor-pointer"
+        className="px-4 py-2 text-xs font-semibold rounded-xl text-white bg-brand hover:bg-brand transition-colors shadow-sm disabled:opacity-50 cursor-pointer"
       >
         {isPending ? 'Saving...' : label}
       </button>
@@ -643,7 +643,7 @@ function TermsForm({
           type="checkbox"
           checked={tax}
           onChange={(e) => setTax(e.target.checked)}
-          className="mt-0.5 w-4 h-4 rounded border-stone-300 text-indigo-600 focus:ring-indigo-400/50 cursor-pointer"
+          className="mt-0.5 w-4 h-4 rounded border-stone-300 text-brand focus:ring-brand-light/50 cursor-pointer"
         />
         <span className="text-xs text-stone-600">
           Agent pays the airline tax

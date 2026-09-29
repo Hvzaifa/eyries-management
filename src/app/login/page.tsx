@@ -33,7 +33,7 @@ function LoginForm() {
   return (
     <div className="w-full max-w-md">
       <div className="text-center mb-8">
-        <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-tr from-indigo-500 to-violet-500 text-white shadow-lg shadow-indigo-500/25 mb-4">
+        <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-tr from-brand-dark to-brand text-white shadow-lg shadow-brand/25 mb-4">
           <Plane className="w-7 h-7 transform -rotate-45" />
         </div>
         <h1 className="text-2xl font-bold tracking-tight text-stone-900">Eyries EMD</h1>
@@ -64,7 +64,7 @@ function LoginForm() {
                 onChange={(e) => setEmailInput(e.target.value)}
                 placeholder="name@company.com"
                 autoComplete="email"
-                className="w-full bg-stone-50 border border-stone-300 rounded-xl pl-10 pr-4 py-2.5 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:border-indigo-400 transition-colors"
+                className="w-full bg-stone-50 border border-stone-300 rounded-xl pl-10 pr-4 py-2.5 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-brand-light/50 focus:border-brand-light transition-colors"
               />
             </div>
           </div>
@@ -84,7 +84,7 @@ function LoginForm() {
                 onChange={(e) => setPasswordInput(e.target.value)}
                 placeholder="••••••••"
                 autoComplete="current-password"
-                className="w-full bg-stone-50 border border-stone-300 rounded-xl pl-10 pr-4 py-2.5 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:border-indigo-400 transition-colors"
+                className="w-full bg-stone-50 border border-stone-300 rounded-xl pl-10 pr-4 py-2.5 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-brand-light/50 focus:border-brand-light transition-colors"
               />
             </div>
           </div>
@@ -92,7 +92,7 @@ function LoginForm() {
           <button
             type="submit"
             disabled={isPending}
-            className="w-full mt-4 flex items-center justify-center py-2.5 px-4 rounded-xl text-sm font-semibold text-white bg-gradient-to-tr from-indigo-500 to-violet-500 hover:from-indigo-400 hover:to-violet-400 disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-indigo-500/25 transition-all cursor-pointer"
+            className="w-full mt-4 flex items-center justify-center py-2.5 px-4 rounded-xl text-sm font-semibold text-white bg-gradient-to-tr from-brand-dark to-brand hover:from-brand-dark hover:to-brand-dark disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-brand/25 transition-all cursor-pointer"
           >
             {isPending ? (
               <span className="flex items-center gap-2">
@@ -118,7 +118,7 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center px-4 py-12">
       <Suspense fallback={
         <div className="flex items-center gap-3 text-stone-400 text-sm">
-          <div className="w-5 h-5 border-2 border-indigo-200 border-t-indigo-500 rounded-full animate-spin" />
+          <div className="w-5 h-5 border-2 border-brand-200 border-t-brand rounded-full animate-spin" />
           Loading portal...
         </div>
       }>

@@ -37,7 +37,7 @@ export default function AgentFormButton({ agent }: { agent?: AgentValues }) {
   };
 
   const inputCls =
-    'w-full bg-stone-50 border border-stone-300 rounded-xl px-3 py-2 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:border-indigo-400 transition-colors';
+    'w-full bg-stone-50 border border-stone-300 rounded-xl px-3 py-2 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-brand-light/50 focus:border-brand-light transition-colors';
 
   return (
     <>
@@ -52,7 +52,7 @@ export default function AgentFormButton({ agent }: { agent?: AgentValues }) {
       ) : (
         <button
           onClick={() => setIsOpen(true)}
-          className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl text-white bg-gradient-to-tr from-indigo-500 to-violet-500 hover:from-indigo-400 hover:to-violet-400 shadow-md shadow-indigo-500/20 transition-all cursor-pointer"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl text-white bg-gradient-to-tr from-brand-dark to-brand hover:from-brand-dark hover:to-brand-dark shadow-md shadow-brand/20 transition-all cursor-pointer"
         >
           <Plus className="w-3.5 h-3.5" />
           New agent
@@ -161,7 +161,7 @@ export default function AgentFormButton({ agent }: { agent?: AgentValues }) {
                 <button
                   type="submit"
                   disabled={isPending}
-                  className="px-4 py-2 text-xs font-semibold rounded-xl text-white bg-indigo-600 hover:bg-indigo-500 transition-colors shadow-sm disabled:opacity-50 cursor-pointer"
+                  className="px-4 py-2 text-xs font-semibold rounded-xl text-white bg-brand hover:bg-brand transition-colors shadow-sm disabled:opacity-50 cursor-pointer"
                 >
                   {isPending ? 'Saving...' : editing ? 'Save changes' : 'Create agent'}
                 </button>

@@ -65,6 +65,7 @@ create table if not exists pnrs (
   outbound_flight_code text,
   outbound_baggage_pieces integer check (outbound_baggage_pieces between 0 and 10),
   outbound_baggage_kg integer check (outbound_baggage_kg between 1 and 100),
+  meal_included boolean not null default false,
   inbound_departure_city text,
   inbound_arrival_city text,
   inbound_departure_time time,
@@ -166,6 +167,9 @@ alter table pnrs add column if not exists inbound_arrival_city text;
 alter table pnrs add column if not exists inbound_departure_time time;
 alter table pnrs add column if not exists inbound_arrival_time time;
 alter table pnrs add column if not exists inbound_flight_code text;
+
+-- Meal included in the package, for the booking as a whole (owner, 2026-09-28).
+alter table pnrs add column if not exists meal_included boolean not null default false;
 
 -- Baggage allowance per passenger, per flight (owner request, 2026-09-26):
 -- pieces each passenger may check, and the kg limit per piece — the airline's
@@ -345,6 +349,25 @@ create index if not exists idx_agent_assignments_live
 -- There is no stored balance anywhere: outstanding is the agent's calculated
 -- total minus the sum of these rows. A stored balance goes stale the moment a
 -- charge, a discount or the seat count changes, and then two screens disagree.
+-- Stops on a connecting flight (owner request, 2026-09-28). A new table, so
+-- `create table if not exists` is enough on an existing database too.
+create table if not exists flight_stops (
+  id uuid primary key default gen_random_uuid(),
+  pnr_id uuid not null references pnrs(id) on delete cascade,
+  -- which flight the stop is on; a one-way trip uses 'outbound'
+  leg text not null check (leg in ('outbound','inbound')),
+  -- order along the flight, from 1
+  position integer not null check (position between 1 and 3),
+  city text not null check (city ~ '^[A-Z]{3}$'),
+  -- the ONWARD flight from this stop; null = the same flight continues
+  flight_code text,
+  arrival_time time,
+  departure_time time,
+  created_at timestamptz not null default now(),
+  unique (pnr_id, leg, position)
+);
+create index if not exists idx_flight_stops_pnr on flight_stops(pnr_id);
+
 create table if not exists agent_recoveries (
   id uuid primary key default gen_random_uuid(),
   assignment_id uuid not null references agent_assignments(id) on delete cascade,
@@ -395,6 +418,7 @@ alter table activity_log enable row level security;
 alter table agents       enable row level security;
 alter table agent_assignments enable row level security;
 alter table agent_recoveries enable row level security;
+alter table flight_stops     enable row level security;
 
 
 -- Refund log view — NOT a separate table (see docs/decisions.md, 2026-08-21 entry)

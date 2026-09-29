@@ -150,6 +150,7 @@ model Pnr {
   outboundFlightCode    String?   @map("outbound_flight_code")
   outboundBaggagePieces Int?      @map("outbound_baggage_pieces")
   outboundBaggageKg     Int?      @map("outbound_baggage_kg")
+  mealIncluded          Boolean   @default(false) @map("meal_included")
   inboundDepartureCity  String?   @map("inbound_departure_city")
   inboundArrivalCity    String?   @map("inbound_arrival_city")
   inboundDepartureTime  DateTime? @map("inbound_departure_time") @db.Time
@@ -169,6 +170,7 @@ model Pnr {
   createdBy       String?     @map("created_by") @db.Uuid
 
   emdRounds        EmdRound[]
+  flightStops      FlightStop[]
   ticketing        Ticketing?
   parentAllocations Allocation[] @relation("ParentAllocations")
   childAllocations  Allocation[] @relation("ChildAllocations")
@@ -250,4 +252,23 @@ model ActivityLog {
 
   @@index([tableName, recordId], map: "idx_activity_log_record")
   @@map("activity_log")
+}
+
+/// A stop on a connecting flight (2026-09-28). `flightCode` is the ONWARD
+/// flight from the stop; null means the same flight continues.
+model FlightStop {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  pnrId         String    @map("pnr_id") @db.Uuid
+  pnr           Pnr       @relation(fields: [pnrId], references: [id], onDelete: Cascade)
+  leg           String
+  position      Int
+  city          String
+  flightCode    String?   @map("flight_code")
+  arrivalTime   DateTime? @map("arrival_time") @db.Time
+  departureTime DateTime? @map("departure_time") @db.Time
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([pnrId, leg, position])
+  @@index([pnrId], map: "idx_flight_stops_pnr")
+  @@map("flight_stops")
 }

@@ -1,12 +1,19 @@
 import { redirect, notFound } from 'next/navigation';
 import { requirePageUser } from '@/lib/server/session';
 import { canEditPnr } from '@/lib/auth';
-import { getPnrDetail, getPnrFormOptions } from '@/lib/pnrs';
+import { getPnrDetail, getPnrFormOptions, type DetailStop } from '@/lib/pnrs';
 import PnrForm from '@/components/pnr-form';
 import type { PnrFormValues } from '@/lib/pnr-form-values';
 import { citiesFromSector, isTripType } from '@/lib/flight-details';
 import AppHeader from '@/components/app-header';
 import { updatePnr } from '../../actions/pnr';
+
+const stopToForm = (s: DetailStop) => ({
+  city: s.city,
+  flightCode: s.flightCode ?? '',
+  arrivalTime: s.arrivalTime ?? '',
+  departureTime: s.departureTime ?? '',
+});
 
 export default async function EditPnrPage({
   params,
@@ -60,6 +67,9 @@ export default async function EditPnrPage({
     inboundFlightCode: detail.inboundFlightCode ?? '',
     inboundBaggagePieces: detail.inboundBaggagePieces?.toString() ?? '',
     inboundBaggageKg: detail.inboundBaggageKg?.toString() ?? '',
+    inboundStops: detail.inboundStops.map(stopToForm),
+    outboundStops: detail.outboundStops.map(stopToForm),
+    mealIncluded: detail.mealIncluded ? 'yes' : 'no',
     fare: String(detail.fare),
     airlineTaxes: detail.airlineTaxes === null ? '' : String(detail.airlineTaxes),
     psf: detail.psf === null ? '' : String(detail.psf),

@@ -157,7 +157,7 @@ export default function BulkRefundForm({ initialPnrs = [] }: { initialPnrs?: str
               onChange={e => setPnrInput(e.target.value)}
               placeholder="e.g. Q2X8B, P9R4C"
               rows={3}
-              className="w-full bg-white border border-stone-300 rounded-xl px-3 py-2 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:border-indigo-400 transition-colors font-mono uppercase"
+              className="w-full bg-white border border-stone-300 rounded-xl px-3 py-2 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-brand-light/50 focus:border-brand-light transition-colors font-mono uppercase"
             />
             
             {error && (
@@ -196,7 +196,7 @@ export default function BulkRefundForm({ initialPnrs = [] }: { initialPnrs?: str
                     {fetchedRounds.length} EMD round{fetchedRounds.length !== 1 ? 's' : ''} found
                   </div>
                   <div className="flex items-center gap-3 text-xs">
-                    <button onClick={() => toggleAll(true)} className="text-indigo-600 hover:text-indigo-700 font-medium cursor-pointer">Select All</button>
+                    <button onClick={() => toggleAll(true)} className="text-brand hover:text-brand-dark font-medium cursor-pointer">Select All</button>
                     <span className="text-stone-300">|</span>
                     <button onClick={() => toggleAll(false)} className="text-stone-500 hover:text-stone-700 font-medium cursor-pointer">Select None</button>
                   </div>
@@ -220,13 +220,13 @@ export default function BulkRefundForm({ initialPnrs = [] }: { initialPnrs?: str
                         if (!state) return null;
                         
                         return (
-                          <tr key={round.id} className={state.selected ? 'bg-indigo-50/30' : ''}>
+                          <tr key={round.id} className={state.selected ? 'bg-brand-50/30' : ''}>
                             <td className="px-6 py-3">
                               <input
                                 type="checkbox"
                                 checked={state.selected}
                                 onChange={e => updateState(round.id, 'selected', e.target.checked)}
-                                className="w-4 h-4 rounded border-stone-300 text-indigo-600 focus:ring-indigo-600"
+                                className="w-4 h-4 rounded border-stone-300 text-brand focus:ring-brand"
                               />
                             </td>
                             <td className="px-6 py-3">
@@ -239,7 +239,7 @@ export default function BulkRefundForm({ initialPnrs = [] }: { initialPnrs?: str
                               Round {round.roundNumber}
                               {round.emdNumber && <div className="text-[10px] text-stone-400 font-mono mt-0.5">{round.emdNumber}</div>}
                               {round.license?.name && (
-                                <div className="text-[10px] text-indigo-500 font-medium mt-0.5">Paid by: {round.license.name}</div>
+                                <div className="text-[10px] text-brand font-medium mt-0.5">Paid by: {round.license.name}</div>
                               )}
                             </td>
                             <td className="px-6 py-3 font-medium text-stone-600">

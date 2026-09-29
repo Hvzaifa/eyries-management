@@ -15,7 +15,8 @@ import { ArrowUpDown, Search, Sun, AlertTriangle, CalendarClock, FilePlus2, X } 
 import Link from 'next/link';
 import { BOT_HOLDER, COMPANY_HOLDER } from '@/lib/inventory';
 import { isPartialView, projectRowToHolder } from '@/lib/holder-view';
-import { matchesIssuanceDate, nextEmdLabel, issuanceDates } from '@/lib/issuance';
+import { matchesIssuanceRange, nextEmdLabel, issuanceDates, type IssuanceRange } from '@/lib/issuance';
+import DateRangePicker from '@/components/date-range-picker';
 import { diffInDays, getUrgency, type Urgency } from '@/lib/urgency';
 import type { PnrListRow } from '@/lib/pnrs';
 import { formatNumber, formatPkr } from '@/lib/format';
@@ -109,7 +110,7 @@ export default function PnrTable({
    * it drives the card above the table, not only which rows survive, and a
    * controlled input must always show the value actually in force.
    */
-  const [issuanceDate, setIssuanceDate] = useState('');
+  const [issuanceRange, setIssuanceRange] = useState<IssuanceRange | null>(null);
 
   const urgencyCounts = useMemo(() => {
     const counts = { red: 0, amber: 0 };
@@ -153,7 +154,7 @@ export default function PnrTable({
       { accessorKey: 'pnr', header: 'PNR', cell: (c) => (
           <Link
             href={`/pnrs/${c.row.original.id}`}
-            className="font-mono text-indigo-600 hover:text-indigo-800 hover:underline"
+            className="font-mono text-brand hover:text-brand-dark hover:underline"
           >
             {c.getValue<string>()}
           </Link>
@@ -246,7 +247,7 @@ export default function PnrTable({
         // Shared with the card above, so the two can never disagree about which
         // bookings a picked date covers.
         filterFn: (row, _columnId, filterValue) =>
-          !filterValue || matchesIssuanceDate(row.original, String(filterValue)),
+          !filterValue || matchesIssuanceRange(row.original, filterValue as IssuanceRange),
         cell: (c) => {
           const row = c.row.original;
           if (row.status !== 'active') {
@@ -423,13 +424,16 @@ export default function PnrTable({
     setSelectFilter('holder', value);
   };
 
-  const setIssuanceDay = (value: string) => {
-    setIssuanceDate(value);
-    setSelectFilter('nextIssuance', value);
+  const setIssuanceDays = (range: IssuanceRange | null) => {
+    setIssuanceRange(range);
+    setColumnFilters((prev) => {
+      const rest = prev.filter((f) => f.id !== 'nextIssuance');
+      return range ? [...rest, { id: 'nextIssuance', value: range }] : rest;
+    });
   };
 
-  /** Dates that actually have EMDs waiting, so the picker can point at them. */
-  const daysWithWork = useMemo(() => issuanceDates(rows), [rows]);
+  /** Dates that actually have EMDs waiting, dotted on the calendar. */
+  const daysWithWork = useMemo(() => new Set(issuanceDates(rows)), [rows]);
 
   // A holder can vanish from the list — their seats released, or the bookings
   // they held filtered away by the branch scope. Left alone, the filter would
@@ -483,26 +487,26 @@ export default function PnrTable({
         rows={filteredRows}
         statusFilter={statusFilter}
         holder={holderFilter || null}
-        issuanceDate={issuanceDate || null}
+        issuanceRange={issuanceRange}
         showIssuance={canIssueEmds}
         onClear={() => setHolder('')}
       />
 
       {canIssueEmds && selected.size > 0 && (
-        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3">
-          <span className="text-sm text-indigo-900">
+        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-brand-200 bg-brand-50 px-4 py-3">
+          <span className="text-sm text-brand-dark">
             <strong>{selected.size}</strong> booking{selected.size === 1 ? '' : 's'} selected
           </span>
           <button
             onClick={() => setSelected(new Set())}
-            className="inline-flex items-center gap-1 text-xs font-medium text-indigo-700 hover:text-indigo-900 cursor-pointer"
+            className="inline-flex items-center gap-1 text-xs font-medium text-brand-dark hover:text-brand-dark cursor-pointer"
           >
             <X className="w-3 h-3" />
             Clear
           </button>
           <Link
             href={`/pnrs/bulk-emd?ids=${[...selected].join(',')}`}
-            className="ml-auto inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-gradient-to-tr from-indigo-500 to-violet-500 hover:from-indigo-400 hover:to-violet-400 shadow-md shadow-indigo-500/25 transition-all"
+            className="ml-auto inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-gradient-to-tr from-brand-dark to-brand hover:from-brand-dark hover:to-brand-dark shadow-md shadow-brand/25 transition-all"
           >
             <FilePlus2 className="w-4 h-4" />
             Issue EMDs
@@ -527,7 +531,7 @@ export default function PnrTable({
             value={globalFilter}
             onChange={(e) => setGlobalFilter(e.target.value)}
             placeholder="Search PNR, company, sector..."
-            className="w-full bg-white border border-stone-300 rounded-xl pl-9 pr-3 py-2 text-xs text-stone-800 placeholder-stone-400 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:border-indigo-400"
+            className="w-full bg-white border border-stone-300 rounded-xl pl-9 pr-3 py-2 text-xs text-stone-800 placeholder-stone-400 shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-light/50 focus:border-brand-light"
           />
         </div>
 
@@ -540,7 +544,7 @@ export default function PnrTable({
             key={sel.id}
             onChange={(e) => setSelectFilter(sel.id, e.target.value)}
             defaultValue=""
-            className="bg-white border border-stone-300 rounded-xl px-3 py-2 text-xs text-stone-700 shadow-sm cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-400/50"
+            className="bg-white border border-stone-300 rounded-xl px-3 py-2 text-xs text-stone-700 shadow-sm cursor-pointer focus:outline-none focus:ring-2 focus:ring-brand-light/50"
           >
             <option value="">{sel.label}</option>
             {sel.options.map((o) => (
@@ -554,7 +558,7 @@ export default function PnrTable({
         <select
           value={holderFilter}
           onChange={(e) => setHolder(e.target.value)}
-          className="bg-white border border-stone-300 rounded-xl px-3 py-2 text-xs text-stone-700 shadow-sm cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-400/50"
+          className="bg-white border border-stone-300 rounded-xl px-3 py-2 text-xs text-stone-700 shadow-sm cursor-pointer focus:outline-none focus:ring-2 focus:ring-brand-light/50"
         >
           <option value="">All holders</option>
           {holderOptions.map((o) => (
@@ -562,42 +566,12 @@ export default function PnrTable({
           ))}
         </select>
 
-        {/* EMDs to be issued on one day. Picking a date narrows the table to
-            that day's bookings and fills the card above with what they are
-            worth (owner, 2026-09-23). Head Office only (owner, 2026-09-26). */}
+        {/* EMDs to be issued on one day or across a range, picked from a
+            calendar (owner, 2026-09-23; range 2026-09-29). Narrows the table to
+            those bookings and fills the card above with what they are worth.
+            Head Office only (owner, 2026-09-26). */}
         {canIssueEmds && (
-        <div className="flex items-center gap-1.5">
-          <label
-            htmlFor="issuance-date"
-            className="text-[11px] font-medium text-stone-500 whitespace-nowrap"
-          >
-            EMDs to issue on
-          </label>
-          <input
-            id="issuance-date"
-            type="date"
-            value={issuanceDate}
-            list="issuance-days"
-            onChange={(e) => setIssuanceDay(e.target.value)}
-            className="bg-white border border-stone-300 rounded-xl px-3 py-2 text-xs text-stone-700 shadow-sm cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-400/50"
-          />
-          {/* The dates that actually have something to issue. A browser that
-              ignores `list` on a date input simply shows the plain picker. */}
-          <datalist id="issuance-days">
-            {daysWithWork.map((d) => (
-              <option key={d} value={d} />
-            ))}
-          </datalist>
-          {issuanceDate && (
-            <button
-              onClick={() => setIssuanceDay('')}
-              title="Show every date again"
-              className="text-stone-400 hover:text-stone-700 p-1.5 rounded-lg hover:bg-stone-100 transition-colors cursor-pointer"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
+        <DateRangePicker value={issuanceRange} onChange={setIssuanceDays} markedDays={daysWithWork} todayIso={todayIso} />
         )}
 
         <span className="ml-auto text-[11px] font-medium text-stone-500">
@@ -622,7 +596,7 @@ export default function PnrTable({
                       }}
                       onChange={toggleAllVisible}
                       aria-label="Select all visible bookings"
-                      className="w-3.5 h-3.5 rounded border-stone-300 text-indigo-600 focus:ring-indigo-400/50 cursor-pointer"
+                      className="w-3.5 h-3.5 rounded border-stone-300 text-brand focus:ring-brand-light/50 cursor-pointer"
                     />
                   </th>
                 )}
@@ -658,7 +632,7 @@ export default function PnrTable({
                   <tr
                     key={row.id}
                     className={`border-b border-stone-100 last:border-0 transition-colors ${
-                      selected.has(row.original.id) ? 'bg-indigo-50/60' : 'hover:bg-amber-50/50'
+                      selected.has(row.original.id) ? 'bg-brand-50/60' : 'hover:bg-amber-50/50'
                     } ${URGENCY_STYLES[u].rowBorder}`}
                   >
                     {canIssueEmds && (
@@ -668,7 +642,7 @@ export default function PnrTable({
                           checked={selected.has(row.original.id)}
                           onChange={() => toggleOne(row.original.id)}
                           aria-label={`Select ${row.original.pnr}`}
-                          className="w-3.5 h-3.5 rounded border-stone-300 text-indigo-600 focus:ring-indigo-400/50 cursor-pointer"
+                          className="w-3.5 h-3.5 rounded border-stone-300 text-brand focus:ring-brand-light/50 cursor-pointer"
                         />
                       </td>
                     )}

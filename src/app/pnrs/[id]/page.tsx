@@ -2,7 +2,7 @@ import { requirePageUser } from '@/lib/server/session';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { canEditPnr, canManageEmd, canSplitPnr, isHeadOffice } from '@/lib/auth';
-import { getPnrDetail, getPnrFormOptions, listAssignableAgents } from '@/lib/pnrs';
+import { getPnrDetail, getPnrFormOptions, listAssignableAgents, type DetailStop } from '@/lib/pnrs';
 import { diffInDays, getUrgency, todayIsoInPkt } from '@/lib/urgency';
 import { cancelledTickets, svTicketIssuanceDeadline } from '@/lib/ticketing';
 import { nextEmdSuggestion } from '@/lib/emd';
@@ -31,7 +31,7 @@ import { nextStep, ordinal, type NextStep } from '@/lib/issuance';
 // airline refunds it.
 const ROUND_STATUS_STYLES: Record<string, string> = {
   issued: 'bg-amber-50 text-amber-700 border-amber-200',
-  refunded: 'bg-violet-50 text-violet-700 border-violet-200',
+  refunded: 'bg-brand-50 text-brand-dark border-brand-200',
 };
 
 /**
@@ -145,7 +145,7 @@ function NextIssuance({
         ? 'border-red-200 bg-red-50 text-red-700'
         : days <= 5
           ? 'border-amber-200 bg-amber-50 text-amber-800'
-          : 'border-indigo-200 bg-indigo-50 text-indigo-800';
+          : 'border-brand-200 bg-brand-50 text-brand-dark';
 
   const when = !active
     ? deadline
@@ -182,6 +182,7 @@ function FlightLegView({
   arrives,
   flightCode,
   baggage,
+  stops,
 }: {
   title: string;
   date: string | null;
@@ -191,8 +192,10 @@ function FlightLegView({
   arrives: string | null;
   flightCode: string | null;
   baggage: string | null;
+  stops: DetailStop[];
 }) {
   return (
+    <div>
     <div className="flex items-baseline gap-x-4 gap-y-1 flex-wrap text-sm">
       <span className="w-20 shrink-0 text-[11px] font-medium uppercase tracking-wide text-stone-400">{title}</span>
       <span className="text-stone-800">{date ?? '—'}</span>
@@ -206,7 +209,7 @@ function FlightLegView({
         </span>
       )}
       {flightCode && (
-        <span className="font-mono text-[12px] px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-100">
+        <span className="font-mono text-[12px] px-2 py-0.5 rounded-md bg-brand-50 text-brand-dark border border-brand-100">
           {flightCode}
         </span>
       )}
@@ -215,6 +218,24 @@ function FlightLegView({
           Baggage {baggage} <span className="text-stone-400">per passenger</span>
         </span>
       )}
+    </div>
+    {stops.length > 0 && (
+      <ul className="ml-24 mt-1 space-y-0.5 text-[12px] text-stone-600">
+        {stops.map((st, i) => (
+          <li key={i}>
+            via <span className="font-mono">{st.city}</span>
+            {(st.arrivalTime || st.departureTime) && (
+              <span className="text-stone-500"> · arrives {st.arrivalTime ?? '—'}, departs {st.departureTime ?? '—'}</span>
+            )}
+            {st.flightCode && (
+              <span className="ml-1.5 font-mono text-[11px] px-1.5 py-0.5 rounded bg-brand-50 text-brand-dark border border-brand-100">
+                onward {st.flightCode}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+    )}
     </div>
   );
 }
@@ -298,7 +319,7 @@ export default async function PnrDetailPage({
       <main className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-6">
         <Link
           href="/"
-          className="inline-flex items-center gap-1.5 text-xs font-medium text-stone-500 hover:text-indigo-600 transition-colors"
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-stone-500 hover:text-brand transition-colors"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
           Back to dashboard
@@ -322,7 +343,7 @@ export default async function PnrDetailPage({
               {userCanEditThisPnr && (
                 <Link
                   href={`/pnrs/${detail.id}/edit`}
-                  className="text-xs font-semibold px-3 py-1.5 rounded-xl text-white bg-gradient-to-tr from-indigo-500 to-violet-500 hover:from-indigo-400 hover:to-violet-400 shadow-md shadow-indigo-500/20 transition-all"
+                  className="text-xs font-semibold px-3 py-1.5 rounded-xl text-white bg-gradient-to-tr from-brand-dark to-brand hover:from-brand-dark hover:to-brand-dark shadow-md shadow-brand/20 transition-all"
                 >
                   Edit booking
                 </Link>
@@ -368,6 +389,7 @@ export default async function PnrDetailPage({
                 </>
               } />
               <Field label="Trip type" value={isTripType(detail.tripType) ? TRIP_TYPE_LABELS[detail.tripType] : null} />
+              <Field label="Meal included" value={detail.mealIncluded ? 'Yes' : 'No'} />
               <Field label="Sector" value={detail.sector ? <span className="font-mono text-[13px]">{detail.sector}</span> : null} />
               <Field label="PNR TL date" value={detail.pnrTlDate} />
               <Field label="GDS PNR" value={detail.gdsPnr ? <span className="font-mono">{detail.gdsPnr}</span> : null} />
@@ -383,6 +405,7 @@ export default async function PnrDetailPage({
                 arrives={detail.outboundArrivalTime}
                 flightCode={detail.outboundFlightCode}
                 baggage={formatBaggage(detail.outboundBaggagePieces, detail.outboundBaggageKg)}
+                stops={detail.outboundStops}
               />
               {detail.tripType !== 'one_way' && (detail.tripType === 'round_trip' || detail.inboundDate) && (
                 <FlightLegView
@@ -394,6 +417,7 @@ export default async function PnrDetailPage({
                   arrives={detail.inboundArrivalTime}
                   flightCode={detail.inboundFlightCode}
                   baggage={formatBaggage(detail.inboundBaggagePieces, detail.inboundBaggageKg)}
+                  stops={detail.inboundStops}
                 />
               )}
               {!detail.tripType && (
@@ -420,8 +444,8 @@ export default async function PnrDetailPage({
             </p>
 
             {detail.parentPnr && (
-              <div className="mt-5 rounded-xl bg-indigo-50 border border-indigo-100 p-3.5">
-                <p className="text-xs text-indigo-700 flex items-center gap-1.5">
+              <div className="mt-5 rounded-xl bg-brand-50 border border-brand-100 p-3.5">
+                <p className="text-xs text-brand-dark flex items-center gap-1.5">
                   <Scissors className="w-3.5 h-3.5" />
                   Child of{' '}
                   <Link href={`/pnrs/${detail.parentPnr.id}`} className="font-mono font-semibold underline">
@@ -435,15 +459,15 @@ export default async function PnrDetailPage({
             )}
 
             {detail.childAllocations.length > 0 && (
-              <div className="mt-5 rounded-xl bg-indigo-50 border border-indigo-100 p-3.5">
-                <p className="text-xs font-medium text-indigo-700 flex items-center gap-1.5 mb-2">
+              <div className="mt-5 rounded-xl bg-brand-50 border border-brand-100 p-3.5">
+                <p className="text-xs font-medium text-brand-dark flex items-center gap-1.5 mb-2">
                   <Scissors className="w-3.5 h-3.5" /> Seat allocations
                 </p>
                 <div className="space-y-1.5">
                   {detail.childAllocations.map((a) => (
                     <div key={a.childPnrId} className="flex items-center justify-between text-xs">
                       <div className="flex items-center gap-2">
-                        <Link href={`/pnrs/${a.childPnrId}`} className="font-mono font-semibold text-indigo-600 underline">
+                        <Link href={`/pnrs/${a.childPnrId}`} className="font-mono font-semibold text-brand underline">
                           {a.childPnrCode}
                         </Link>
                         <span className="text-stone-500">→ {a.childInvestorCompany}</span>
@@ -452,9 +476,9 @@ export default async function PnrDetailPage({
                     </div>
                   ))}
                 </div>
-                <div className="mt-2 pt-2 border-t border-indigo-200 flex items-center justify-between text-xs font-medium">
-                  <span className="text-indigo-600">Remaining on this PNR</span>
-                  <span className="text-indigo-700">{detail.unallocatedSeats} seats</span>
+                <div className="mt-2 pt-2 border-t border-brand-200 flex items-center justify-between text-xs font-medium">
+                  <span className="text-brand">Remaining on this PNR</span>
+                  <span className="text-brand-dark">{detail.unallocatedSeats} seats</span>
                 </div>
                 {/* Offer what the SERVER will accept: seats held by agents
                     cannot be split away (phase 6). */}
@@ -552,7 +576,7 @@ export default async function PnrDetailPage({
                   >
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="flex items-center gap-2.5">
-                        <span className="w-7 h-7 rounded-full bg-indigo-100 text-indigo-600 text-xs font-bold flex items-center justify-center">
+                        <span className="w-7 h-7 rounded-full bg-brand-100 text-brand text-xs font-bold flex items-center justify-center">
                           {round.roundNumber}
                         </span>
                         <span className={`text-[11px] px-2 py-0.5 rounded-full border ${ROUND_STATUS_STYLES[round.status] ?? ''}`}>
@@ -684,7 +708,7 @@ export default async function PnrDetailPage({
         {/* Activity history */}
         <section className="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm">
           <h2 className="text-sm font-semibold text-stone-900 mb-4 flex items-center gap-1.5">
-            <History className="w-4 h-4 text-violet-500" /> Change history
+            <History className="w-4 h-4 text-brand" /> Change history
           </h2>
           {detail.activityLog.length === 0 ? (
             <p className="text-sm text-stone-400 py-4 text-center">
@@ -694,7 +718,7 @@ export default async function PnrDetailPage({
             <ul className="space-y-3">
               {detail.activityLog.map((entry) => (
                 <li key={entry.id} className="flex items-start gap-3 text-xs">
-                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 mt-1.5 flex-shrink-0" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-brand-light mt-1.5 flex-shrink-0" />
                   <div>
                     <span className="font-mono font-medium text-stone-800">{entry.fieldName}</span>{' '}
                     changed from{' '}

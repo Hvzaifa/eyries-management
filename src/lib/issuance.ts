@@ -5,6 +5,7 @@ import type { PnrListRow } from './pnrs';
  *
  * The owner's request (2026-09-23): pick a date, and the dashboard says how
  * much EMD has to be issued that day and shows only the bookings behind it.
+ * Widened on 2026-09-29 to one day **or a range** picked from a calendar.
  *
  * **The figure is the deposits themselves** — `seats × fare × the next round's
  * policy percentage` — not the bookings' total EMD value. It answers "how much
@@ -69,10 +70,20 @@ export function nextEmdLabel(roundsIssued: number): string {
   return `${ordinal(roundsIssued + 1)} EMD`;
 }
 
+/**
+ * The days picked in the "EMDs to issue" calendar, inclusive. A single day is a
+ * range whose `from` and `to` are the same (owner, 2026-09-29: pick one day or
+ * a range from the calendar).
+ */
+export interface IssuanceRange {
+  from: string;
+  to: string;
+}
+
 export interface IssuanceDay {
-  /** The date asked about, or null when none was picked. */
-  date: string | null;
-  /** Bookings whose next EMD must be issued on that date. */
+  /** The range asked about, or null when nothing is picked. */
+  range: IssuanceRange | null;
+  /** Bookings whose next EMD must be issued within the range. */
   bookings: number;
   /** What those EMDs are worth, where the policy can price them. */
   total: number;
@@ -92,39 +103,37 @@ function sumMoney(values: number[]): number {
   return values.reduce((sum, v) => sum + Math.round(v * 100), 0) / 100;
 }
 
+/** Puts a two-click selection in order, so a range picked backwards still reads forwards. */
+export function orderedRange(a: string, b: string): IssuanceRange {
+  return a <= b ? { from: a, to: b } : { from: b, to: a };
+}
+
 /**
- * The EMDs falling due on one date, across the rows the other filters leave.
- *
- * **That date exactly**, not "on or before" (owner's choice, 2026-09-23): the
- * question is what one day's work is worth. Anything overdue from an earlier
- * date stays under its own date.
+ * Whether a row belongs in the table when days are picked. The card counts
+ * exactly these rows, so the two can never disagree.
  *
  * Only `active` bookings count. A cancelled or completed booking has no EMD to
  * issue, whatever date it still carries.
  */
-export function emdsToIssueOn(rows: PnrListRow[], dateIso: string | null): IssuanceDay {
-  if (!dateIso) return { date: null, bookings: 0, total: 0, undetermined: 0 };
+export function matchesIssuanceRange(row: PnrListRow, range: IssuanceRange): boolean {
+  const d = row.nextIssuanceDeadline;
+  return row.status === 'active' && d !== null && d >= range.from && d <= range.to;
+}
 
-  const due = rows.filter(
-    (r) => r.status === 'active' && r.nextIssuanceDeadline === dateIso
-  );
-
+/**
+ * The EMDs falling due within the picked days, across the rows the other
+ * filters leave — the figure the "EMDs To Issue" card shows. Both ends are
+ * included; a single day is `from === to`.
+ */
+export function emdsToIssueIn(rows: PnrListRow[], range: IssuanceRange | null): IssuanceDay {
+  if (!range) return { range: null, bookings: 0, total: 0, undetermined: 0 };
+  const due = rows.filter((r) => matchesIssuanceRange(r, range));
   return {
-    date: dateIso,
+    range,
     bookings: due.length,
     total: sumMoney(due.map((r) => r.nextEmdAmount ?? 0)),
     undetermined: due.filter((r) => r.nextEmdAmount === null).length,
   };
-}
-
-/**
- * Whether a row belongs in the table when a date is picked.
- *
- * Kept beside `emdsToIssueOn` so the card and the rows below it can never
- * disagree about which bookings a date covers.
- */
-export function matchesIssuanceDate(row: PnrListRow, dateIso: string): boolean {
-  return row.status === 'active' && row.nextIssuanceDeadline === dateIso;
 }
 
 /** The dates that actually have EMDs to issue, earliest first — for a picker. */

@@ -2,7 +2,8 @@
 
 import { FileText, Users, Wallet, ArrowDownToLine, RotateCcw, CalendarClock } from 'lucide-react';
 import { summarizeDashboard, pnrCountLabel } from '@/lib/dashboard';
-import { emdsToIssueOn } from '@/lib/issuance';
+import { emdsToIssueIn, type IssuanceRange } from '@/lib/issuance';
+import { rangeLabel } from '@/components/date-range-picker';
 import { formatPkr } from '@/lib/format';
 import type { PnrListRow } from '@/lib/pnrs';
 
@@ -18,19 +19,19 @@ export default function DashboardCards({
   rows,
   statusFilter,
   holder,
-  issuanceDate,
+  issuanceRange,
   showIssuance = true,
   onClear,
 }: {
   rows: PnrListRow[];
   statusFilter: string | null;
   /**
-   * The date picked in the "EMDs to be issued" filter, or null.
+   * The day or range picked in the "EMDs to issue" calendar, or null.
    *
    * When set, the rows arriving here are already narrowed to it, so the card is
    * counting the same bookings the table is showing.
    */
-  issuanceDate?: string | null;
+  issuanceRange?: IssuanceRange | null;
   /**
    * Whether the "EMDs To Issue" card appears. Head Office only (owner,
    * 2026-09-26): issuing EMDs is Head Office's job, and the card has nothing to
@@ -49,7 +50,7 @@ export default function DashboardCards({
 }) {
   const summary = summarizeDashboard(rows);
   const share = Boolean(holder);
-  const issuance = emdsToIssueOn(rows, issuanceDate ?? null);
+  const issuance = emdsToIssueIn(rows, issuanceRange ?? null);
 
   const cards: {
     label: string;
@@ -62,7 +63,7 @@ export default function DashboardCards({
       label: pnrCountLabel(statusFilter),
       value: String(summary.pnrCount),
       icon: FileText,
-      tint: 'bg-indigo-100 text-indigo-600',
+      tint: 'bg-brand-100 text-brand',
     },
     {
       label: share ? 'Seats Held' : 'Total Seats',
@@ -74,7 +75,7 @@ export default function DashboardCards({
       label: share ? 'EMD Value (Share)' : 'Total EMD Value',
       value: formatPkr(summary.totalEmdValue),
       icon: Wallet,
-      tint: 'bg-violet-100 text-violet-600',
+      tint: 'bg-brand-100 text-brand',
     },
     {
       label: share ? 'EMD Issued (Share)' : 'EMD Issued',
@@ -93,14 +94,14 @@ export default function DashboardCards({
     {
       // Blank until a date is picked (owner's choice, 2026-09-23) — a figure
       // with no date against it would be a different question answered.
-      label: issuance.date ? `EMDs To Issue · ${issuance.date}` : 'EMDs To Issue',
-      value: issuance.date ? formatPkr(issuance.total) : '—',
-      hint: issuance.date
+      label: issuance.range ? `EMDs To Issue · ${rangeLabel(issuance.range)}` : 'EMDs To Issue',
+      value: issuance.range ? formatPkr(issuance.total) : '—',
+      hint: issuance.range
         ? `${issuance.bookings} booking${issuance.bookings === 1 ? '' : 's'}` +
           (issuance.undetermined > 0
             ? ` · ${issuance.undetermined} need${issuance.undetermined === 1 ? 's' : ''} a manual amount`
             : '')
-        : 'pick a date to see the day’s work',
+        : 'pick a day or range to see the work',
       icon: CalendarClock,
       tint: 'bg-rose-100 text-rose-600',
     },
@@ -109,7 +110,7 @@ export default function DashboardCards({
   return (
     <div className="space-y-3">
       {holder && (
-        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-xs text-indigo-800">
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-brand-200 bg-brand-50 px-4 py-2.5 text-xs text-brand-dark">
           <span>
             Showing <strong>{holder}</strong>&rsquo;s share of each booking — their seats, and their
             part of the money by seat count. Booking totals are on the booking&rsquo;s own page.
@@ -117,7 +118,7 @@ export default function DashboardCards({
           {onClear && (
             <button
               onClick={onClear}
-              className="ml-auto font-semibold text-indigo-700 hover:text-indigo-900 underline underline-offset-2 cursor-pointer"
+              className="ml-auto font-semibold text-brand-dark hover:text-brand-dark underline underline-offset-2 cursor-pointer"
             >
               Show all holders
             </button>

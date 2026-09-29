@@ -33,7 +33,7 @@ export default function SplitPnrButton({ pnrId, pnrCode, maxSeats }: SplitPnrBut
   };
 
   const inputCls =
-    'w-full bg-stone-50 border border-stone-300 rounded-xl px-3 py-2 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:border-indigo-400 transition-colors';
+    'w-full bg-stone-50 border border-stone-300 rounded-xl px-3 py-2 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-brand-light/50 focus:border-brand-light transition-colors';
 
   return (
     <>
@@ -50,7 +50,7 @@ export default function SplitPnrButton({ pnrId, pnrCode, maxSeats }: SplitPnrBut
           <div className="bg-white rounded-2xl shadow-xl border border-stone-200 w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
             <div className="px-5 py-4 border-b border-stone-100 flex items-center justify-between shrink-0">
               <h3 className="text-sm font-semibold text-stone-900 flex items-center gap-2">
-                <Scissors className="w-4 h-4 text-violet-500" />
+                <Scissors className="w-4 h-4 text-brand" />
                 Split seats from {pnrCode}
               </h3>
               <button
@@ -69,9 +69,9 @@ export default function SplitPnrButton({ pnrId, pnrCode, maxSeats }: SplitPnrBut
                 </div>
               )}
 
-              <div className="p-3 rounded-xl bg-indigo-50 border border-indigo-100 text-xs text-indigo-700">
+              <div className="p-3 rounded-xl bg-brand-50 border border-brand-100 text-xs text-brand-dark">
                 <p className="font-medium mb-1">How splitting works:</p>
-                <ul className="space-y-0.5 list-disc list-inside text-[11px] text-indigo-600">
+                <ul className="space-y-0.5 list-disc list-inside text-[11px] text-brand">
                   <li>The airline provides a new PNR code for the child booking.</li>
                   <li>Parent seats will be reduced by the allocated amount.</li>
                   <li>EMD rounds are recalculated proportionally based on new seat counts.</li>
@@ -143,7 +143,7 @@ export default function SplitPnrButton({ pnrId, pnrCode, maxSeats }: SplitPnrBut
                 <button
                   type="submit"
                   disabled={isPending}
-                  className="px-4 py-2 text-xs font-semibold rounded-xl text-white bg-gradient-to-tr from-violet-500 to-indigo-500 hover:from-violet-400 hover:to-indigo-400 shadow-md shadow-violet-500/20 transition-all disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+                  className="px-4 py-2 text-xs font-semibold rounded-xl text-white bg-gradient-to-tr from-brand-dark to-brand hover:from-brand-dark hover:to-brand-dark shadow-md shadow-brand/20 transition-all disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
                 >
                   <Scissors className="w-3.5 h-3.5" />
                   {isPending ? 'Splitting...' : 'Split Seats'}

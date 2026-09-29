@@ -1448,6 +1448,81 @@ Unchanged: the "EMDs To Issue" card still counts active bookings only — an EMD
 
 **Consequence of the owner's definition, stated so it is not a surprise:** a round 1 that is held and paid while its booking still awaits the 2nd EMD appears in *To be refunded* **and** the booking stays on the dashboard for the EMD. Both are true at once.
 
+### 2026-09-28 — Stops on connecting flights; meal included for the package
+
+**Request (owner):** on the booking form, let each flight (outbound and inbound) have stops, with the flight code at a stop because the aircraft may change there; add a *meal included* option for the package as a whole, not per flight.
+
+**Answered by the owner before building:** each stop records **city + onward flight code + arrival and departure times** (code and times optional); **stops are part of the sector** (ISB→DXB→JED, JED→DXB→ISB is `ISB-DXB-JED-DXB-ISB`); meal is **Yes/No only**; the **AI intake drafts both**.
+
+**Built:** new `flight_stops` table (one row per stop, cascade on the booking, RLS on) and `pnrs.meal_included boolean default false`, applied directly — not via `db:apply`, which would run the pending Deal %/Issued drop early. `readFlightDetails` validates stops with the flight (tested): at most 3 per flight, a real airport code, not the same as the city before it, the last stop not the arrival city, a real flight number if one is given. The form adds "+ Add stop" rows under each flight's times; the booking page lists "via DXB · arrives 06:50, departs 09:45 · onward EK805" under the flight and shows *Meal included*. Edits replace stops as a set, logging `outboundStops` / `inboundStops` before → after; splits copy stops and the meal flag.
+
+**Defaults chosen, stated so they can be challenged:** at most 3 stops per flight (database-checked). The flight's own flight code remains the first flight's; a stop's code is the flight *leaving* it.
+
+**Verified:** 17 new tests (600 total). A live AI parse of a 4-segment Emirates itinerary (ISB–DXB–JED / JED–DXB–ISB, "MEALS INCLUDED") drafted both stops with onward codes EK805/EK612 and all four times, and meal = yes. A create and an edit through the real server actions, inside a rolled-back transaction, stored the stops and meal, rebuilt the sector, and logged the stop and meal changes; nothing was left behind.
+
+### 2026-09-29 — "EMDs to issue": one day or a range, from a calendar
+
+**Request (owner):** make the filter a date range; instead of a dropdown of dates, let the user pick a single day or a range from a calendar, with the cards showing the matching amount.
+
+**Why it looked like a dropdown:** the old control was a date input with a `<datalist>` of the dates that had work, which browsers render as a list.
+
+**Answered by the owner:** one calendar popup (not two From/To boxes).
+
+**Built:** `DateRangePicker` (in-app, no new library): the first click picks a single day and applies it at once; a second click makes a range from the first (either order); a third starts again; hovering previews the range; days with EMDs due are dotted; Escape, outside click or Done closes it; ✕ clears. `emdsToIssueOn`/`matchesIssuanceDate` became `emdsToIssueIn`/`matchesIssuanceRange` over an inclusive `{from, to}`, still shared by the card and the table rows so they cannot disagree. Still Head Office only, still active bookings only, still counting unpriced bookings separately.
+
+**Verified:** 602 tests. In a browser against the live data: 30 Sep alone → 12 bookings, PKR 65,763,547 (2 needing a manual amount); 30 Sep – 3 Oct → 36 bookings, PKR 197,076,083.50 (7 manual), and the table showed exactly those 36; moving to the next month mid-selection worked.
+
+### 2026-09-29 — The IATA page, one license at a time
+
+**Request (owner):** list the PNRs by the license they were issued against. Show one clickable button per license in a row; a button lists that license's EMDs in the page's existing format, and the cards above show that license's figures (e.g. SIX SIGMA → what SIX SIGMA owes IATA).
+
+**Found:** a license is recorded twice, on the booking (`pnrs.license_id`) and on each round (`emd_rounds.license_id`, the license that paid for that round, 2026-09-07). The page's License column read only the round's, and **every imported round has none**, so all 156 owed EMDs showed "—". Every booking has one.
+
+**Answered by the owner:**
+- An EMD falls under **the round's license, else the booking's**.
+- Buttons for **All licenses plus every license**, including those owing nothing.
+- The page **opens on All licenses**, as before.
+- The two warning boxes (refunded too late; outside the loaded calendar) **narrow to the selected license** too. The owner will supply the IATA calendar for later dates when it is published, to be loaded then.
+
+**Built:**
+- `src/lib/iata-by-license.ts` (pure, tested): `licenseOfRound`, `licenseTabs`, `dueForLicense` and `summarizeDues`, summed in whole paisa. A "No license" button appears only when an owed EMD has no license at all.
+- `findIataDueRounds` reads both licenses.
+- The page takes `?license=<id>`; an unknown id falls back to All.
+- The License column now shows the license each EMD is counted under, so it is no longer blank.
+
+**Verified:**
+- 615 tests.
+- Against live data, the per-license figures add back to the whole, PKR 395,410,542 across 156 EMDs:
+
+  | License | EMDs | Owed (PKR) |
+  |---|---|---|
+  | TRV ADV | 52 | 220,097,813 |
+  | TIME 2 FLY | 80 | 142,843,345 |
+  | TU PIA | 17 | 16,717,410 |
+  | TA-LHE-BSP | 7 | 15,751,974 |
+  | GLOBAL TRV, SIX SIGMA, TA-BSP, TRV UET | 0 | 0 |
+
+- Clicked through in a browser: the cards, the groups, the table rows and the License column all changed with the selection. SIX SIGMA showed "Nothing outstanding to IATA for SIX SIGMA". The page does not scroll sideways at phone width.
+
+### 2026-09-30 — Brand colours: three blues replace the purple accents
+
+**Request (owner):** use `#1D499A` (dark blue), `#3476CD` (primary blue) and `#4697EC` (light blue) for every button, logo and accent that was a shade of purple, across the system. The cream background stays as it is. Separately, the IATA license buttons looked squished.
+
+**Built:**
+- The three blues are theme colours in `src/app/globals.css`: `brand-dark`, `brand` and `brand-light`.
+- Three light tints, `brand-50/100/200`, are derived from the light blue. They are only for highlighted rows and soft badges, where a full-strength colour would be too heavy.
+- Every `indigo-*`, `violet-*` and `purple-*` class was replaced: 259 in 31 files, plus one spinner border.
+- **Indigo counted as purple:** it was used in the same gradients as violet and reads purple on screen.
+- Mapping:
+  - Gradients (logo, main buttons) run dark → primary, and hover darkens so white text stays readable.
+  - Links and active states use the primary blue.
+  - Dark text uses the dark blue.
+  - Focus rings and borders use the light blue.
+- The favicon is the default black Next.js icon, not purple, so it is unchanged.
+- The license buttons were rebuilt with standard spacing (`pl-4 pr-2`, `gap-3`) and a fixed-width count badge. The old `px-3.5` was the only use of that class in the app.
+
+**Verified:** 615 tests, lint and typecheck. In a browser against live data (IATA, dashboard, refunds, login), a scan of every element's computed colours found no purple.
+
 ## Template for new entries
 
 ```

@@ -23,7 +23,7 @@ import {
   validateSegment,
 } from '@/lib/booking-entry';
 import { str, dateVal, numVal } from '@/lib/form';
-import { FLIGHT_TIME_COLUMNS, flightColumns, readFlightDetails } from '@/lib/flight-details';
+import { FLIGHT_TIME_COLUMNS, describeStops, flightColumns, flightStopRows, readFlightDetails, timeFromDb } from '@/lib/flight-details';
 import { requireUser, requireHeadOffice, requirePnrEditor, TX_TIMEOUT_MS } from '@/lib/server/guards';
 
 /**
@@ -155,6 +155,7 @@ export async function createPnr(formData: FormData) {
         airlineId,
         seats,
         ...flight,
+        mealIncluded: str(formData, 'meal_included') === 'yes',
         // The PNR TL IS the deadline to issue the first EMD until one exists
         // (owner rule 2026-09-07, restated 2026-09-21). `syncPnrTlDate` moves it
         // on to the next outstanding round as rounds are issued.
@@ -178,6 +179,11 @@ export async function createPnr(formData: FormData) {
         changedBy: createdBy,
       },
     });
+
+    const stops = flightStopRows(flights.details);
+    if (stops.length > 0) {
+      await tx.flightStop.createMany({ data: stops.map((st) => ({ ...st, pnrId: pnr.id })) });
+    }
 
     // NO EMD round is created here (owner ruling, 2026-09-21). Issuing an EMD is
     // Head Office's job and happens from the booking page or the bulk issuance
@@ -225,7 +231,10 @@ export async function updatePnr(formData: FormData) {
   // Use requirePnrEditor to check branch scoping + EMD lock
   const { authUser } = await requirePnrEditor(id);
 
-  const existing = await prisma.pnr.findUnique({ where: { id } });
+  const existing = await prisma.pnr.findUnique({
+    where: { id },
+    include: { flightStops: { orderBy: [{ leg: 'asc' }, { position: 'asc' }] } },
+  });
   if (!existing) return { error: 'Booking not found.' };
 
   const requestDate = dateVal(formData, 'request_date');
@@ -311,6 +320,7 @@ export async function updatePnr(formData: FormData) {
     airlineId: str(formData, 'airline_id'),
     seats,
     ...flightColumns(flights.details),
+    mealIncluded: str(formData, 'meal_included') === 'yes',
     pnrTlDate: dateVal(formData, 'pnr_tl_date'),
     airlineTaxes: numVal(formData, 'airline_taxes'),
     psf: numVal(formData, 'psf'),
@@ -346,6 +356,29 @@ export async function updatePnr(formData: FormData) {
   // 2026-09-07; updatePnr was missed, and it is the most-used write path here.
   await prisma.$transaction(async (tx) => {
     await tx.pnr.update({ where: { id }, data: next });
+
+    // Stops are replaced as a set; the history records each flight's before
+    // and after as one readable line rather than row-by-row churn.
+    const newStops = flightStopRows(flights.details);
+    await tx.flightStop.deleteMany({ where: { pnrId: id } });
+    if (newStops.length > 0) {
+      await tx.flightStop.createMany({ data: newStops.map((st) => ({ ...st, pnrId: id })) });
+    }
+    for (const leg of ['outbound', 'inbound'] as const) {
+      const as = (rows: { leg: string; city: string; flightCode: string | null; arrivalTime: Date | null; departureTime: Date | null }[]) =>
+        describeStops(
+          rows
+            .filter((r) => r.leg === leg)
+            .map((r) => ({ ...r, arrivalTime: timeFromDb(r.arrivalTime), departureTime: timeFromDb(r.departureTime) }))
+        );
+      const before = as(existing.flightStops);
+      const after = as(newStops);
+      if (before !== after) {
+        await tx.activityLog.create({
+          data: { tableName: 'pnrs', recordId: id, fieldName: `${leg}Stops`, oldValue: before, newValue: after, changedBy: authUser.id },
+        });
+      }
+    }
 
     // Balance tickets is seats − issued, so changing the seats changes it too.
     // Recomputed here rather than left stale, and logged like any other write to
@@ -422,6 +455,7 @@ export async function splitPnr(formData: FormData) {
     include: {
       emdRounds: { orderBy: { roundNumber: 'asc' } },
       agentAssignments: { where: { releasedAt: null } },
+      flightStops: true,
     },
   });
   if (!parent) return { error: 'Parent PNR not found.' };
@@ -487,10 +521,20 @@ export async function splitPnr(formData: FormData) {
         airlineTaxes: parent.airlineTaxes,
         psf: parent.psf,
         fare: parent.fare,
+        mealIncluded: parent.mealIncluded,
         status: 'active',
         createdBy: user.id,
       },
     });
+
+    // Same flights, same stops. A one-way parent has no inbound stops to copy.
+    if (parent.flightStops.length > 0) {
+      await tx.flightStop.createMany({
+        data: parent.flightStops.map(({ leg, position, city, flightCode, arrivalTime, departureTime }) => ({
+          pnrId: child.id, leg, position, city, flightCode, arrivalTime, departureTime,
+        })),
+      });
+    }
 
     // 2. Create the allocation record
     await tx.allocation.create({

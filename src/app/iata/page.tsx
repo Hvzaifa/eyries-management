@@ -4,7 +4,8 @@ import Link from 'next/link';
 import { Banknote, AlertTriangle, CheckCircle2, CalendarClock } from 'lucide-react';
 import AppHeader from '@/components/app-header';
 import { isHeadOffice } from '@/lib/auth';
-import { findIataDues } from '@/lib/iata-dues';
+import { findIataDueRounds, listLicenses } from '@/lib/iata-dues';
+import { dueForLicense, licenseTabs, summarizeDues, type IataDues } from '@/lib/iata-by-license';
 import { IATA_CALENDAR_FROM, IATA_CALENDAR_TO } from '@/lib/iata-calendar';
 import { formatPkr } from '@/lib/format';
 import { todayIsoInPkt } from '@/lib/urgency';
@@ -20,13 +21,22 @@ export const metadata = { title: 'IATA settlements | Eyries' };
  * Nothing on this page is stored. Every date is read from the remittance
  * calendar using the day each EMD was issued, so republishing the calendar
  * moves every figure with it.
+ *
+ * One license at a time (owner, 2026-09-29): `?license=<id>` narrows the
+ * cards, the settlement groups and both warning lists to that license; no
+ * parameter is every license, as before.
  */
-export default async function IataPage() {
+export default async function IataPage({ searchParams }: { searchParams: Promise<{ license?: string }> }) {
   const { user, authUser } = await requirePageUser();
   if (!isHeadOffice(authUser)) redirect('/');
 
   const today = todayIsoInPkt();
-  const dues = await findIataDues(today);
+  const [allDue, licenses] = await Promise.all([findIataDueRounds(today), listLicenses()]);
+  const tabs = licenseTabs(licenses, allDue);
+  // An unknown or stale id falls back to every license rather than an empty page.
+  const requested = (await searchParams).license;
+  const selected = tabs.find((t) => t.key === requested) ?? null;
+  const dues = summarizeDues(dueForLicense(allDue, selected?.key ?? null), today);
   const overdue = dues.groups.filter((g) => g.overdue);
   const ahead = dues.groups.filter((g) => !g.overdue);
 
@@ -46,8 +56,26 @@ export default async function IataPage() {
           </p>
         </div>
 
+        <nav aria-label="Filter by license" className="flex flex-wrap gap-2">
+          <LicenseButton href="/iata" name="All licenses" count={allDue.length} active={!selected} />
+          {tabs.map((t) => (
+            <LicenseButton
+              key={t.key}
+              href={`/iata?license=${encodeURIComponent(t.key)}`}
+              name={t.name}
+              count={t.count}
+              active={selected?.key === t.key}
+            />
+          ))}
+        </nav>
+
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <Card label="Outstanding to IATA" value={formatPkr(dues.totalOwed)} tone="stone" />
+          <Card
+            label="Outstanding to IATA"
+            value={formatPkr(dues.totalOwed)}
+            hint={selected ? selected.name : 'all licenses'}
+            tone="stone"
+          />
           <Card label="EMDs awaiting payment" value={String(dues.count)} tone="stone" />
           <Card
             label="Next settlement"
@@ -60,9 +88,12 @@ export default async function IataPage() {
         {dues.count === 0 && (
           <div className="rounded-2xl border border-stone-200 bg-white p-10 text-center shadow-sm">
             <CheckCircle2 className="w-6 h-6 mx-auto text-emerald-500" />
-            <p className="mt-2 text-sm font-semibold text-stone-800">Nothing outstanding to IATA.</p>
+            <p className="mt-2 text-sm font-semibold text-stone-800">
+              Nothing outstanding to IATA{selected ? ` for ${selected.name}` : ''}.
+            </p>
             <p className="mt-1 text-sm text-stone-500">
-              Every issued EMD on an active booking has a payment recorded against it.
+              Every issued EMD on an active booking{selected ? ' under this license' : ''} has a
+              payment recorded against it.
             </p>
           </div>
         )}
@@ -81,7 +112,7 @@ export default async function IataPage() {
         {ahead.length > 0 && (
           <section className="space-y-3">
             <h2 className="text-sm font-semibold text-stone-800 flex items-center gap-1.5">
-              <CalendarClock className="w-4 h-4 text-indigo-500" /> Upcoming
+              <CalendarClock className="w-4 h-4 text-brand" /> Upcoming
             </h2>
             {ahead.map((g) => (
               <SettlementGroup key={g.remittanceDay} group={g} />
@@ -149,6 +180,40 @@ export default async function IataPage() {
   );
 }
 
+function LicenseButton({
+  href,
+  name,
+  count,
+  active,
+}: {
+  href: string;
+  name: string;
+  count: number;
+  active: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      scroll={false}
+      aria-current={active ? 'page' : undefined}
+      className={`inline-flex items-center gap-3 whitespace-nowrap rounded-xl border pl-4 pr-2 py-2 text-xs font-semibold shadow-sm transition-colors ${
+        active
+          ? 'border-brand bg-brand text-white'
+          : 'border-stone-300 bg-white text-stone-700 hover:border-brand-200 hover:bg-brand-50'
+      }`}
+    >
+      {name}
+      <span
+        className={`inline-flex min-w-6 justify-center rounded-lg px-2 py-0.5 text-[11px] tabular-nums ${
+          active ? 'bg-white/25 text-white' : count > 0 ? 'bg-brand-50 text-brand-dark' : 'bg-stone-100 text-stone-400'
+        }`}
+      >
+        {count}
+      </span>
+    </Link>
+  );
+}
+
 function Card({
   label,
   value,
@@ -178,7 +243,7 @@ function Card({
 function SettlementGroup({
   group,
 }: {
-  group: Awaited<ReturnType<typeof findIataDues>>['groups'][number];
+  group: IataDues['groups'][number];
 }) {
   const when = group.overdue
     ? `overdue by ${Math.abs(group.daysLeft)} day${Math.abs(group.daysLeft) === 1 ? '' : 's'}`
@@ -198,7 +263,7 @@ function SettlementGroup({
         }`}
       >
         <div className="flex items-center gap-2.5">
-          <Banknote className={`w-4 h-4 ${group.overdue ? 'text-red-500' : 'text-indigo-500'}`} />
+          <Banknote className={`w-4 h-4 ${group.overdue ? 'text-red-500' : 'text-brand'}`} />
           <div>
             <p className="text-sm font-semibold text-stone-900">
               Pay {group.remittanceDay}{' '}
@@ -230,7 +295,7 @@ function SettlementGroup({
           {group.items.map((d) => (
             <tr key={d.roundId} className="border-b border-stone-50 last:border-0">
               <td className="px-5 py-2.5">
-                <Link href={`/pnrs/${d.pnrId}`} className="font-mono font-medium text-indigo-600 hover:underline">
+                <Link href={`/pnrs/${d.pnrId}`} className="font-mono font-medium text-brand hover:underline">
                   {d.pnrCode}
                 </Link>
                 <span className="text-[11px] text-stone-400">

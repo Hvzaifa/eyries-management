@@ -38,7 +38,7 @@ export default function SendNoticeButton({
   const [body, setBody] = useState(defaultBody);
 
   const inputCls =
-    'w-full bg-stone-50 border border-stone-300 rounded-xl px-3 py-2 text-sm text-stone-800 focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:border-indigo-400 transition-colors';
+    'w-full bg-stone-50 border border-stone-300 rounded-xl px-3 py-2 text-sm text-stone-800 focus:outline-none focus:ring-2 focus:ring-brand-light/50 focus:border-brand-light transition-colors';
 
   // No address on file means there is nowhere approved to send. Shown as a
   // disabled prompt rather than a button that would only fail on the server.
@@ -74,7 +74,7 @@ export default function SendNoticeButton({
         className={`text-[10px] font-medium inline-flex items-center gap-1 cursor-pointer border px-2 py-1 rounded-md shadow-sm transition-colors ${
           sent
             ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-            : 'border-stone-200 bg-white text-stone-500 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-700'
+            : 'border-stone-200 bg-white text-stone-500 hover:bg-brand-50 hover:border-brand-200 hover:text-brand-dark'
         }`}
       >
         {sent ? <CheckCircle2 className="w-3 h-3" /> : <Send className="w-3 h-3" />}
@@ -155,7 +155,7 @@ export default function SendNoticeButton({
                 <button
                   type="submit"
                   disabled={isPending}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-xl text-white bg-indigo-600 hover:bg-indigo-500 transition-colors shadow-sm disabled:opacity-50 cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-xl text-white bg-brand hover:bg-brand transition-colors shadow-sm disabled:opacity-50 cursor-pointer"
                 >
                   <Send className="w-3.5 h-3.5" />
                   {isPending ? 'Sending…' : 'Send notice'}

@@ -1,5 +1,6 @@
 import { prisma } from './prisma';
-import { iataPaymentState, groupByRemittanceDay, type RemittanceGroup } from './iata-payments';
+import { iataPaymentState } from './iata-payments';
+import { licenseOfRound, type IataDueRound } from './iata-by-license';
 
 /**
  * What the company still owes IATA, read-only.
@@ -16,45 +17,10 @@ import { iataPaymentState, groupByRemittanceDay, type RemittanceGroup } from './
  * this filters on its verdict.
  */
 
-export interface IataDueRound {
-  roundId: string;
-  pnrId: string;
-  pnrCode: string;
-  srNo: number;
-  roundNumber: number;
-  emdNumber: string | null;
-  emdAmount: number;
-  issuanceDate: string;
-  airlineCode: string | null;
-  branchName: string | null;
-  licenseName: string | null;
-  seats: number;
-  outboundDate: string | null;
-  periodCode: string | null;
-  deadline: string | null;
-  /** Last day a refund could still move this bill to the next cycle. */
-  rollBy: string | null;
-  /** Why a refunded round is nonetheless still owed. */
-  lateRefund: 'after-billing' | 'date-unknown' | null;
-}
+export type { IataDueRound } from './iata-by-license';
 
-export interface IataDues {
-  /** Payments still to make, earliest settlement first. */
-  groups: RemittanceGroup<IataDueRound>[];
-  /** Owed, but issued outside the loaded calendar — no day can be named yet. */
-  undated: IataDueRound[];
-  /**
-   * Owed despite being refunded, because the refund missed its billing window
-   * or has no recorded date. Surprising enough to be worth naming.
-   */
-  lateRefunds: IataDueRound[];
-  /** Every owed round, dated or not. */
-  totalOwed: number;
-  /** Rounds counted. */
-  count: number;
-}
-
-export async function findIataDues(todayIso: string): Promise<IataDues> {
+/** Every EMD still owed to IATA, each under its license (see `licenseOfRound`). */
+export async function findIataDueRounds(todayIso: string): Promise<IataDueRound[]> {
   const rounds = await prisma.emdRound.findMany({
     where: {
       paymentDate: null,
@@ -66,7 +32,7 @@ export async function findIataDues(todayIso: string): Promise<IataDues> {
     },
     orderBy: { issuanceDate: 'asc' },
     include: {
-      license: { select: { name: true } },
+      license: { select: { id: true, name: true } },
       pnr: {
         select: {
           id: true,
@@ -76,6 +42,7 @@ export async function findIataDues(todayIso: string): Promise<IataDues> {
           outboundDate: true,
           airline: { select: { code: true } },
           branch: { select: { name: true } },
+          license: { select: { id: true, name: true } },
         },
       },
     },
@@ -83,7 +50,7 @@ export async function findIataDues(todayIso: string): Promise<IataDues> {
 
   const iso = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
 
-  const due: IataDueRound[] = rounds.flatMap((r) => {
+  return rounds.flatMap((r) => {
     const issuanceDate = iso(r.issuanceDate)!;
     const state = iataPaymentState({
       issuanceDate,
@@ -95,6 +62,7 @@ export async function findIataDues(todayIso: string): Promise<IataDues> {
     // A round refunded inside its billing window is not owed — the bill moved
     // to whichever round replaced it, and listing both would count it twice.
     if (!state.owed) return [];
+    const license = licenseOfRound(r.license, r.pnr.license);
     return [{
       roundId: r.id,
       pnrId: r.pnr.id,
@@ -106,7 +74,8 @@ export async function findIataDues(todayIso: string): Promise<IataDues> {
       issuanceDate,
       airlineCode: r.pnr.airline?.code ?? null,
       branchName: r.pnr.branch?.name ?? null,
-      licenseName: r.license?.name ?? null,
+      licenseId: license?.id ?? null,
+      licenseName: license?.name ?? null,
       seats: r.pnr.seats,
       outboundDate: iso(r.pnr.outboundDate),
       periodCode: state.period?.code ?? null,
@@ -115,20 +84,9 @@ export async function findIataDues(todayIso: string): Promise<IataDues> {
       lateRefund: state.lateRefund,
     }];
   });
+}
 
-  const groups = groupByRemittanceDay(
-    due,
-    (d) => ({ deadline: d.deadline, periodCode: d.periodCode, amount: d.emdAmount }),
-    todayIso
-  );
-  const undated = due.filter((d) => d.deadline === null);
-  const lateRefunds = due.filter((d) => d.lateRefund !== null);
-
-  return {
-    groups,
-    undated,
-    lateRefunds,
-    totalOwed: due.reduce((sum, d) => sum + Math.round(d.emdAmount * 100), 0) / 100,
-    count: due.length,
-  };
+/** Every license, for the page's buttons — including those owing nothing. */
+export async function listLicenses() {
+  return prisma.license.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true } });
 }

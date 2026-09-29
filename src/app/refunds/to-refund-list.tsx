@@ -44,7 +44,7 @@ export default function ToRefundList({ rows, canRecord }: { rows: RoundToRefund[
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search PNR, EMD number, branch, sector..."
-            className="w-full bg-white border border-stone-300 rounded-xl pl-9 pr-3 py-2 text-xs text-stone-800 placeholder-stone-400 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-400/50"
+            className="w-full bg-white border border-stone-300 rounded-xl pl-9 pr-3 py-2 text-xs text-stone-800 placeholder-stone-400 shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-light/50"
           />
         </div>
         <span className="text-[11px] text-stone-500">
@@ -53,7 +53,7 @@ export default function ToRefundList({ rows, canRecord }: { rows: RoundToRefund[
         {canRecord && picked.size > 0 && (
           <Link
             href={`/pnrs/bulk-refund?pnrs=${encodeURIComponent([...picked].join(','))}`}
-            className="ml-auto inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-gradient-to-tr from-violet-500 to-purple-500 rounded-xl shadow-sm"
+            className="ml-auto inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-gradient-to-tr from-brand-dark to-brand rounded-xl shadow-sm"
           >
             Record refunds for {picked.size} booking{picked.size === 1 ? '' : 's'}
           </Link>
@@ -95,7 +95,7 @@ export default function ToRefundList({ rows, canRecord }: { rows: RoundToRefund[
               </thead>
               <tbody className="divide-y divide-stone-100">
                 {visible.map((r) => (
-                  <tr key={r.roundId} className={picked.has(r.pnr) ? 'bg-violet-50/50' : 'hover:bg-stone-50/50'}>
+                  <tr key={r.roundId} className={picked.has(r.pnr) ? 'bg-brand-50/50' : 'hover:bg-stone-50/50'}>
                     {canRecord && (
                       <td className="px-3 py-3">
                         <input
@@ -107,7 +107,7 @@ export default function ToRefundList({ rows, canRecord }: { rows: RoundToRefund[
                         />
                       </td>
                     )}
-                    <td className="px-4 py-3 font-mono font-medium text-indigo-600">
+                    <td className="px-4 py-3 font-mono font-medium text-brand">
                       <Link href={`/pnrs/${r.pnrId}`} className="hover:underline">{r.pnr}</Link>
                       {r.pnrStatus !== 'active' && <span className="ml-1.5 text-[10px] text-stone-400">{r.pnrStatus}</span>}
                     </td>

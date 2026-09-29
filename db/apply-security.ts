@@ -13,7 +13,7 @@ import { Client } from 'pg';
 
 const TABLES = [
   'licenses', 'branches', 'airlines', 'pnrs',
-  'emd_rounds', 'ticketing', 'allocations', 'activity_log',
+  'emd_rounds', 'ticketing', 'allocations', 'activity_log', 'flight_stops',
 ];
 
 async function main() {

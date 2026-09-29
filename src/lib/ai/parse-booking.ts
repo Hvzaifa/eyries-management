@@ -6,6 +6,14 @@ export interface ParsedField<T> {
   notes?: string;
 }
 
+export interface ParsedStop {
+  city: string | null;
+  /** The onward flight from the stop; null when the same flight continues. */
+  flightCode: string | null;
+  arrivalTime: string | null;
+  departureTime: string | null;
+}
+
 export interface ParsedBookingDraft {
   // PNR core fields
   requestDate: ParsedField<string>; // YYYY-MM-DD
@@ -41,6 +49,10 @@ export interface ParsedBookingDraft {
   inboundFlightCode: ParsedField<string>;
   inboundBaggagePieces: ParsedField<number>;
   inboundBaggageKg: ParsedField<number>;
+  outboundStops: ParsedField<ParsedStop[]>;
+  inboundStops: ParsedField<ParsedStop[]>;
+  /** Meal included in the package, for the booking as a whole. */
+  mealIncluded: ParsedField<boolean>;
 
   // EMD round 1 (if present in message)
   roundIssuanceDate: ParsedField<string>; // YYYY-MM-DD
@@ -94,6 +106,9 @@ Schema:
   "inboundFlightCode": { "value": string | null, "confidence": "high"|"medium"|"low", "notes": string },
   "inboundBaggagePieces": { "value": number | null, "confidence": "high"|"medium"|"low", "notes": string },
   "inboundBaggageKg": { "value": number | null, "confidence": "high"|"medium"|"low", "notes": string },
+  "outboundStops": { "value": [ { "city": string, "flightCode": string | null, "arrivalTime": "HH:mm" | null, "departureTime": "HH:mm" | null } ], "confidence": "high"|"medium"|"low", "notes": string },
+  "inboundStops": { "value": [ { "city": string, "flightCode": string | null, "arrivalTime": "HH:mm" | null, "departureTime": "HH:mm" | null } ], "confidence": "high"|"medium"|"low", "notes": string },
+  "mealIncluded": { "value": boolean | null, "confidence": "high"|"medium"|"low", "notes": string },
   "roundIssuanceDate": { "value": "YYYY-MM-DD" | null, "confidence": "high"|"medium"|"low", "notes": string },
   "roundPaymentPct": { "value": number | null, "confidence": "high"|"medium"|"low", "notes": string },
   "roundEmdAmount": { "value": number | null, "confidence": "high"|"medium"|"low", "notes": string },
@@ -110,9 +125,10 @@ Guidelines:
 4. Seats and monetary amounts (fare, taxes, psf, emdAmount) must be numbers without commas or currency symbols.
 5. If a field cannot be found in the text, set value to null and confidence to "low".
 6. Never make up booking codes or amounts. If ambiguous, set confidence to "low" and explain in notes.
-7. Flights: tripType is "round_trip" when the booking has a return flight, "one_way" when it has only one. The outbound fields describe the first flight and outboundDate is its departure date; the inbound fields describe the return flight and inboundDate is its departure date. For one_way, set every inbound field to null. Cities are 3-letter IATA airport codes (e.g. ISB, JED, MED). Times are 24-hour HH:mm local times as printed. Flight codes are the airline designator followed by the flight number with no space (e.g. "SV727", "PK303", "9P842"). If a leg has connecting flights, use the first flight's code and departure, and the final arrival city and time.
+7. Flights: tripType is "round_trip" when the booking has a return flight, "one_way" when it has only one. The outbound fields describe the first flight and outboundDate is its departure date; the inbound fields describe the return flight and inboundDate is its departure date. For one_way, set every inbound field to null. Cities are 3-letter IATA airport codes (e.g. ISB, JED, MED). Times are 24-hour HH:mm local times as printed. Flight codes are the airline designator followed by the flight number with no space (e.g. "SV727", "PK303", "9P842"). If a leg has connecting flights, use the first flight's code and departure, and the final arrival city and time, and list every intermediate airport in order in that leg's Stops: city (3-letter code), flightCode = the code of the flight DEPARTING that stop (null if the same flight continues), and the arrival and departure times at the stop. A direct flight has Stops [].
 8. Baggage is the checked allowance PER PASSENGER on each flight: BaggagePieces is the number of bags, BaggageKg is the weight limit of EACH bag in kg. "2PC 23KG" or "2 x 23kg" means pieces 2, kg 23. "30KG" alone means pieces null, kg 30. If one allowance is stated for the whole trip, use it for both flights. Do not count hand/cabin baggage. If not stated, null.
-9. Return ONLY the JSON array. Do not include markdown code block formatting or explanation text outside the JSON.`;
+9. mealIncluded: true if the booking says meals are included, false if it says they are not, null if it does not say. It applies to the whole booking, not one flight.
+10. Return ONLY the JSON array. Do not include markdown code block formatting or explanation text outside the JSON.`;
 
 export function cleanJsonString(raw: string): string {
   let cleaned = raw.trim();
@@ -199,6 +215,30 @@ function sanitizeValue(v: unknown, type: 'string' | 'number' | 'date'): unknown 
   return null;
 }
 
+function confidenceOf(item: unknown): FieldConfidence {
+  const c = String((item as { confidence?: unknown })?.confidence ?? '').toLowerCase();
+  return c === 'high' || c === 'medium' || c === 'low' ? c : 'medium';
+}
+
+/** A list of stops. Anything that is not a list reads as "none found", at low confidence. */
+function parseStops(data: Record<string, unknown>, key: string): ParsedField<ParsedStop[]> {
+  const item = data?.[key] as { value?: unknown } | unknown[] | undefined;
+  const list = Array.isArray(item) ? item : (item as { value?: unknown })?.value;
+  if (!Array.isArray(list)) return { value: null, confidence: 'low' };
+  const str = (v: unknown) => (typeof v === 'string' && v.trim() !== '' ? v.trim() : null);
+  const stops = list
+    .filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
+    .map((x) => ({ city: str(x.city), flightCode: str(x.flightCode), arrivalTime: str(x.arrivalTime), departureTime: str(x.departureTime) }));
+  return { value: stops, confidence: Array.isArray(item) ? 'medium' : confidenceOf(item) };
+}
+
+function parseBoolean(data: Record<string, unknown>, key: string): ParsedField<boolean> {
+  const item = data?.[key];
+  const raw = item && typeof item === 'object' ? (item as { value?: unknown }).value : item;
+  const value = raw === true || raw === 'true' ? true : raw === false || raw === 'false' ? false : null;
+  return value === null ? { value: null, confidence: 'low' } : { value, confidence: item && typeof item === 'object' ? confidenceOf(item) : 'medium' };
+}
+
 export function parseRawLlmJson(jsonText: string, rawPastedText: string, modelUsed?: string): ParsedBookingDraft[] {
   const cleaned = cleanJsonString(jsonText);
   let parsed: unknown;
@@ -246,6 +286,9 @@ export function parseRawLlmJson(jsonText: string, rawPastedText: string, modelUs
       inboundFlightCode: parseField<string>(obj, 'inboundFlightCode', 'string'),
       inboundBaggagePieces: parseField<number>(obj, 'inboundBaggagePieces', 'number'),
       inboundBaggageKg: parseField<number>(obj, 'inboundBaggageKg', 'number'),
+      outboundStops: parseStops(obj, 'outboundStops'),
+      inboundStops: parseStops(obj, 'inboundStops'),
+      mealIncluded: parseBoolean(obj, 'mealIncluded'),
 
       roundIssuanceDate: parseField<string>(obj, 'roundIssuanceDate', 'date'),
       roundPaymentPct: parseField<number>(obj, 'roundPaymentPct', 'number'),

@@ -242,6 +242,22 @@ still owed.** It is not `issued`, so any query written as "issued and unpaid"
 silently loses it. `iataPaymentState()` is the one place that decides, and every
 query filters on its verdict rather than on `status`.
 
+### The IATA page, by license (owner, 2026-09-29)
+
+The IATA page has one button per license, plus **All licenses**, which is what
+the page opens on. Clicking a license narrows **everything** on the page to that
+license's EMDs: the three cards (outstanding, EMDs awaiting payment, next
+settlement), the settlement groups by remittance day, and both warning boxes
+(refunded too late; outside the loaded calendar). **Every license gets a
+button**, including those owing nothing, which show "Nothing outstanding".
+
+**Which license an EMD falls under:** the round's own `license_id`, the license
+that actually paid for it, and **when that is blank, the booking's**. Every
+imported round has none, so today each EMD sits under its booking's license. A
+booking whose rounds were paid by different licenses shows each round under its
+own. A **No license** button appears only if an owed EMD has neither, so nothing
+owed can drop out of every button: the licenses always add up to the whole.
+
 ### Recording payment
 
 `emd_rounds.payment_date` records the day the money actually went, which may
@@ -273,15 +289,18 @@ worth.
 
 ### The "EMDs To Issue" card
 
-Pick a date and the card totals **the deposits to be issued that day** —
+Pick **one day or a range** from the calendar (2026-09-29; it was one date
+until then) and the card totals **the deposits to be issued in those days** —
 `seats × fare × the next round's policy percentage` — and the table narrows to
 the bookings behind it. It answers "how much money do I need ready on the
 20th", which is not the same question as the booking's total EMD value.
 
-- **That date exactly**, never "on or before". The figure is one day's work;
-  anything overdue from an earlier date stays under its own date.
-- **Blank until a date is picked.** A total with no date against it would be a
-  different question answered.
+- **The picked days exactly, both ends included**, never "on or before". A
+  single day is one day's work; anything overdue from an earlier date stays
+  under its own date. In the calendar, the first click picks a day and a second
+  click makes it a range; days with EMDs due are dotted.
+- **Blank until something is picked.** A total with no date against it would be
+  a different question answered.
 - **Only active bookings.** A cancelled or completed booking has no EMD to
   issue, whatever date it still carries.
 - **An amount that cannot be derived is counted, never assumed to be zero.**
@@ -290,7 +309,7 @@ the bookings behind it. It answers "how much money do I need ready on the
   reporting a total that is quietly short.
 
 The card and the rows beneath it are filtered by the same function, so they can
-never disagree about which bookings a date covers.
+never disagree about which bookings a date or range covers (`matchesIssuanceRange`).
 
 ## Parent/child PNR splits
 An agent may only want part of a PNR's total seats. When that happens, a child PNR record is created (`parent_pnr_id` set), and an `allocations` row records how many seats moved.

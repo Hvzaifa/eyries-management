@@ -40,6 +40,8 @@ describe('draftFlightValues', () => {
       outboundBaggageKg: '23',
       inboundBaggagePieces: '',
       inboundBaggageKg: '30',
+      outboundStops: [],
+      inboundStops: [],
     });
     expect(confidence.inboundBaggageKg).toBe('medium');
     expect(confidence.inboundBaggagePieces).toBe('low');
@@ -101,5 +103,41 @@ describe('draftFlightValues', () => {
     const blank = draftFlightValues(draft({}));
     expect(blank.values.tripType).toBe('round_trip');
     expect(blank.confidence.tripType).toBe('low');
+  });
+});
+
+describe('draftFlightValues — stops', () => {
+  it('keeps real stops in order, blanking what the save would refuse', () => {
+    const { values, confidence } = draftFlightValues(
+      draft({
+        tripType: { value: 'round_trip', confidence: 'high' },
+        outboundStops: {
+          value: [
+            { city: 'dxb', flightCode: 'ek 612', arrivalTime: '10:05', departureTime: '13:40' },
+            { city: 'Dubai', flightCode: null, arrivalTime: null, departureTime: null },
+            { city: 'RUH', flightCode: 'Saudia', arrivalTime: '9am', departureTime: null },
+          ],
+          confidence: 'medium',
+        },
+        inboundStops: { value: [], confidence: 'high' },
+      })
+    );
+    expect(values.outboundStops).toEqual([
+      { city: 'DXB', flightCode: 'EK612', arrivalTime: '10:05', departureTime: '13:40' },
+      { city: 'RUH', flightCode: '', arrivalTime: '', departureTime: '' },
+    ]);
+    expect(confidence.outboundStops).toBe('medium');
+    expect(values.inboundStops).toEqual([]);
+    expect(confidence.inboundStops).toBeUndefined();
+  });
+
+  it('a one-way draft carries no inbound stops', () => {
+    const { values } = draftFlightValues(
+      draft({
+        tripType: { value: 'one_way', confidence: 'high' },
+        inboundStops: { value: [{ city: 'DXB', flightCode: null, arrivalTime: null, departureTime: null }], confidence: 'high' },
+      })
+    );
+    expect(values.inboundStops).toEqual([]);
   });
 });

@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   buildSector,
   citiesFromSector,
+  describeStops,
   flightColumns,
+  flightStopRows,
   formatBaggage,
   isFlightCode,
   normalizeFlightCode,
@@ -178,6 +180,7 @@ describe('readFlightDetails', () => {
           flightCode: 'SV727',
           baggagePieces: null,
           baggageKg: null,
+          stops: [],
         },
         inbound: null,
         sector: 'ISB-JED',
@@ -197,6 +200,7 @@ describe('readFlightDetails', () => {
       flightCode: 'SV726',
       baggagePieces: null,
       baggageKg: null,
+      stops: [],
     });
     expect(r.details.sector).toBe('ISB-JED-MED-ISB');
   });
@@ -298,5 +302,65 @@ describe('flightColumns', () => {
       inboundArrivalTime: null,
       inboundFlightCode: null,
     });
+  });
+});
+
+describe('stops on a connecting flight', () => {
+  const withStops = (extra: Record<string, string>) =>
+    readFlightDetails(reader({ ...OUTBOUND, ...INBOUND, trip_type: 'round_trip', ...extra }));
+
+  it('reads stops in order, with the onward flight code and times optional', () => {
+    const r = withStops({
+      outbound_stop_count: '1',
+      outbound_stop_0_city: 'dxb',
+      outbound_stop_0_flight_code: 'ek 612',
+      outbound_stop_0_arrival_time: '10:05',
+      outbound_stop_0_departure_time: '13:40',
+      inbound_stop_count: '1',
+      inbound_stop_0_city: 'DXB',
+    });
+    if (!('details' in r)) throw new Error(r.error);
+    expect(r.details.outbound.stops).toEqual([{ city: 'DXB', flightCode: 'EK612', arrivalTime: '10:05', departureTime: '13:40' }]);
+    expect(r.details.inbound!.stops).toEqual([{ city: 'DXB', flightCode: null, arrivalTime: null, departureTime: null }]);
+  });
+
+  it('stops are part of the sector', () => {
+    const r = withStops({ outbound_stop_count: '1', outbound_stop_0_city: 'DXB', inbound_stop_count: '2', inbound_stop_0_city: 'DOH', inbound_stop_1_city: 'KHI' });
+    if (!('details' in r)) throw new Error(r.error);
+    expect(r.details.sector).toBe('ISB-DXB-JED-MED-DOH-KHI-ISB');
+  });
+
+  it('writes one row per stop, numbered per flight', () => {
+    const r = withStops({ outbound_stop_count: '2', outbound_stop_0_city: 'DXB', outbound_stop_1_city: 'RUH', outbound_stop_1_departure_time: '23:30', inbound_stop_count: '1', inbound_stop_0_city: 'DXB' });
+    if (!('details' in r)) throw new Error(r.error);
+    const rows = flightStopRows(r.details);
+    expect(rows.map((x) => [x.leg, x.position, x.city])).toEqual([['outbound', 1, 'DXB'], ['outbound', 2, 'RUH'], ['inbound', 1, 'DXB']]);
+    expect(rows[1].departureTime?.toISOString().slice(11, 16)).toBe('23:30');
+  });
+
+  it('a one-way trip keeps no inbound stops', () => {
+    const r = readFlightDetails(reader({ ...OUTBOUND, ...INBOUND, trip_type: 'one_way', inbound_stop_count: '1', inbound_stop_0_city: 'DXB' }));
+    if (!('details' in r)) throw new Error(r.error);
+    expect(flightStopRows(r.details)).toEqual([]);
+  });
+
+  it.each([
+    [{ outbound_stop_count: '4' }, 'Outbound: a flight can have at most 3 stops.'],
+    [{ outbound_stop_count: '1' }, 'Outbound: stop 1 needs a city.'],
+    [{ outbound_stop_count: '1', outbound_stop_0_city: 'Dubai' }, 'Outbound: stop 1 city must be a 3-letter airport code, e.g. DXB.'],
+    [{ outbound_stop_count: '1', outbound_stop_0_city: 'ISB' }, 'Outbound: stop 1 (ISB) is the same as the city before it.'],
+    [{ outbound_stop_count: '2', outbound_stop_0_city: 'DXB', outbound_stop_1_city: 'DXB' }, 'Outbound: stop 2 (DXB) is the same as the city before it.'],
+    [{ outbound_stop_count: '1', outbound_stop_0_city: 'JED' }, 'Outbound: the last stop cannot be the arrival city JED.'],
+    [{ outbound_stop_count: '1', outbound_stop_0_city: 'DXB', outbound_stop_0_flight_code: 'Emirates' }, 'Outbound: stop 1 flight code "EMIRATES" is not a flight number, e.g. EK612.'],
+    [{ outbound_stop_count: '1', outbound_stop_0_city: 'DXB', outbound_stop_0_arrival_time: '9am' }, 'Outbound: stop 1 arrival time must be HH:MM.'],
+  ])('refuses %j', (extra, error) => {
+    expect(withStops(extra as Record<string, string>)).toEqual({ error });
+  });
+
+  it('describes stops for the change history', () => {
+    expect(describeStops([])).toBe('none');
+    expect(describeStops([{ city: 'DXB', flightCode: 'EK612', arrivalTime: '10:05', departureTime: '13:40' }, { city: 'RUH', flightCode: null, arrivalTime: null, departureTime: null }])).toBe(
+      'DXB 10:05–13:40 (EK612), RUH'
+    );
   });
 });

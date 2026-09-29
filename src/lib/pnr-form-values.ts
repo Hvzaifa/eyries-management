@@ -11,6 +11,17 @@
  * client modules.
  */
 
+/** One stop on a connecting flight, as the form holds it. */
+export interface StopFormValues {
+  city: string;
+  /** The onward flight from the stop; blank = the same flight continues. */
+  flightCode: string;
+  arrivalTime: string;
+  departureTime: string;
+}
+
+export const EMPTY_STOP: StopFormValues = { city: '', flightCode: '', arrivalTime: '', departureTime: '' };
+
 export interface PnrFormValues {
   id?: string;
   requestDate: string;
@@ -36,6 +47,7 @@ export interface PnrFormValues {
   /** Bags per passenger, and the kg limit per bag. */
   outboundBaggagePieces: string;
   outboundBaggageKg: string;
+  outboundStops: StopFormValues[];
   /** The inbound departure date. */
   inboundDate: string;
   inboundDepartureCity: string;
@@ -45,6 +57,9 @@ export interface PnrFormValues {
   inboundFlightCode: string;
   inboundBaggagePieces: string;
   inboundBaggageKg: string;
+  inboundStops: StopFormValues[];
+  /** 'yes' | 'no' — meal included in the package, for the booking as a whole. */
+  mealIncluded: string;
   fare: string;
   airlineTaxes: string;
   psf: string;
@@ -71,6 +86,7 @@ export const EMPTY_PNR: PnrFormValues = {
   outboundFlightCode: '',
   outboundBaggagePieces: '',
   outboundBaggageKg: '',
+  outboundStops: [],
   inboundDate: '',
   inboundDepartureCity: '',
   inboundArrivalCity: '',
@@ -79,6 +95,8 @@ export const EMPTY_PNR: PnrFormValues = {
   inboundFlightCode: '',
   inboundBaggagePieces: '',
   inboundBaggageKg: '',
+  inboundStops: [],
+  mealIncluded: 'no',
   fare: '',
   airlineTaxes: '',
   psf: '',

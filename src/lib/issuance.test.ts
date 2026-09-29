@@ -4,8 +4,9 @@ import {
   nextStep,
   ordinal,
   nextEmdLabel,
-  emdsToIssueOn,
-  matchesIssuanceDate,
+  emdsToIssueIn,
+  matchesIssuanceRange,
+  orderedRange,
   issuanceDates,
 } from './issuance';
 import type { PnrListRow } from './pnrs';
@@ -50,95 +51,101 @@ describe('nextEmdLabel', () => {
   });
 });
 
-describe('emdsToIssueOn', () => {
+describe('emdsToIssueIn', () => {
+  const day = (d: string) => ({ from: d, to: d });
   const rows = [
     row({ id: 'a', nextIssuanceDeadline: '2026-09-20', nextEmdAmount: 937_500 }),
     row({ id: 'b', nextIssuanceDeadline: '2026-09-20', nextEmdAmount: 1_035_000 }),
     row({ id: 'c', nextIssuanceDeadline: '2026-09-21', nextEmdAmount: 500_000 }),
+    row({ id: 'e', nextIssuanceDeadline: '2026-09-25', nextEmdAmount: 250_000 }),
     row({ id: 'd', nextIssuanceDeadline: null, nextEmdAmount: null }),
   ];
 
-  it('totals the deposits falling due on that date', () => {
-    const day = emdsToIssueOn(rows, '2026-09-20');
-    expect(day.bookings).toBe(2);
-    expect(day.total).toBe(1_972_500);
-    expect(day.undetermined).toBe(0);
+  it('a single day totals the deposits falling due on it', () => {
+    const r = emdsToIssueIn(rows, day('2026-09-20'));
+    expect(r.bookings).toBe(2);
+    expect(r.total).toBe(1_972_500);
+    expect(r.undetermined).toBe(0);
   });
 
-  it('takes that date exactly, never earlier ones', () => {
-    // Owner's choice: the question is what one day's work is worth.
-    const day = emdsToIssueOn(rows, '2026-09-21');
-    expect(day.bookings).toBe(1);
-    expect(day.total).toBe(500_000);
+  it('a single day takes that date exactly, never earlier ones', () => {
+    const r = emdsToIssueIn(rows, day('2026-09-21'));
+    expect(r.bookings).toBe(1);
+    expect(r.total).toBe(500_000);
   });
 
-  it('is blank until a date is picked', () => {
-    expect(emdsToIssueOn(rows, null)).toEqual({
-      date: null,
-      bookings: 0,
-      total: 0,
-      undetermined: 0,
-    });
+  it('a range includes both ends', () => {
+    const r = emdsToIssueIn(rows, { from: '2026-09-20', to: '2026-09-25' });
+    expect(r.bookings).toBe(4);
+    expect(r.total).toBe(2_722_500);
+    expect(emdsToIssueIn(rows, { from: '2026-09-21', to: '2026-09-24' }).bookings).toBe(1);
+  });
+
+  it('is blank until something is picked', () => {
+    expect(emdsToIssueIn(rows, null)).toEqual({ range: null, bookings: 0, total: 0, undetermined: 0 });
   });
 
   it('counts a booking with no derivable amount instead of treating it as zero', () => {
-    // No airline policy covers it, so staff type the figure when they issue it.
-    // Folding it in as zero would make the day's total quietly short.
-    const day = emdsToIssueOn(
+    const r = emdsToIssueIn(
       [
         row({ id: 'a', nextIssuanceDeadline: '2026-09-20', nextEmdAmount: 937_500 }),
-        row({ id: 'e', nextIssuanceDeadline: '2026-09-20', nextEmdAmount: null }),
+        row({ id: 'e', nextIssuanceDeadline: '2026-09-22', nextEmdAmount: null }),
       ],
-      '2026-09-20'
+      { from: '2026-09-20', to: '2026-09-22' }
     );
-    expect(day.bookings).toBe(2);
-    expect(day.total).toBe(937_500);
-    expect(day.undetermined).toBe(1);
+    expect(r.bookings).toBe(2);
+    expect(r.total).toBe(937_500);
+    expect(r.undetermined).toBe(1);
   });
 
   it('ignores cancelled and completed bookings', () => {
-    // They carry a date but have no EMD to issue.
-    const day = emdsToIssueOn(
+    const r = emdsToIssueIn(
       [
         row({ id: 'a', nextIssuanceDeadline: '2026-09-20', nextEmdAmount: 100_000 }),
         row({ id: 'b', nextIssuanceDeadline: '2026-09-20', nextEmdAmount: 100_000, status: 'cancelled' }),
         row({ id: 'c', nextIssuanceDeadline: '2026-09-20', nextEmdAmount: 100_000, status: 'completed' }),
       ],
-      '2026-09-20'
+      day('2026-09-20')
     );
-    expect(day.bookings).toBe(1);
-    expect(day.total).toBe(100_000);
+    expect(r.bookings).toBe(1);
+    expect(r.total).toBe(100_000);
   });
 
-  it('adds in whole paisa so a long day re-adds exactly', () => {
-    const day = emdsToIssueOn(
+  it('adds in whole paisa so a long range re-adds exactly', () => {
+    const r = emdsToIssueIn(
       [
         row({ id: 'a', nextIssuanceDeadline: '2026-09-20', nextEmdAmount: 0.1 }),
-        row({ id: 'b', nextIssuanceDeadline: '2026-09-20', nextEmdAmount: 0.2 }),
+        row({ id: 'b', nextIssuanceDeadline: '2026-09-30', nextEmdAmount: 0.2 }),
       ],
-      '2026-09-20'
+      { from: '2026-09-01', to: '2026-09-30' }
     );
-    expect(day.total).toBe(0.3);
+    expect(r.total).toBe(0.3);
   });
 
-  it('reports a date with nothing on it as empty, not as an error', () => {
-    const day = emdsToIssueOn(rows, '2026-12-25');
-    expect(day).toEqual({ date: '2026-12-25', bookings: 0, total: 0, undetermined: 0 });
+  it('reports days with nothing on them as empty, not as an error', () => {
+    expect(emdsToIssueIn(rows, day('2026-12-25'))).toEqual({ range: day('2026-12-25'), bookings: 0, total: 0, undetermined: 0 });
   });
 });
 
-describe('matchesIssuanceDate', () => {
+describe('matchesIssuanceRange', () => {
   it('agrees with what the card counted', () => {
-    // The card and the rows beneath it must never disagree about which
-    // bookings a date covers.
     const rows = [
       row({ id: 'a', nextIssuanceDeadline: '2026-09-20', nextEmdAmount: 1 }),
-      row({ id: 'b', nextIssuanceDeadline: '2026-09-21', nextEmdAmount: 1 }),
+      row({ id: 'b', nextIssuanceDeadline: '2026-09-23', nextEmdAmount: 1 }),
       row({ id: 'c', nextIssuanceDeadline: '2026-09-20', nextEmdAmount: 1, status: 'cancelled' }),
+      row({ id: 'd', nextIssuanceDeadline: null }),
     ];
-    const matched = rows.filter((r) => matchesIssuanceDate(r, '2026-09-20'));
+    const range = { from: '2026-09-20', to: '2026-09-22' };
+    const matched = rows.filter((r) => matchesIssuanceRange(r, range));
     expect(matched.map((r) => r.id)).toEqual(['a']);
-    expect(matched.length).toBe(emdsToIssueOn(rows, '2026-09-20').bookings);
+    expect(matched.length).toBe(emdsToIssueIn(rows, range).bookings);
+  });
+});
+
+describe('orderedRange', () => {
+  it('puts a backwards selection in order', () => {
+    expect(orderedRange('2026-09-25', '2026-09-20')).toEqual({ from: '2026-09-20', to: '2026-09-25' });
+    expect(orderedRange('2026-09-20', '2026-09-20')).toEqual({ from: '2026-09-20', to: '2026-09-20' });
   });
 });
 

@@ -84,6 +84,9 @@ export function parseExcelFile(buffer: ArrayBuffer, filename: string): ParsedBoo
       inboundFlightCode: { value: null, confidence: 'low' },
       inboundBaggagePieces: { value: null, confidence: 'low' },
       inboundBaggageKg: { value: null, confidence: 'low' },
+      outboundStops: { value: null, confidence: 'low' },
+      inboundStops: { value: null, confidence: 'low' },
+      mealIncluded: { value: null, confidence: 'low' },
 
       roundIssuanceDate: { value: null, confidence: 'low' },
       roundPaymentPct: { value: null, confidence: 'low' },

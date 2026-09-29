@@ -31,7 +31,7 @@ Code, name, contact email(s) for sending deposit-confirmation / extension-reques
 | seats | integer | |
 | outbound_date | date, nullable | **The outbound flight's departure date** (on a one-way trip, the only flight's). Drives the EMD policy and SV ticketing deadline |
 | inbound_date | date, nullable | **The inbound (return) flight's departure date.** Always null on a one-way trip |
-| sector | text | e.g. "ISB-JED-MED-ISB". **Built from the flight cities, never typed** (2026-09-26): one way `ISB-JED`; round trip the outbound pair then the inbound pair, with the inbound departure dropped when it equals the outbound arrival (`ISB-JED-ISB`). Kept as a column because every email, table and the refund view reads it |
+| sector | text | e.g. "ISB-JED-MED-ISB". **Built from the flight cities, never typed** (2026-09-26); **stops are included** (2026-09-28), so ISB→DXB→JED reads ISB-DXB-JED: one way `ISB-JED`; round trip the outbound pair then the inbound pair, with the inbound departure dropped when it equals the outbound arrival (`ISB-JED-ISB`). Kept as a column because every email, table and the refund view reads it |
 | trip_type | enum('one_way','round_trip'), nullable | Added 2026-09-26. Null only on bookings saved before flight details existed; the edit form asks for it |
 | outbound_departure_city, outbound_arrival_city | text, nullable | 3-letter airport codes, uppercase. Required by the form |
 | outbound_departure_time, outbound_arrival_time | time, nullable | Local times as printed on the booking. Optional |
@@ -40,6 +40,7 @@ Code, name, contact email(s) for sending deposit-confirmation / extension-reques
 | inbound_departure_time, inbound_arrival_time | time, nullable | Optional, like every flight time (owner, 2026-09-26) |
 | inbound_flight_code | text, nullable | Required on a round trip; null on one way |
 | outbound_baggage_pieces, inbound_baggage_pieces | integer 0–10, nullable | **Checked bags per passenger** on that flight (2026-09-26). Optional. `0` means no checked bag. One way uses the outbound pair; inbound is null |
+| meal_included | boolean, default false | Meal included in the package — **for the booking as a whole, not per flight** (2026-09-28) |
 | outbound_baggage_kg, inbound_baggage_kg | integer 1–100, nullable | **Weight limit of each bag**, in kg — "2PC 23KG" is pieces 2, kg 23, i.e. 23 kg per bag, not in total. Optional, and may be set without a piece count (weight-concept allowances like "30KG") |
 | pnr_tl_date | date, nullable | PNR time-limit / void date |
 | airline_taxes | numeric, nullable | |
@@ -49,6 +50,23 @@ Code, name, contact email(s) for sending deposit-confirmation / extension-reques
 | status | enum('active','cancelled','completed') | |
 | raw_airline_text | text, nullable | Original pasted airline message from AI intake (Phase 2). Only populated for PNRs created via the AI parse flow. |
 | created_at, updated_at, created_by | | |
+
+## `flight_stops` (2026-09-28)
+
+Stops on a connecting flight — one row per stop. A new table rather than columns because a flight may have several.
+
+| Field | Type | Notes |
+|---|---|---|
+| id | uuid | |
+| pnr_id | fk → pnrs, cascade | |
+| leg | enum('outbound','inbound') | A one-way trip uses `outbound` |
+| position | integer 1–3 | Order along the flight |
+| city | text, 3 uppercase letters | The stop's airport code |
+| flight_code | text, nullable | The **onward** flight from this stop — the aircraft may change there. Null = the same flight continues |
+| arrival_time, departure_time | time, nullable | Local times at the stop |
+| created_at | | |
+
+Unique on (pnr_id, leg, position). An edit replaces a booking's stops as a set and logs each flight's before/after as one line (`outboundStops` / `inboundStops`). A split copies them to the child. RLS enabled like every other table.
 
 ## `emd_rounds` (open-ended — no fixed limit on round count)
 

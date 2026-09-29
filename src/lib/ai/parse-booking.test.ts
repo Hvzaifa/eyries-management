@@ -117,3 +117,27 @@ describe('parseRawLlmJson', () => {
     );
   });
 });
+
+describe('parseRawLlmJson — stops and meal', () => {
+  it('reads a stop list and the meal flag', () => {
+    const [d] = parseRawLlmJson(
+      JSON.stringify({
+        outboundStops: { value: [{ city: 'DXB', flightCode: 'EK612', arrivalTime: '10:05', departureTime: null }], confidence: 'high' },
+        mealIncluded: { value: true, confidence: 'high' },
+      }),
+      'text'
+    );
+    expect(d.outboundStops).toEqual({
+      value: [{ city: 'DXB', flightCode: 'EK612', arrivalTime: '10:05', departureTime: null }],
+      confidence: 'high',
+    });
+    expect(d.mealIncluded).toEqual({ value: true, confidence: 'high' });
+  });
+
+  it('missing or malformed answers are "not found", never invented', () => {
+    const [d] = parseRawLlmJson(JSON.stringify({ inboundStops: { value: 'via Dubai' }, mealIncluded: { value: 'maybe' } }), 'text');
+    expect(d.inboundStops).toEqual({ value: null, confidence: 'low' });
+    expect(d.outboundStops).toEqual({ value: null, confidence: 'low' });
+    expect(d.mealIncluded).toEqual({ value: null, confidence: 'low' });
+  });
+});

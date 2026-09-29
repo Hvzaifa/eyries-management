@@ -163,7 +163,7 @@ export default function BatchEmailForm({ airlines }: { airlines: AirlineOption[]
     });
   };
 
-  const inputCls = "w-full bg-stone-50 border border-stone-300 rounded-xl px-3 py-2 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:border-indigo-400 transition-colors";
+  const inputCls = "w-full bg-stone-50 border border-stone-300 rounded-xl px-3 py-2 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-brand-light/50 focus:border-brand-light transition-colors";
 
   return (
     <div className="space-y-6">
@@ -231,7 +231,7 @@ export default function BatchEmailForm({ airlines }: { airlines: AirlineOption[]
                   {fetchedPnrs.length} PNRs found
                 </h3>
                 <div className="flex items-center gap-3 text-xs">
-                  <button type="button" onClick={() => toggleAll(true)} className="text-indigo-600 hover:text-indigo-700 font-medium">Select All Valid</button>
+                  <button type="button" onClick={() => toggleAll(true)} className="text-brand hover:text-brand-dark font-medium">Select All Valid</button>
                   <span className="text-stone-300">|</span>
                   <button type="button" onClick={() => toggleAll(false)} className="text-stone-500 hover:text-stone-700 font-medium">Select None</button>
                 </div>
@@ -253,14 +253,14 @@ export default function BatchEmailForm({ airlines }: { airlines: AirlineOption[]
                       const isSelected = selectedIds.has(pnr.id);
                       
                       return (
-                        <tr key={pnr.id} className={`${isSelected ? 'bg-indigo-50/30' : ''} ${!isValid ? 'bg-red-50/30' : ''}`}>
+                        <tr key={pnr.id} className={`${isSelected ? 'bg-brand-50/30' : ''} ${!isValid ? 'bg-red-50/30' : ''}`}>
                           <td className="px-6 py-3">
                             <input
                               type="checkbox"
                               checked={isSelected}
                               disabled={!isValid}
                               onChange={() => togglePnr(pnr.id, isValid)}
-                              className="w-4 h-4 rounded border-stone-300 text-indigo-600 focus:ring-indigo-600 disabled:opacity-50"
+                              className="w-4 h-4 rounded border-stone-300 text-brand focus:ring-brand disabled:opacity-50"
                             />
                           </td>
                           <td className="px-6 py-3">
@@ -363,7 +363,7 @@ export default function BatchEmailForm({ airlines }: { airlines: AirlineOption[]
                 <button
                   type="submit"
                   disabled={isPending || selectedIds.size === 0}
-                  className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition-colors shadow-sm disabled:opacity-50"
+                  className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-semibold text-white bg-brand hover:bg-brand transition-colors shadow-sm disabled:opacity-50"
                 >
                   <Mail className="w-4 h-4" />
                   {isPending ? 'Sending...' : `Send Email (${selectedIds.size} PNRs)`}

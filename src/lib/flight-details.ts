@@ -38,7 +38,24 @@ export interface FlightLeg {
   baggagePieces: number | null;
   /** Weight limit per bag in kg, or null. */
   baggageKg: number | null;
+  /** Stops on a connecting flight, in order. Empty for a direct flight. */
+  stops: FlightStop[];
 }
+
+/**
+ * A stop on a connecting flight (owner, 2026-09-28). `flightCode` is the
+ * ONWARD flight from the stop — the aircraft may change there — and is null
+ * when the same flight continues. Times are local, both optional.
+ */
+export interface FlightStop {
+  city: string;
+  flightCode: string | null;
+  arrivalTime: string | null;
+  departureTime: string | null;
+}
+
+/** Most stops one flight may have; the database enforces the same. */
+export const MAX_STOPS = 3;
 
 /** Bounds match the database checks on `pnrs.*_baggage_*`. */
 export const BAGGAGE_MAX_PIECES = 10;
@@ -108,14 +125,14 @@ function isIsoDate(v: string): boolean {
  * so ISB→JED, JED→ISB is `ISB-JED-ISB` and the open-jaw ISB→JED, MED→ISB is
  * `ISB-JED-MED-ISB`, matching how the sheet wrote them.
  */
-export function buildSector(
-  outbound: Pick<FlightLeg, 'departureCity' | 'arrivalCity'>,
-  inbound: Pick<FlightLeg, 'departureCity' | 'arrivalCity'> | null
-): string {
-  const parts = [outbound.departureCity, outbound.arrivalCity];
+type SectorLeg = Pick<FlightLeg, 'departureCity' | 'arrivalCity'> & { stops?: Pick<FlightStop, 'city'>[] };
+
+export function buildSector(outbound: SectorLeg, inbound: SectorLeg | null): string {
+  // Stops are part of the route (owner, 2026-09-28): ISB→DXB→JED is ISB-DXB-JED.
+  const parts = [outbound.departureCity, ...(outbound.stops ?? []).map((s) => s.city), outbound.arrivalCity];
   if (inbound) {
     if (inbound.departureCity !== outbound.arrivalCity) parts.push(inbound.departureCity);
-    parts.push(inbound.arrivalCity);
+    parts.push(...(inbound.stops ?? []).map((s) => s.city), inbound.arrivalCity);
   }
   return parts.join('-');
 }
@@ -218,9 +235,54 @@ function readLeg(
     return { error: `${label}: weight must be a whole number of kg from 1 to ${BAGGAGE_MAX_KG}.` };
   }
 
+  const stops = readStops(read, prefix, label, departureCity, arrivalCity);
+  if ('error' in stops) return stops;
+
   return {
-    leg: { date, departureCity, arrivalCity, departureTime, arrivalTime, flightCode, baggagePieces, baggageKg },
+    leg: {
+      date, departureCity, arrivalCity, departureTime, arrivalTime, flightCode, baggagePieces, baggageKg,
+      stops: stops.stops,
+    },
   };
+}
+
+/**
+ * The stops of one flight, posted as `<leg>_stop_count` and
+ * `<leg>_stop_<i>_city|flight_code|arrival_time|departure_time`.
+ */
+function readStops(
+  read: Read,
+  prefix: 'outbound' | 'inbound',
+  label: string,
+  from: string,
+  to: string
+): { stops: FlightStop[] } | { error: string } {
+  const count = Number(read(`${prefix}_stop_count`) ?? '0');
+  if (!Number.isInteger(count) || count < 0 || count > MAX_STOPS) {
+    return { error: `${label}: a flight can have at most ${MAX_STOPS} stops.` };
+  }
+  const stops: FlightStop[] = [];
+  for (let i = 0; i < count; i++) {
+    const n = i + 1;
+    const city = normalizeAirportCode(read(`${prefix}_stop_${i}_city`) ?? '');
+    const code = normalizeFlightCode(read(`${prefix}_stop_${i}_flight_code`) ?? '');
+    const arrivalTime = read(`${prefix}_stop_${i}_arrival_time`);
+    const departureTime = read(`${prefix}_stop_${i}_departure_time`);
+    if (!city) return { error: `${label}: stop ${n} needs a city.` };
+    if (!isAirportCode(city)) return { error: `${label}: stop ${n} city must be a 3-letter airport code, e.g. DXB.` };
+    const before = i === 0 ? from : stops[i - 1].city;
+    if (city === before) return { error: `${label}: stop ${n} (${city}) is the same as the city before it.` };
+    if (code && !isFlightCode(code)) {
+      return { error: `${label}: stop ${n} flight code "${code}" is not a flight number, e.g. EK612.` };
+    }
+    if (arrivalTime && !isTime(arrivalTime)) return { error: `${label}: stop ${n} arrival time must be HH:MM.` };
+    if (departureTime && !isTime(departureTime)) return { error: `${label}: stop ${n} departure time must be HH:MM.` };
+    stops.push({ city, flightCode: code || null, arrivalTime, departureTime });
+  }
+  if (stops.length > 0 && stops[stops.length - 1].city === to) {
+    return { error: `${label}: the last stop cannot be the arrival city ${to}.` };
+  }
+  return { stops };
 }
 
 /**
@@ -264,6 +326,32 @@ export function readFlightDetails(read: Read): { details: FlightDetails } | { er
       sector: buildSector(outbound.leg, inbound.leg),
     },
   };
+}
+
+/** The `flight_stops` rows a validated set of flight details writes. */
+export function flightStopRows(d: FlightDetails) {
+  const legs: ['outbound' | 'inbound', FlightLeg | null][] = [['outbound', d.outbound], ['inbound', d.inbound]];
+  return legs.flatMap(([leg, l]) =>
+    (l?.stops ?? []).map((s, i) => ({
+      leg,
+      position: i + 1,
+      city: s.city,
+      flightCode: s.flightCode,
+      arrivalTime: timeToDb(s.arrivalTime),
+      departureTime: timeToDb(s.departureTime),
+    }))
+  );
+}
+
+/** "DXB (EK612)" / "none" — how a leg's stops read in the change history. */
+export function describeStops(stops: Pick<FlightStop, 'city' | 'flightCode' | 'arrivalTime' | 'departureTime'>[]): string {
+  if (stops.length === 0) return 'none';
+  return stops
+    .map((s) => {
+      const times = s.arrivalTime || s.departureTime ? ` ${s.arrivalTime ?? '?'}–${s.departureTime ?? '?'}` : '';
+      return `${s.city}${times}${s.flightCode ? ` (${s.flightCode})` : ''}`;
+    })
+    .join(', ');
 }
 
 /** A stored `time` column's value — Prisma hands it back on 1970-01-01 UTC. */

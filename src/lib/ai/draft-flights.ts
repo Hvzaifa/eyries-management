@@ -1,4 +1,5 @@
 import type { FieldConfidence, ParsedBookingDraft } from './parse-booking';
+import type { StopFormValues } from '@/lib/pnr-form-values';
 import {
   citiesFromSector,
   isAirportCode,
@@ -7,6 +8,7 @@ import {
   isTripType,
   BAGGAGE_MAX_KG,
   BAGGAGE_MAX_PIECES,
+  MAX_STOPS,
   normalizeAirportCode,
   normalizeFlightCode,
   type TripType,
@@ -28,6 +30,8 @@ export interface DraftFlightValues {
   outboundBaggageKg: string;
   inboundBaggagePieces: string;
   inboundBaggageKg: string;
+  outboundStops: StopFormValues[];
+  inboundStops: StopFormValues[];
 }
 
 type Key = keyof DraftFlightValues;
@@ -71,6 +75,21 @@ export function draftFlightValues(draft: ParsedBookingDraft): {
       : { value: '', confidence: 'low' as const };
   };
 
+  // Stops: only ones with a real airport code survive, and a code or time the
+  // save would refuse starts blank — the same rule as every field above.
+  const stopsOf = (key: 'outboundStops' | 'inboundStops') => {
+    const list = (draft[key].value ?? [])
+      .map((st) => {
+        const city = normalizeAirportCode(st.city ?? '');
+        const code = normalizeFlightCode(st.flightCode ?? '');
+        const t = (v: string | null) => (v && isTime(v.trim()) ? v.trim() : '');
+        return { city, flightCode: isFlightCode(code) ? code : '', arrivalTime: t(st.arrivalTime), departureTime: t(st.departureTime) };
+      })
+      .filter((st) => isAirportCode(st.city))
+      .slice(0, MAX_STOPS);
+    return { value: list, confidence: list.length ? draft[key].confidence : ('low' as const) };
+  };
+
   // The model's answer first; then a return date means a return flight; then
   // a two-code sector means one way. Round trip is the form's default.
   const t = draft.tripType.value;
@@ -99,9 +118,19 @@ export function draftFlightValues(draft: ParsedBookingDraft): {
     inboundBaggageKg: count('inboundBaggageKg', 1, BAGGAGE_MAX_KG),
   };
 
-  const values = { tripType: trip.value } as DraftFlightValues;
+  const outStops = stopsOf('outboundStops');
+  const inStops = stopsOf('inboundStops');
+  const oneWay = trip.value === 'one_way';
+  const values = {
+    tripType: trip.value,
+    outboundStops: outStops.value,
+    inboundStops: oneWay ? [] : inStops.value,
+  } as DraftFlightValues;
   const confidence: Partial<Record<Key, FieldConfidence>> = { tripType: trip.confidence };
-  for (const [k, f] of Object.entries(fields) as [Exclude<Key, 'tripType'>, { value: string; confidence: FieldConfidence }][]) {
+  // Rated only when something was found: an empty list is the direct-flight default, not a guess.
+  if (outStops.value.length) confidence.outboundStops = outStops.confidence;
+  if (!oneWay && inStops.value.length) confidence.inboundStops = inStops.confidence;
+  for (const [k, f] of Object.entries(fields) as [Exclude<Key, 'tripType' | 'outboundStops' | 'inboundStops'>, { value: string; confidence: FieldConfidence }][]) {
     const hidden = trip.value === 'one_way' && k.startsWith('inbound');
     values[k] = hidden ? '' : f.value;
     if (!hidden) confidence[k] = f.confidence;

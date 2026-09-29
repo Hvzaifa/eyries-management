@@ -37,7 +37,7 @@ export default async function NewPnrPage() {
           </div>
           <Link
             href="/pnrs/new/ai"
-            className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-violet-700 bg-violet-50 hover:bg-violet-100 border border-violet-200 rounded-xl transition-colors"
+            className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-brand-dark bg-brand-50 hover:bg-brand-100 border border-brand-200 rounded-xl transition-colors"
           >
             <Bot className="w-4 h-4" />
             Or paste an airline message →

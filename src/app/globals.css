@@ -10,6 +10,16 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  /* Brand accents (owner, 2026-09-30): every button, logo and accent that was
+     purple. The three blues are the owner's; 50–200 are light tints of the
+     light blue, for highlighted rows and soft badges on the cream background. */
+  --color-brand-dark: #1D499A;
+  --color-brand: #3476CD;
+  --color-brand-light: #4697EC;
+  --color-brand-50: #EEF5FD;
+  --color-brand-100: #DCEBFB;
+  --color-brand-200: #B9D6F7;
 }
 
 body {

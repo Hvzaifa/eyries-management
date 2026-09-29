@@ -38,7 +38,7 @@ export default function ErrorPanel({
         <div className="mt-5 flex justify-center gap-2">
           <button
             onClick={reset}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition-colors cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-brand hover:bg-brand transition-colors cursor-pointer"
           >
             <RotateCw className="w-4 h-4" />
             Try again

@@ -150,7 +150,7 @@ export default async function AgentDetailPage({
       <main className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-6">
         <Link
           href="/agents"
-          className="inline-flex items-center gap-1.5 text-xs font-medium text-stone-500 hover:text-indigo-600 transition-colors"
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-stone-500 hover:text-brand transition-colors"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
           Back to agents
@@ -251,7 +251,7 @@ export default async function AgentDetailPage({
                       <td className="py-3 pr-4">
                         <Link
                           href={`/pnrs/${a.pnr.id}`}
-                          className="font-mono text-indigo-600 hover:text-indigo-800 hover:underline"
+                          className="font-mono text-brand hover:text-brand-dark hover:underline"
                         >
                           {a.pnr.pnr}
                         </Link>

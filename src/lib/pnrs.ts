@@ -345,6 +345,13 @@ export interface ActivityLogView {
   changedAt: string;
 }
 
+export interface DetailStop {
+  city: string;
+  flightCode: string | null;
+  arrivalTime: string | null;
+  departureTime: string | null;
+}
+
 export interface PnrDetail {
   id: string;
   srNo: number;
@@ -385,6 +392,10 @@ export interface PnrDetail {
   inboundFlightCode: string | null;
   inboundBaggagePieces: number | null;
   inboundBaggageKg: number | null;
+  /** Stops on each flight, in order (times HH:MM). */
+  outboundStops: DetailStop[];
+  inboundStops: DetailStop[];
+  mealIncluded: boolean;
   airlineTaxes: number | null;
   psf: number | null;
   fare: number;
@@ -448,6 +459,16 @@ export interface PnrDetail {
   activityLog: ActivityLogView[];
 }
 
+function stopsOf(
+  rows: { leg: string; position: number; city: string; flightCode: string | null; arrivalTime: Date | null; departureTime: Date | null }[],
+  leg: 'outbound' | 'inbound'
+): DetailStop[] {
+  return rows
+    .filter((s) => s.leg === leg)
+    .sort((a, b) => a.position - b.position)
+    .map((s) => ({ city: s.city, flightCode: s.flightCode, arrivalTime: timeFromDb(s.arrivalTime), departureTime: timeFromDb(s.departureTime) }));
+}
+
 function isoOrNull(d: Date | null): string | null {
   return d ? d.toISOString().slice(0, 10) : null;
 }
@@ -470,6 +491,7 @@ export async function getPnrDetail(id: string, user?: AuthUser): Promise<PnrDeta
         include: { license: true }
       },
       ticketing: true,
+      flightStops: { orderBy: [{ leg: 'asc' }, { position: 'asc' }] },
       parentPnr: { select: { id: true, pnr: true } },
       childAllocations: true,
       parentAllocations: {
@@ -581,6 +603,9 @@ export async function getPnrDetail(id: string, user?: AuthUser): Promise<PnrDeta
     inboundFlightCode: r.inboundFlightCode,
     inboundBaggagePieces: r.inboundBaggagePieces,
     inboundBaggageKg: r.inboundBaggageKg,
+    outboundStops: stopsOf(r.flightStops, 'outbound'),
+    inboundStops: stopsOf(r.flightStops, 'inbound'),
+    mealIncluded: r.mealIncluded,
     airlineTaxes: r.airlineTaxes === null ? null : Number(r.airlineTaxes),
     psf: r.psf === null ? null : Number(r.psf),
     fare: Number(r.fare),

@@ -15,16 +15,17 @@ import {
   TRIP_TYPE_LABELS,
   BAGGAGE_MAX_KG,
   BAGGAGE_MAX_PIECES,
+  MAX_STOPS,
   buildSector,
   isAirportCode,
 } from '@/lib/flight-details';
 import { diffInDays, todayIsoInPkt } from '@/lib/urgency';
 import type { PnrFormOptions } from '@/lib/pnrs';
 import type { FieldConfidence } from '@/lib/ai/parse-booking';
-import type { PnrFormValues } from '@/lib/pnr-form-values';
+import { EMPTY_STOP, type PnrFormValues, type StopFormValues } from '@/lib/pnr-form-values';
 
 const inputCls =
-  'w-full bg-stone-50 border border-stone-300 rounded-xl px-3 py-2 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:border-indigo-400 transition-colors';
+  'w-full bg-stone-50 border border-stone-300 rounded-xl px-3 py-2 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-brand-light/50 focus:border-brand-light transition-colors';
 
 const confidenceDot: Record<FieldConfidence, string> = {
   high: 'bg-emerald-400',
@@ -121,6 +122,7 @@ function FlightSection({
   minDate,
   values,
   onChange,
+  onStopsChange,
   conf,
 }: {
   title: string;
@@ -131,12 +133,16 @@ function FlightSection({
   minDate?: string;
   values: PnrFormValues;
   onChange: (key: keyof PnrFormValues, value: string) => void;
+  onStopsChange: (stops: StopFormValues[]) => void;
   conf: (key: keyof PnrFormValues) => FieldConfidence | undefined;
 }) {
+  const stops = values[`${leg}Stops`];
+  const setStop = (i: number, patch: Partial<StopFormValues>) =>
+    onStopsChange(stops.map((s, j) => (j === i ? { ...s, ...patch } : s)));
   const input = (field: LegField) => {
     const key = legValueKey(leg, field);
     const name = `${leg}_${LEG_FIELD_NAMES[field]}`;
-    const value = values[key] ?? '';
+    const value = (values[key] as string) ?? '';
     switch (field) {
       case 'date':
         return (
@@ -191,6 +197,67 @@ function FlightSection({
           >
             {input(field)}
           </Field>
+        ))}
+      </div>
+
+      {/* Connecting flight: stops in order. The flight code at a stop is the
+          ONWARD flight — the aircraft may change there (owner, 2026-09-28). */}
+      <div className="mt-4 pt-3 border-t border-stone-100">
+        <div className="flex items-center justify-between mb-2">
+          <h4 className="text-[11px] font-semibold uppercase tracking-wide text-stone-500">
+            Stops {stops.length === 0 && <span className="normal-case font-normal text-stone-400">— direct flight</span>}
+          </h4>
+          {stops.length < MAX_STOPS && (
+            <button
+              type="button"
+              onClick={() => onStopsChange([...stops, { ...EMPTY_STOP }])}
+              className="text-[11px] font-semibold text-brand hover:text-brand-dark cursor-pointer"
+            >
+              + Add stop
+            </button>
+          )}
+        </div>
+        <input type="hidden" name={`${leg}_stop_count`} value={stops.length} />
+        {stops.map((stop, i) => (
+          <div key={i} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_1.3fr_auto] gap-x-4 gap-y-3 items-start mb-3">
+            <Field label={`Stop ${i + 1} city`} required confidence={i === 0 ? conf(`${leg}Stops`) : undefined}>
+              <input
+                name={`${leg}_stop_${i}_city`}
+                required
+                maxLength={3}
+                pattern="[A-Za-z]{3}"
+                title="3-letter airport code, e.g. DXB"
+                placeholder="e.g. DXB"
+                value={stop.city}
+                onChange={(e) => setStop(i, { city: e.target.value.toUpperCase() })}
+                className={`${inputCls} font-mono uppercase placeholder:normal-case`}
+              />
+            </Field>
+            <Field label="Arrives">
+              <input type="time" name={`${leg}_stop_${i}_arrival_time`} value={stop.arrivalTime} onChange={(e) => setStop(i, { arrivalTime: e.target.value })} className={inputCls} />
+            </Field>
+            <Field label="Departs">
+              <input type="time" name={`${leg}_stop_${i}_departure_time`} value={stop.departureTime} onChange={(e) => setStop(i, { departureTime: e.target.value })} className={inputCls} />
+            </Field>
+            <Field label="Onward flight code" hint="If the aircraft changes here.">
+              <input
+                name={`${leg}_stop_${i}_flight_code`}
+                maxLength={10}
+                placeholder="e.g. EK612"
+                value={stop.flightCode}
+                onChange={(e) => setStop(i, { flightCode: e.target.value.toUpperCase() })}
+                className={`${inputCls} font-mono uppercase placeholder:normal-case`}
+              />
+            </Field>
+            <button
+              type="button"
+              onClick={() => onStopsChange(stops.filter((_, j) => j !== i))}
+              className="lg:mt-6 px-2 py-2 text-[11px] font-medium text-stone-400 hover:text-red-600 cursor-pointer justify-self-start"
+              aria-label={`Remove stop ${i + 1}`}
+            >
+              Remove
+            </button>
+          </div>
         ))}
       </div>
 
@@ -347,18 +414,21 @@ export default function PnrForm({
   // The sector the save will build, shown so staff can check the route reads
   // the way it always has. Same function as the server.
   const sectorPreview = useMemo(() => {
-    const out = { departureCity: values.outboundDepartureCity, arrivalCity: values.outboundArrivalCity };
-    if (!isAirportCode(out.departureCity) || !isAirportCode(out.arrivalCity)) return null;
+    const validStops = (st: StopFormValues[]) => st.every((x) => isAirportCode(x.city));
+    const out = { departureCity: values.outboundDepartureCity, arrivalCity: values.outboundArrivalCity, stops: values.outboundStops };
+    if (!isAirportCode(out.departureCity) || !isAirportCode(out.arrivalCity) || !validStops(out.stops)) return null;
     if (values.tripType !== 'round_trip') return buildSector(out, null);
-    const inb = { departureCity: values.inboundDepartureCity, arrivalCity: values.inboundArrivalCity };
-    if (!isAirportCode(inb.departureCity) || !isAirportCode(inb.arrivalCity)) return null;
+    const inb = { departureCity: values.inboundDepartureCity, arrivalCity: values.inboundArrivalCity, stops: values.inboundStops };
+    if (!isAirportCode(inb.departureCity) || !isAirportCode(inb.arrivalCity) || !validStops(inb.stops)) return null;
     return buildSector(out, inb);
   }, [
     values.tripType,
     values.outboundDepartureCity,
     values.outboundArrivalCity,
+    values.outboundStops,
     values.inboundDepartureCity,
     values.inboundArrivalCity,
+    values.inboundStops,
   ]);
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
@@ -491,6 +561,13 @@ export default function PnrForm({
             <option value="completed">completed</option>
           </select>
         </Field>
+        {/* For the package as a whole, not per flight (owner, 2026-09-28). */}
+        <Field label="Meal included" confidence={conf('mealIncluded')}>
+          <select name="meal_included" value={values.mealIncluded} onChange={set('mealIncluded')} className={`${inputCls} cursor-pointer`}>
+            <option value="no">No</option>
+            <option value="yes">Yes</option>
+          </select>
+        </Field>
 
         <div className="sm:col-span-2 lg:col-span-3 border-t border-stone-100 pt-4 space-y-4">
           <div className="flex items-center gap-3 flex-wrap">
@@ -508,7 +585,7 @@ export default function PnrForm({
                     aria-checked={active}
                     onClick={() => setValue('tripType', t)}
                     className={`px-4 py-1.5 rounded-[10px] text-xs font-semibold transition-colors cursor-pointer ${
-                      active ? 'bg-white text-indigo-700 shadow-sm' : 'text-stone-500 hover:text-stone-800'
+                      active ? 'bg-white text-brand-dark shadow-sm' : 'text-stone-500 hover:text-stone-800'
                     }`}
                   >
                     {TRIP_TYPE_LABELS[t]}
@@ -533,6 +610,7 @@ export default function PnrForm({
               dateHint={mode === 'create' ? 'Drives the EMD-1 suggestion below.' : undefined}
               values={values}
               onChange={setValue}
+              onStopsChange={(st) => setValues((v) => ({ ...v, outboundStops: st }))}
               conf={conf}
             />
           ) : values.tripType === 'round_trip' ? (
@@ -545,6 +623,7 @@ export default function PnrForm({
                 dateHint={mode === 'create' ? 'Drives the EMD-1 suggestion below.' : undefined}
                 values={values}
                 onChange={setValue}
+                onStopsChange={(st) => setValues((v) => ({ ...v, outboundStops: st }))}
                 conf={conf}
               />
               <FlightSection
@@ -555,6 +634,7 @@ export default function PnrForm({
                 minDate={values.outboundDate}
                 values={values}
                 onChange={setValue}
+                onStopsChange={(st) => setValues((v) => ({ ...v, inboundStops: st }))}
                 conf={conf}
               />
             </>
@@ -578,7 +658,7 @@ export default function PnrForm({
 
       {mode === 'create' && (
         <SectionCard title="First EMD issuance deadline">
-          <div className="sm:col-span-2 lg:col-span-3 flex items-start gap-2 text-[11px] text-indigo-700 -mt-1 mb-1">
+          <div className="sm:col-span-2 lg:col-span-3 flex items-start gap-2 text-[11px] text-brand-dark -mt-1 mb-1">
             <Sparkles className="w-3.5 h-3.5 shrink-0 mt-0.5" />
             {suggestion.applicable ? (
               <span>
@@ -635,7 +715,7 @@ export default function PnrForm({
         <button
           type="submit"
           disabled={isPending}
-          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-tr from-indigo-500 to-violet-500 hover:from-indigo-400 hover:to-violet-400 disabled:opacity-50 shadow-md shadow-indigo-500/25 transition-all cursor-pointer"
+          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-tr from-brand-dark to-brand hover:from-brand-dark hover:to-brand-dark disabled:opacity-50 shadow-md shadow-brand/25 transition-all cursor-pointer"
         >
           <Save className="w-4 h-4" />
           {isPending ? 'Saving...' : submitLabel || (mode === 'create' ? 'Create booking' : 'Save changes')}

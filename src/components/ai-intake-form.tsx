@@ -55,6 +55,7 @@ function draftToFormValues(
     inboundDate: oneWay ? '' : draft.inboundDate.value ?? '',
     ...flights.values,
     pnrTlDate: draft.pnrTlDate.value ?? '',
+    mealIncluded: draft.mealIncluded.value ? 'yes' : 'no',
     status: 'active',
     fare: draft.fare.value !== null ? String(draft.fare.value) : '',
     airlineTaxes: draft.airlineTaxes.value !== null ? String(draft.airlineTaxes.value) : '',
@@ -75,6 +76,7 @@ function draftToFormValues(
     ...(oneWay ? {} : { inboundDate: draft.inboundDate.confidence }),
     ...flights.confidence,
     pnrTlDate: draft.pnrTlDate.confidence,
+    mealIncluded: draft.mealIncluded.confidence,
     fare: draft.fare.confidence,
     airlineTaxes: draft.airlineTaxes.confidence,
     psf: draft.psf.confidence,
@@ -251,7 +253,7 @@ export default function AiIntakeForm({
       <div className="space-y-5">
         <section className="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm">
           <div className="flex items-center gap-2.5 mb-4">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-violet-500 to-purple-500 flex items-center justify-center text-white shadow-sm">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-brand-dark to-brand flex items-center justify-center text-white shadow-sm">
               <ClipboardPaste className="w-4 h-4" />
             </div>
             <div>
@@ -267,7 +269,7 @@ export default function AiIntakeForm({
             value={rawText}
             onChange={(e) => setRawText(e.target.value)}
             placeholder={`Paste text containing multiple bookings here...`}
-            className="w-full h-44 bg-stone-50 border border-stone-300 rounded-xl px-4 py-3 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-violet-400/50 focus:border-violet-400 transition-colors font-mono resize-y"
+            className="w-full h-44 bg-stone-50 border border-stone-300 rounded-xl px-4 py-3 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-brand-light/50 focus:border-brand-light transition-colors font-mono resize-y"
           />
 
           <div className="mt-4">
@@ -304,11 +306,11 @@ export default function AiIntakeForm({
                 onDrop={handleDrop}
                 onDragOver={handleDragOver}
                 onClick={() => fileInputRef.current?.click()}
-                className="border-2 border-dashed border-stone-300 hover:border-violet-400 rounded-xl p-6 text-center cursor-pointer transition-colors group"
+                className="border-2 border-dashed border-stone-300 hover:border-brand-light rounded-xl p-6 text-center cursor-pointer transition-colors group"
               >
-                <ImagePlus className="w-8 h-8 mx-auto text-stone-300 group-hover:text-violet-400 transition-colors" />
+                <ImagePlus className="w-8 h-8 mx-auto text-stone-300 group-hover:text-brand-light transition-colors" />
                 <p className="mt-2 text-xs text-stone-500">
-                  <span className="text-violet-600 font-medium">Click to upload</span> or drag and drop
+                  <span className="text-brand font-medium">Click to upload</span> or drag and drop
                 </p>
                 <p className="mt-0.5 text-[11px] text-stone-400">Images or Excel (.xlsx, .csv) · Max 10 MB</p>
               </div>
@@ -336,7 +338,7 @@ export default function AiIntakeForm({
               type="button"
               onClick={handleParse}
               disabled={isParsing || !hasInput}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-tr from-violet-500 to-purple-500 hover:from-violet-400 hover:to-purple-400 disabled:opacity-50 shadow-md shadow-violet-500/25 transition-all cursor-pointer"
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-tr from-brand-dark to-brand hover:from-brand-dark hover:to-brand-dark disabled:opacity-50 shadow-md shadow-brand/25 transition-all cursor-pointer"
             >
               {isParsing ? (
                 <>
@@ -417,14 +419,14 @@ export default function AiIntakeForm({
                   onClick={() => setCurrentIndex(idx)}
                   className={`flex items-center justify-between p-3 rounded-xl border text-left transition-colors ${
                     isActive 
-                      ? 'border-indigo-400 bg-indigo-50/50 shadow-sm' 
+                      ? 'border-brand-light bg-brand-50/50 shadow-sm' 
                       : isCompleted 
                         ? 'border-stone-200 bg-stone-50 hover:bg-stone-100'
-                        : 'border-stone-200 bg-white hover:border-indigo-200'
+                        : 'border-stone-200 bg-white hover:border-brand-200'
                   }`}
                 >
                   <div className="flex flex-col">
-                    <span className={`text-xs font-medium ${isActive ? 'text-indigo-900' : 'text-stone-700'}`}>
+                    <span className={`text-xs font-medium ${isActive ? 'text-brand-dark' : 'text-stone-700'}`}>
                       {d.pnr.value || 'Unknown PNR'}
                     </span>
                     <span className="text-[10px] text-stone-400">

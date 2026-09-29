@@ -24,7 +24,7 @@ export default async function RefundsPage({
   const tabCls = (active: boolean) =>
     `inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold border transition-colors ${
       active
-        ? 'bg-violet-600 border-violet-600 text-white shadow-sm'
+        ? 'bg-brand border-brand text-white shadow-sm'
         : 'bg-white border-stone-300 text-stone-600 hover:bg-stone-50'
     }`;
 
@@ -35,7 +35,7 @@ export default async function RefundsPage({
       <main className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-6">
         <div>
           <h1 className="text-xl font-bold text-stone-900 tracking-tight flex items-center gap-2">
-            <RotateCcw className="w-5 h-5 text-violet-500" />
+            <RotateCcw className="w-5 h-5 text-brand" />
             Refunds
           </h1>
           <p className="text-sm text-stone-500 mt-0.5">
@@ -91,7 +91,7 @@ export default async function RefundsPage({
                       <td className="px-4 py-3 whitespace-nowrap text-stone-600">
                         {row.refund_date ? row.refund_date.toISOString().slice(0, 10) : '—'}
                       </td>
-                      <td className="px-4 py-3 font-mono font-medium text-indigo-600">
+                      <td className="px-4 py-3 font-mono font-medium text-brand">
                         <Link href={`/pnrs/${row.pnr_id}`} className="hover:underline">
                           {row.pnr}
                         </Link>
@@ -106,7 +106,7 @@ export default async function RefundsPage({
                         {row.seats} <span className="text-stone-300">|</span> {row.sector ?? '—'}
                       </td>
                       <td className="px-4 py-3 text-stone-600">
-                        <span className="inline-flex items-center justify-center w-5 h-5 rounded bg-violet-100 text-violet-700 text-xs font-bold">
+                        <span className="inline-flex items-center justify-center w-5 h-5 rounded bg-brand-100 text-brand-dark text-xs font-bold">
                           {row.round_number}
                         </span>
                       </td>

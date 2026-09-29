@@ -99,7 +99,7 @@ export default async function AgentsPage() {
       <main className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-6">
         <Link
           href="/"
-          className="inline-flex items-center gap-1.5 text-xs font-medium text-stone-500 hover:text-indigo-600 transition-colors"
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-stone-500 hover:text-brand transition-colors"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
           Back to dashboard
@@ -109,7 +109,7 @@ export default async function AgentsPage() {
           <div className="flex flex-wrap items-start justify-between gap-4 mb-1">
             <div>
               <h1 className="text-xl font-bold tracking-tight text-stone-900 flex items-center gap-2">
-                <Users className="w-5 h-5 text-indigo-500" />
+                <Users className="w-5 h-5 text-brand" />
                 Agents
               </h1>
               <p className="text-sm text-stone-500 mt-1">
@@ -156,7 +156,7 @@ export default async function AgentsPage() {
                       <td className="py-3 pr-4 font-medium">
                         <Link
                           href={`/agents/${a.id}`}
-                          className="text-indigo-600 hover:text-indigo-800 hover:underline"
+                          className="text-brand hover:text-brand-dark hover:underline"
                         >
                           {a.name}
                         </Link>
