@@ -1,4 +1,4 @@
-import { Plane } from 'lucide-react';
+import BrandLogo from '@/components/brand-logo';
 
 /**
  * Loading placeholders, shown the instant a link is clicked while the server
@@ -27,10 +27,7 @@ export function HeaderSkeleton() {
     <header className="border-b border-stone-200 bg-white/80 backdrop-blur-md sticky top-0 z-50">
       <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-dark to-brand flex items-center justify-center text-white shadow-md shadow-brand/20">
-            <Plane className="w-5 h-5 -rotate-45" />
-          </div>
-          <span className="font-bold text-base text-stone-900 tracking-tight">Eyries EMD</span>
+          <BrandLogo className="h-9" priority compact />
         </div>
         <div className="flex items-center gap-4">
           <Bone className="h-4 w-14" />

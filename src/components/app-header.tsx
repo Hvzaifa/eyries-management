@@ -2,7 +2,8 @@ import { logout } from '@/app/login/actions';
 import { resolveAuthUser, isHeadOffice, type SessionIdentity } from '@/lib/auth';
 import { getAuthUser } from '@/lib/server/session';
 import Link from 'next/link';
-import { Plane, LogOut } from 'lucide-react';
+import { LogOut } from 'lucide-react';
+import BrandLogo from '@/components/brand-logo';
 
 export default async function AppHeader({
   user,
@@ -27,19 +28,16 @@ export default async function AppHeader({
       <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Link href="/" className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-dark to-brand flex items-center justify-center text-white shadow-md shadow-brand/20">
-              <Plane className="w-5 h-5 -rotate-45" />
-            </div>
+            <BrandLogo className="h-9" priority compact />
             <div>
-              <span className="font-bold text-base text-stone-900 tracking-tight">Eyries</span>
-              <span className="hidden sm:inline-block ml-2 text-xs px-2 py-0.5 rounded-full bg-brand-50 text-brand border border-brand-100 font-medium">
+              <span className="hidden sm:inline-block text-xs px-2 py-0.5 rounded-full bg-brand-50 text-brand-dark border border-brand-100 font-medium">
                 {subtitle ?? 'PNR Dashboard'}
               </span>
             </div>
           </Link>
           {breadcrumb && (
             <nav className="hidden sm:flex items-center gap-1.5 ml-2 text-xs text-stone-400">
-              <Link href={breadcrumb.href} className="hover:text-brand transition-colors">
+              <Link href={breadcrumb.href} className="hover:text-brand-dark transition-colors">
                 {breadcrumb.label}
               </Link>
             </nav>
@@ -49,18 +47,18 @@ export default async function AppHeader({
         <div className="flex items-center gap-4">
           {/* Agents are visible to both account types — a branch sees the ones
               it created (docs/decisions.md, 2026-09-19 ruling 8). */}
-          <Link href="/agents" className="text-sm font-medium text-stone-600 hover:text-brand transition-colors">
+          <Link href="/agents" className="text-sm font-medium text-stone-600 hover:text-brand-dark transition-colors">
             Agents
           </Link>
           {isHQ && (
-            <Link href="/refunds" className="text-sm font-medium text-stone-600 hover:text-brand transition-colors mr-1">
+            <Link href="/refunds" className="text-sm font-medium text-stone-600 hover:text-brand-dark transition-colors mr-1">
               Refunds
             </Link>
           )}
           {/* Paying IATA is a head-office settlement; a branch has no reason to
               see company-wide obligations (owner ruling, 2026-09-22). */}
           {isHQ && (
-            <Link href="/iata" className="text-sm font-medium text-stone-600 hover:text-brand transition-colors mr-1">
+            <Link href="/iata" className="text-sm font-medium text-stone-600 hover:text-brand-dark transition-colors mr-1">
               IATA
             </Link>
           )}

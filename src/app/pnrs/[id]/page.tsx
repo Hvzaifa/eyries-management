@@ -319,7 +319,7 @@ export default async function PnrDetailPage({
       <main className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-6">
         <Link
           href="/"
-          className="inline-flex items-center gap-1.5 text-xs font-medium text-stone-500 hover:text-brand transition-colors"
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-stone-500 hover:text-brand-dark transition-colors"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
           Back to dashboard
@@ -343,7 +343,7 @@ export default async function PnrDetailPage({
               {userCanEditThisPnr && (
                 <Link
                   href={`/pnrs/${detail.id}/edit`}
-                  className="text-xs font-semibold px-3 py-1.5 rounded-xl text-white bg-gradient-to-tr from-brand-dark to-brand hover:from-brand-dark hover:to-brand-dark shadow-md shadow-brand/20 transition-all"
+                  className="text-xs font-semibold px-3 py-1.5 rounded-xl text-white bg-gradient-to-tr from-brand to-brand-light hover:from-brand-dark hover:to-brand-dark shadow-md shadow-brand/20 transition-all"
                 >
                   Edit booking
                 </Link>
@@ -467,7 +467,7 @@ export default async function PnrDetailPage({
                   {detail.childAllocations.map((a) => (
                     <div key={a.childPnrId} className="flex items-center justify-between text-xs">
                       <div className="flex items-center gap-2">
-                        <Link href={`/pnrs/${a.childPnrId}`} className="font-mono font-semibold text-brand underline">
+                        <Link href={`/pnrs/${a.childPnrId}`} className="font-mono font-semibold text-brand-dark underline">
                           {a.childPnrCode}
                         </Link>
                         <span className="text-stone-500">→ {a.childInvestorCompany}</span>
@@ -477,7 +477,7 @@ export default async function PnrDetailPage({
                   ))}
                 </div>
                 <div className="mt-2 pt-2 border-t border-brand-200 flex items-center justify-between text-xs font-medium">
-                  <span className="text-brand">Remaining on this PNR</span>
+                  <span className="text-brand-dark">Remaining on this PNR</span>
                   <span className="text-brand-dark">{detail.unallocatedSeats} seats</span>
                 </div>
                 {/* Offer what the SERVER will accept: seats held by agents
@@ -576,7 +576,7 @@ export default async function PnrDetailPage({
                   >
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="flex items-center gap-2.5">
-                        <span className="w-7 h-7 rounded-full bg-brand-100 text-brand text-xs font-bold flex items-center justify-center">
+                        <span className="w-7 h-7 rounded-full bg-brand-100 text-brand-dark text-xs font-bold flex items-center justify-center">
                           {round.roundNumber}
                         </span>
                         <span className={`text-[11px] px-2 py-0.5 rounded-full border ${ROUND_STATUS_STYLES[round.status] ?? ''}`}>
@@ -708,7 +708,7 @@ export default async function PnrDetailPage({
         {/* Activity history */}
         <section className="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm">
           <h2 className="text-sm font-semibold text-stone-900 mb-4 flex items-center gap-1.5">
-            <History className="w-4 h-4 text-brand" /> Change history
+            <History className="w-4 h-4 text-brand-dark" /> Change history
           </h2>
           {detail.activityLog.length === 0 ? (
             <p className="text-sm text-stone-400 py-4 text-center">
@@ -742,7 +742,7 @@ export default async function PnrDetailPage({
 
       <footer className="border-t border-stone-200 py-4">
         <p className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 text-[11px] text-stone-400">
-          Eyries EMD · amounts in PKR · created {new Date(detail.createdAt).toLocaleDateString('en-PK', { timeZone: 'Asia/Karachi' })}
+          Six Sigma EMD · amounts in PKR · created {new Date(detail.createdAt).toLocaleDateString('en-PK', { timeZone: 'Asia/Karachi' })}
         </p>
       </footer>
     </div>

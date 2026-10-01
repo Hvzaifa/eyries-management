@@ -68,7 +68,7 @@ export default function AgentRoundSchedule({
               <td className={`${pad} ${r.issued ? 'text-stone-600' : 'text-brand-dark font-medium'}`}>
                 Round {r.roundNumber}
                 {!r.issued && (
-                  <span className="block text-[10px] text-brand">
+                  <span className="block text-[10px] text-brand-dark">
                     collect before it is issued
                   </span>
                 )}

@@ -99,7 +99,7 @@ export default async function AgentsPage() {
       <main className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-6">
         <Link
           href="/"
-          className="inline-flex items-center gap-1.5 text-xs font-medium text-stone-500 hover:text-brand transition-colors"
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-stone-500 hover:text-brand-dark transition-colors"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
           Back to dashboard
@@ -109,7 +109,7 @@ export default async function AgentsPage() {
           <div className="flex flex-wrap items-start justify-between gap-4 mb-1">
             <div>
               <h1 className="text-xl font-bold tracking-tight text-stone-900 flex items-center gap-2">
-                <Users className="w-5 h-5 text-brand" />
+                <Users className="w-5 h-5 text-brand-dark" />
                 Agents
               </h1>
               <p className="text-sm text-stone-500 mt-1">
@@ -156,7 +156,7 @@ export default async function AgentsPage() {
                       <td className="py-3 pr-4 font-medium">
                         <Link
                           href={`/agents/${a.id}`}
-                          className="text-brand hover:text-brand-dark hover:underline"
+                          className="text-brand-dark hover:text-brand-dark hover:underline"
                         >
                           {a.name}
                         </Link>
@@ -232,7 +232,7 @@ export default async function AgentsPage() {
 
       <footer className="border-t border-stone-200 py-4">
         <p className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 text-[11px] text-stone-400">
-          Eyries EMD · {agents.length} agent{agents.length === 1 ? '' : 's'} visible
+          Six Sigma EMD · {agents.length} agent{agents.length === 1 ? '' : 's'} visible
         </p>
       </footer>
     </div>

@@ -63,7 +63,7 @@ export default function DashboardCards({
       label: pnrCountLabel(statusFilter),
       value: String(summary.pnrCount),
       icon: FileText,
-      tint: 'bg-brand-100 text-brand',
+      tint: 'bg-brand-100 text-brand-dark',
     },
     {
       label: share ? 'Seats Held' : 'Total Seats',
@@ -75,7 +75,7 @@ export default function DashboardCards({
       label: share ? 'EMD Value (Share)' : 'Total EMD Value',
       value: formatPkr(summary.totalEmdValue),
       icon: Wallet,
-      tint: 'bg-brand-100 text-brand',
+      tint: 'bg-brand-100 text-brand-dark',
     },
     {
       label: share ? 'EMD Issued (Share)' : 'EMD Issued',

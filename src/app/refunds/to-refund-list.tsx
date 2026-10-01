@@ -53,7 +53,7 @@ export default function ToRefundList({ rows, canRecord }: { rows: RoundToRefund[
         {canRecord && picked.size > 0 && (
           <Link
             href={`/pnrs/bulk-refund?pnrs=${encodeURIComponent([...picked].join(','))}`}
-            className="ml-auto inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-gradient-to-tr from-brand-dark to-brand rounded-xl shadow-sm"
+            className="ml-auto inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-gradient-to-tr from-brand to-brand-light rounded-xl shadow-sm"
           >
             Record refunds for {picked.size} booking{picked.size === 1 ? '' : 's'}
           </Link>
@@ -107,7 +107,7 @@ export default function ToRefundList({ rows, canRecord }: { rows: RoundToRefund[
                         />
                       </td>
                     )}
-                    <td className="px-4 py-3 font-mono font-medium text-brand">
+                    <td className="px-4 py-3 font-mono font-medium text-brand-dark">
                       <Link href={`/pnrs/${r.pnrId}`} className="hover:underline">{r.pnr}</Link>
                       {r.pnrStatus !== 'active' && <span className="ml-1.5 text-[10px] text-stone-400">{r.pnrStatus}</span>}
                     </td>

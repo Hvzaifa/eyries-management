@@ -8,7 +8,7 @@ import BatchEmailForm from './batch-email-form';
 import { getPnrFormOptions } from '@/lib/pnrs';
 
 export const metadata = {
-  title: 'Batch Emails | Eyries',
+  title: 'Batch Emails | Six Sigma',
 };
 
 export default async function BatchEmailPage() {
@@ -41,7 +41,7 @@ export default async function BatchEmailPage() {
 
       <footer className="border-t border-stone-200 py-4 mt-8">
         <p className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 text-[11px] text-stone-400">
-          Eyries EMD · internal booking tracker
+          Six Sigma EMD · internal booking tracker
         </p>
       </footer>
     </div>

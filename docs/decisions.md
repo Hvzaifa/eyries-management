@@ -1523,6 +1523,39 @@ Unchanged: the "EMDs To Issue" card still counts active bookings only — an EMD
 
 **Verified:** 615 tests, lint and typecheck. In a browser against live data (IATA, dashboard, refunds, login), a scan of every element's computed colours found no purple.
 
+### 2026-10-01 — Rebrand to Six Sigma; periwinkle accents replace the blues
+
+**Request (owner):** replace the Eyries logo with `src/app/sixsigma-logo.png` and every mention of Eyries with Six Sigma. Replace the accent colours with #728FED or a lighter shade that matches the logo. **This supersedes the 2026-09-30 colour values**; the `brand-*` theme names stay.
+
+**Answered by the owner:**
+- **Rename everything people see:** the header, login, tab titles, footers, the email sender name and the email sign-offs.
+- **Not renamed,** deliberately:
+  - The staff login addresses (`…@eyries.local`). They are the real account addresses.
+  - The package name, README and folder name.
+  - Test data and past decision entries. "Eyries Holidays" there is an agent name.
+- **Emails** are sent as "Six Sigma Travels" and signed "Six Sigma Travels (Pvt) Ltd". This covers airline batch emails and agent payment notices.
+- **Periwinkle family:**
+  - `brand-light` is #728FED, the owner's colour, used for highlights, focus rings and the light end of button gradients.
+  - `brand` is #5470D6: buttons and selected pills, deep enough for white text (4.5:1).
+  - `brand-dark` is #4A63C4: links and accent text, plus button hover.
+  - Pale tints #F2F5FE / #E4EAFC / #C9D4F8.
+  - White text on #728FED alone is about 3:1, too faint, which is why buttons run #5470D6 → #728FED.
+- **Logo:** the full wordmark in the header and on the login page. The tab icon is the swirl mark cut from the logo (`src/app/favicon.ico`, `src/app/icon.png`). The old icon was the default Next.js one.
+
+**One call made while building:** on phones (below the `sm` breakpoint) the header shows **only the swirl mark**. The 5:1 wordmark was squashed to an unreadable width beside the menu. The full wordmark shows from tablet width up, and always on the login page.
+
+**Built:**
+- `src/components/brand-logo.tsx` uses a `next/image` static import, so the 8000px original is served resized. Its `compact` option provides the phone variant.
+- The login page keeps a screen-reader-only heading, "Six Sigma EMD".
+
+**Verified:**
+- 615 tests, lint and typecheck.
+- In a browser (login, dashboard, IATA):
+  - The logo loads.
+  - No page contains "Eyries".
+  - `/favicon.ico` and `/icon.png` are served. The middleware already lets image files through without a login.
+  - A phone-width page does not scroll sideways.
+
 ## Template for new entries
 
 ```

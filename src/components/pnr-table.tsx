@@ -154,7 +154,7 @@ export default function PnrTable({
       { accessorKey: 'pnr', header: 'PNR', cell: (c) => (
           <Link
             href={`/pnrs/${c.row.original.id}`}
-            className="font-mono text-brand hover:text-brand-dark hover:underline"
+            className="font-mono text-brand-dark hover:text-brand-dark hover:underline"
           >
             {c.getValue<string>()}
           </Link>
@@ -506,7 +506,7 @@ export default function PnrTable({
           </button>
           <Link
             href={`/pnrs/bulk-emd?ids=${[...selected].join(',')}`}
-            className="ml-auto inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-gradient-to-tr from-brand-dark to-brand hover:from-brand-dark hover:to-brand-dark shadow-md shadow-brand/25 transition-all"
+            className="ml-auto inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-gradient-to-tr from-brand to-brand-light hover:from-brand-dark hover:to-brand-dark shadow-md shadow-brand/25 transition-all"
           >
             <FilePlus2 className="w-4 h-4" />
             Issue EMDs
@@ -596,7 +596,7 @@ export default function PnrTable({
                       }}
                       onChange={toggleAllVisible}
                       aria-label="Select all visible bookings"
-                      className="w-3.5 h-3.5 rounded border-stone-300 text-brand focus:ring-brand-light/50 cursor-pointer"
+                      className="w-3.5 h-3.5 rounded border-stone-300 text-brand-dark focus:ring-brand-light/50 cursor-pointer"
                     />
                   </th>
                 )}
@@ -642,7 +642,7 @@ export default function PnrTable({
                           checked={selected.has(row.original.id)}
                           onChange={() => toggleOne(row.original.id)}
                           aria-label={`Select ${row.original.pnr}`}
-                          className="w-3.5 h-3.5 rounded border-stone-300 text-brand focus:ring-brand-light/50 cursor-pointer"
+                          className="w-3.5 h-3.5 rounded border-stone-300 text-brand-dark focus:ring-brand-light/50 cursor-pointer"
                         />
                       </td>
                     )}

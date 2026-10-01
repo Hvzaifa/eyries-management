@@ -7,7 +7,7 @@ import BulkRefundForm from './bulk-refund-form';
 import { redirect } from 'next/navigation';
 
 export const metadata = {
-  title: 'Bulk EMD Refund | Eyries',
+  title: 'Bulk EMD Refund | Six Sigma',
 };
 
 export default async function BulkRefundPage({
@@ -43,7 +43,7 @@ export default async function BulkRefundPage({
 
       <footer className="border-t border-stone-200 py-4 mt-8">
         <p className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 text-[11px] text-stone-400">
-          Eyries EMD · internal booking tracker
+          Six Sigma EMD · internal booking tracker
         </p>
       </footer>
     </div>

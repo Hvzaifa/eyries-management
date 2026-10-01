@@ -196,7 +196,7 @@ export default function BulkRefundForm({ initialPnrs = [] }: { initialPnrs?: str
                     {fetchedRounds.length} EMD round{fetchedRounds.length !== 1 ? 's' : ''} found
                   </div>
                   <div className="flex items-center gap-3 text-xs">
-                    <button onClick={() => toggleAll(true)} className="text-brand hover:text-brand-dark font-medium cursor-pointer">Select All</button>
+                    <button onClick={() => toggleAll(true)} className="text-brand-dark hover:text-brand-dark font-medium cursor-pointer">Select All</button>
                     <span className="text-stone-300">|</span>
                     <button onClick={() => toggleAll(false)} className="text-stone-500 hover:text-stone-700 font-medium cursor-pointer">Select None</button>
                   </div>
@@ -226,7 +226,7 @@ export default function BulkRefundForm({ initialPnrs = [] }: { initialPnrs?: str
                                 type="checkbox"
                                 checked={state.selected}
                                 onChange={e => updateState(round.id, 'selected', e.target.checked)}
-                                className="w-4 h-4 rounded border-stone-300 text-brand focus:ring-brand"
+                                className="w-4 h-4 rounded border-stone-300 text-brand-dark focus:ring-brand"
                               />
                             </td>
                             <td className="px-6 py-3">
@@ -239,7 +239,7 @@ export default function BulkRefundForm({ initialPnrs = [] }: { initialPnrs?: str
                               Round {round.roundNumber}
                               {round.emdNumber && <div className="text-[10px] text-stone-400 font-mono mt-0.5">{round.emdNumber}</div>}
                               {round.license?.name && (
-                                <div className="text-[10px] text-brand font-medium mt-0.5">Paid by: {round.license.name}</div>
+                                <div className="text-[10px] text-brand-dark font-medium mt-0.5">Paid by: {round.license.name}</div>
                               )}
                             </td>
                             <td className="px-6 py-3 font-medium text-stone-600">

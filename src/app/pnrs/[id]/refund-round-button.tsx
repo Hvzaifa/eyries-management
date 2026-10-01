@@ -33,7 +33,7 @@ export default function RefundRoundButton({ pnrId, roundId }: { pnrId: string; r
     <>
       <button
         onClick={() => setIsOpen(true)}
-        className="text-[11px] font-medium text-stone-500 hover:text-brand transition-colors inline-flex items-center gap-1 cursor-pointer ml-3 border border-stone-200 bg-white px-2 py-1 rounded-md hover:bg-brand-50 hover:border-brand-200 shadow-sm"
+        className="text-[11px] font-medium text-stone-500 hover:text-brand-dark transition-colors inline-flex items-center gap-1 cursor-pointer ml-3 border border-stone-200 bg-white px-2 py-1 rounded-md hover:bg-brand-50 hover:border-brand-200 shadow-sm"
       >
         <Undo2 className="w-3 h-3" />
         Record Refund

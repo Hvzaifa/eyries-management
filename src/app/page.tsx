@@ -40,7 +40,7 @@ export default async function HomePage() {
             )}
             <Link
               href="/pnrs/new"
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-tr from-brand-dark to-brand hover:from-brand-dark hover:to-brand-dark shadow-md shadow-brand/25 transition-all"
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-tr from-brand to-brand-light hover:from-brand-dark hover:to-brand-dark shadow-md shadow-brand/25 transition-all"
             >
               <PlusCircle className="w-4" />
               New booking
@@ -66,7 +66,7 @@ export default async function HomePage() {
 
       <footer className="border-t border-stone-200 py-4">
         <p className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 text-[11px] text-stone-400">
-          Eyries EMD · internal booking tracker · amounts in PKR
+          Six Sigma EMD · internal booking tracker · amounts in PKR
         </p>
       </footer>
     </div>

@@ -237,7 +237,7 @@ export async function sendAgentNotice(payload: {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        from: `Eyries <${fromEmail}>`,
+        from: `Six Sigma Travels <${fromEmail}>`,
         to: [check.recipient],
         subject: subject.trim(),
         text: body.trim(),

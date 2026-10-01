@@ -158,7 +158,7 @@ export default function DateRangePicker({
                       ? 'bg-brand text-white font-semibold rounded-lg'
                       : inRange
                         ? 'bg-brand-100 text-brand-dark'
-                        : `rounded-lg hover:bg-stone-100 ${d === todayIso ? 'text-brand font-semibold' : 'text-stone-700'}`
+                        : `rounded-lg hover:bg-stone-100 ${d === todayIso ? 'text-brand-dark font-semibold' : 'text-stone-700'}`
                   }`}
                 >
                   {Number(d.slice(8))}

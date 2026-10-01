@@ -10,7 +10,7 @@ import { IATA_CALENDAR_FROM, IATA_CALENDAR_TO } from '@/lib/iata-calendar';
 import { formatPkr } from '@/lib/format';
 import { todayIsoInPkt } from '@/lib/urgency';
 
-export const metadata = { title: 'IATA settlements | Eyries' };
+export const metadata = { title: 'IATA settlements | Six Sigma' };
 
 /**
  * What the company owes IATA, grouped into the payments it will actually make.
@@ -112,7 +112,7 @@ export default async function IataPage({ searchParams }: { searchParams: Promise
         {ahead.length > 0 && (
           <section className="space-y-3">
             <h2 className="text-sm font-semibold text-stone-800 flex items-center gap-1.5">
-              <CalendarClock className="w-4 h-4 text-brand" /> Upcoming
+              <CalendarClock className="w-4 h-4 text-brand-dark" /> Upcoming
             </h2>
             {ahead.map((g) => (
               <SettlementGroup key={g.remittanceDay} group={g} />
@@ -173,7 +173,7 @@ export default async function IataPage({ searchParams }: { searchParams: Promise
 
       <footer className="border-t border-stone-200 py-4 mt-8">
         <p className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 text-[11px] text-stone-400">
-          Eyries EMD · internal booking tracker
+          Six Sigma EMD · internal booking tracker
         </p>
       </footer>
     </div>
@@ -263,7 +263,7 @@ function SettlementGroup({
         }`}
       >
         <div className="flex items-center gap-2.5">
-          <Banknote className={`w-4 h-4 ${group.overdue ? 'text-red-500' : 'text-brand'}`} />
+          <Banknote className={`w-4 h-4 ${group.overdue ? 'text-red-500' : 'text-brand-dark'}`} />
           <div>
             <p className="text-sm font-semibold text-stone-900">
               Pay {group.remittanceDay}{' '}
@@ -295,7 +295,7 @@ function SettlementGroup({
           {group.items.map((d) => (
             <tr key={d.roundId} className="border-b border-stone-50 last:border-0">
               <td className="px-5 py-2.5">
-                <Link href={`/pnrs/${d.pnrId}`} className="font-mono font-medium text-brand hover:underline">
+                <Link href={`/pnrs/${d.pnrId}`} className="font-mono font-medium text-brand-dark hover:underline">
                   {d.pnrCode}
                 </Link>
                 <span className="text-[11px] text-stone-400">

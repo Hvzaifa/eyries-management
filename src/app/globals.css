@@ -11,15 +11,18 @@
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 
-  /* Brand accents (owner, 2026-09-30): every button, logo and accent that was
-     purple. The three blues are the owner's; 50–200 are light tints of the
-     light blue, for highlighted rows and soft badges on the cream background. */
-  --color-brand-dark: #1D499A;
-  --color-brand: #3476CD;
-  --color-brand-light: #4697EC;
-  --color-brand-50: #EEF5FD;
-  --color-brand-100: #DCEBFB;
-  --color-brand-200: #B9D6F7;
+  /* Brand accents: the Six Sigma periwinkle (owner, 2026-10-01), built on
+     #728FED, a lighter shade of the logo's blue. `brand-light` is the owner's
+     colour itself, used for highlights, focus rings and the end of button
+     gradients. `brand` is a slightly deeper shade, so white button text stays
+     readable. `brand-dark` is for links and accent text. 50–200 are pale tints
+     for highlighted rows and soft badges on the cream background. */
+  --color-brand-dark: #4A63C4;
+  --color-brand: #5470D6;
+  --color-brand-light: #728FED;
+  --color-brand-50: #F2F5FE;
+  --color-brand-100: #E4EAFC;
+  --color-brand-200: #C9D4F8;
 }
 
 body {

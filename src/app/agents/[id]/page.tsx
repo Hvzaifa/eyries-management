@@ -150,7 +150,7 @@ export default async function AgentDetailPage({
       <main className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-6">
         <Link
           href="/agents"
-          className="inline-flex items-center gap-1.5 text-xs font-medium text-stone-500 hover:text-brand transition-colors"
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-stone-500 hover:text-brand-dark transition-colors"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
           Back to agents
@@ -251,7 +251,7 @@ export default async function AgentDetailPage({
                       <td className="py-3 pr-4">
                         <Link
                           href={`/pnrs/${a.pnr.id}`}
-                          className="font-mono text-brand hover:text-brand-dark hover:underline"
+                          className="font-mono text-brand-dark hover:text-brand-dark hover:underline"
                         >
                           {a.pnr.pnr}
                         </Link>
@@ -332,7 +332,7 @@ export default async function AgentDetailPage({
 
       <footer className="border-t border-stone-200 py-4">
         <p className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 text-[11px] text-stone-400">
-          Eyries EMD · agent record created{' '}
+          Six Sigma EMD · agent record created{' '}
           {agent.createdAt.toLocaleDateString('en-PK', { timeZone: 'Asia/Karachi' })}
         </p>
       </footer>

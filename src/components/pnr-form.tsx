@@ -211,7 +211,7 @@ function FlightSection({
             <button
               type="button"
               onClick={() => onStopsChange([...stops, { ...EMPTY_STOP }])}
-              className="text-[11px] font-semibold text-brand hover:text-brand-dark cursor-pointer"
+              className="text-[11px] font-semibold text-brand-dark hover:text-brand-dark cursor-pointer"
             >
               + Add stop
             </button>
@@ -715,7 +715,7 @@ export default function PnrForm({
         <button
           type="submit"
           disabled={isPending}
-          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-tr from-brand-dark to-brand hover:from-brand-dark hover:to-brand-dark disabled:opacity-50 shadow-md shadow-brand/25 transition-all cursor-pointer"
+          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-tr from-brand to-brand-light hover:from-brand-dark hover:to-brand-dark disabled:opacity-50 shadow-md shadow-brand/25 transition-all cursor-pointer"
         >
           <Save className="w-4 h-4" />
           {isPending ? 'Saving...' : submitLabel || (mode === 'create' ? 'Create booking' : 'Save changes')}

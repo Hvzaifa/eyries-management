@@ -175,7 +175,7 @@ export default function BulkEmdForm({
                     <Link
                       href={`/pnrs/${c.pnrId}`}
                       target="_blank"
-                      className="font-mono font-medium text-brand hover:text-brand-dark hover:underline"
+                      className="font-mono font-medium text-brand-dark hover:text-brand-dark hover:underline"
                     >
                       {c.pnrCode}
                     </Link>
@@ -301,7 +301,7 @@ export default function BulkEmdForm({
           <button
             type="submit"
             disabled={isPending || readyCount === 0}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-tr from-brand-dark to-brand hover:from-brand-dark hover:to-brand-dark shadow-md shadow-brand/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-tr from-brand to-brand-light hover:from-brand-dark hover:to-brand-dark shadow-md shadow-brand/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <CheckCircle2 className="w-4 h-4" />
             {isPending
@@ -322,7 +322,7 @@ function BlockedRow({ candidate }: { candidate: BulkEmdCandidate }) {
         <Link
           href={`/pnrs/${candidate.pnrId}`}
           target="_blank"
-          className="font-mono text-brand hover:underline"
+          className="font-mono text-brand-dark hover:underline"
         >
           {candidate.pnrCode}
         </Link>{' '}

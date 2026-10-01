@@ -3,7 +3,8 @@
 import { Suspense, useState, useTransition } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { login } from './actions';
-import { Plane, AlertCircle, Lock, Mail } from 'lucide-react';
+import { AlertCircle, Lock, Mail } from 'lucide-react';
+import BrandLogo from '@/components/brand-logo';
 
 function LoginForm() {
   const searchParams = useSearchParams();
@@ -33,11 +34,10 @@ function LoginForm() {
   return (
     <div className="w-full max-w-md">
       <div className="text-center mb-8">
-        <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-tr from-brand-dark to-brand text-white shadow-lg shadow-brand/25 mb-4">
-          <Plane className="w-7 h-7 transform -rotate-45" />
-        </div>
-        <h1 className="text-2xl font-bold tracking-tight text-stone-900">Eyries EMD</h1>
-        <p className="text-sm text-stone-500 mt-1">Group Booking &amp; Deadline Management</p>
+        <BrandLogo className="h-16 sm:h-20 mx-auto mb-5" priority />
+        {/* The wordmark already says the name; the heading is for screen readers. */}
+        <h1 className="sr-only">Six Sigma EMD</h1>
+        <p className="text-sm text-stone-500">Group Booking &amp; Deadline Management</p>
       </div>
 
       <div className="bg-white border border-stone-200 rounded-2xl p-6 sm:p-8 shadow-xl shadow-stone-200/60">
@@ -92,7 +92,7 @@ function LoginForm() {
           <button
             type="submit"
             disabled={isPending}
-            className="w-full mt-4 flex items-center justify-center py-2.5 px-4 rounded-xl text-sm font-semibold text-white bg-gradient-to-tr from-brand-dark to-brand hover:from-brand-dark hover:to-brand-dark disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-brand/25 transition-all cursor-pointer"
+            className="w-full mt-4 flex items-center justify-center py-2.5 px-4 rounded-xl text-sm font-semibold text-white bg-gradient-to-tr from-brand to-brand-light hover:from-brand-dark hover:to-brand-dark disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-brand/25 transition-all cursor-pointer"
           >
             {isPending ? (
               <span className="flex items-center gap-2">

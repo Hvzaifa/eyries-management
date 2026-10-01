@@ -11,7 +11,7 @@ import { todayIsoInPkt } from '@/lib/urgency';
 import BulkEmdForm from './bulk-emd-form';
 
 export const metadata = {
-  title: 'Issue EMDs | Eyries',
+  title: 'Issue EMDs | Six Sigma',
 };
 
 /**
@@ -85,7 +85,7 @@ export default async function BulkEmdPage({
 
       <footer className="border-t border-stone-200 py-4 mt-8">
         <p className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 text-[11px] text-stone-400">
-          Eyries EMD · internal booking tracker
+          Six Sigma EMD · internal booking tracker
         </p>
       </footer>
     </div>
@@ -99,7 +99,7 @@ function EmptyState({ title, body }: { title: string; body: string }) {
       <p className="mt-1 text-sm text-stone-500">{body}</p>
       <Link
         href="/"
-        className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-gradient-to-tr from-brand-dark to-brand hover:from-brand-dark hover:to-brand-dark shadow-md shadow-brand/20 transition-all"
+        className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-gradient-to-tr from-brand to-brand-light hover:from-brand-dark hover:to-brand-dark shadow-md shadow-brand/20 transition-all"
       >
         Go to the dashboard
       </Link>

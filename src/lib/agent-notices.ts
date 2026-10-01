@@ -133,7 +133,7 @@ export function buildAgentNotice(f: NoticeFacts): { subject: string; body: strin
     'If you have already sent this payment, please ignore this message and share the payment details so we can record it against your account.',
     '',
     'Kind regards,',
-    'Eyries Holidays',
+    'Six Sigma Travels (Pvt) Ltd',
   ].join('\n');
 
   return { subject, body };

@@ -52,7 +52,7 @@ export default function AgentFormButton({ agent }: { agent?: AgentValues }) {
       ) : (
         <button
           onClick={() => setIsOpen(true)}
-          className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl text-white bg-gradient-to-tr from-brand-dark to-brand hover:from-brand-dark hover:to-brand-dark shadow-md shadow-brand/20 transition-all cursor-pointer"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl text-white bg-gradient-to-tr from-brand to-brand-light hover:from-brand-dark hover:to-brand-dark shadow-md shadow-brand/20 transition-all cursor-pointer"
         >
           <Plus className="w-3.5 h-3.5" />
           New agent

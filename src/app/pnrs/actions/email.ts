@@ -127,7 +127,7 @@ export async function sendBatchAirlineEmails(payload: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: `Eyries <${fromEmail}>`,
+        from: `Six Sigma Travels <${fromEmail}>`,
         to: [recipient],
         subject,
         text: body,

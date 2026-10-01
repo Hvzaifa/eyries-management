@@ -253,7 +253,7 @@ export default function AiIntakeForm({
       <div className="space-y-5">
         <section className="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm">
           <div className="flex items-center gap-2.5 mb-4">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-brand-dark to-brand flex items-center justify-center text-white shadow-sm">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-brand to-brand-light flex items-center justify-center text-white shadow-sm">
               <ClipboardPaste className="w-4 h-4" />
             </div>
             <div>
@@ -310,7 +310,7 @@ export default function AiIntakeForm({
               >
                 <ImagePlus className="w-8 h-8 mx-auto text-stone-300 group-hover:text-brand-light transition-colors" />
                 <p className="mt-2 text-xs text-stone-500">
-                  <span className="text-brand font-medium">Click to upload</span> or drag and drop
+                  <span className="text-brand-dark font-medium">Click to upload</span> or drag and drop
                 </p>
                 <p className="mt-0.5 text-[11px] text-stone-400">Images or Excel (.xlsx, .csv) · Max 10 MB</p>
               </div>
@@ -338,7 +338,7 @@ export default function AiIntakeForm({
               type="button"
               onClick={handleParse}
               disabled={isParsing || !hasInput}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-tr from-brand-dark to-brand hover:from-brand-dark hover:to-brand-dark disabled:opacity-50 shadow-md shadow-brand/25 transition-all cursor-pointer"
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-tr from-brand to-brand-light hover:from-brand-dark hover:to-brand-dark disabled:opacity-50 shadow-md shadow-brand/25 transition-all cursor-pointer"
             >
               {isParsing ? (
                 <>

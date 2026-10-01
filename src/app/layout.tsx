@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Eyries EMD — Group Booking & Deadline Management",
+  title: "Six Sigma EMD — Group Booking & Deadline Management",
   description: "Internal tool for tracking group airline bookings and EMD deposit deadlines.",
 };
 

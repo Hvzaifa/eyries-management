@@ -35,7 +35,7 @@ export default async function RefundsPage({
       <main className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-6">
         <div>
           <h1 className="text-xl font-bold text-stone-900 tracking-tight flex items-center gap-2">
-            <RotateCcw className="w-5 h-5 text-brand" />
+            <RotateCcw className="w-5 h-5 text-brand-dark" />
             Refunds
           </h1>
           <p className="text-sm text-stone-500 mt-0.5">
@@ -91,7 +91,7 @@ export default async function RefundsPage({
                       <td className="px-4 py-3 whitespace-nowrap text-stone-600">
                         {row.refund_date ? row.refund_date.toISOString().slice(0, 10) : '—'}
                       </td>
-                      <td className="px-4 py-3 font-mono font-medium text-brand">
+                      <td className="px-4 py-3 font-mono font-medium text-brand-dark">
                         <Link href={`/pnrs/${row.pnr_id}`} className="hover:underline">
                           {row.pnr}
                         </Link>

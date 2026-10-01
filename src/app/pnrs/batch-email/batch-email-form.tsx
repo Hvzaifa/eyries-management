@@ -122,7 +122,7 @@ export default function BatchEmailForm({ airlines }: { airlines: AirlineOption[]
       });
 
       bodyText += `\nAs the initial deposit is confirmed, we will now track and process the EMD-2 requirements according to standard policy.\n\n`;
-      bodyText += `Best regards,\nEyries Team`;
+      bodyText += `Best regards,\nSix Sigma Travels (Pvt) Ltd`;
       
       setBody(bodyText);
     } else {
@@ -132,7 +132,7 @@ export default function BatchEmailForm({ airlines }: { airlines: AirlineOption[]
       selectedList.forEach(p => {
         bodyText += `- PNR: ${p.pnr}\n`;
       });
-      bodyText += `\n\nBest regards,\nEyries Team`;
+      bodyText += `\n\nBest regards,\nSix Sigma Travels (Pvt) Ltd`;
       setBody(bodyText);
     }
   }, [fetchedPnrs, selectedIds, emailType, targetAirline]);
@@ -231,7 +231,7 @@ export default function BatchEmailForm({ airlines }: { airlines: AirlineOption[]
                   {fetchedPnrs.length} PNRs found
                 </h3>
                 <div className="flex items-center gap-3 text-xs">
-                  <button type="button" onClick={() => toggleAll(true)} className="text-brand hover:text-brand-dark font-medium">Select All Valid</button>
+                  <button type="button" onClick={() => toggleAll(true)} className="text-brand-dark hover:text-brand-dark font-medium">Select All Valid</button>
                   <span className="text-stone-300">|</span>
                   <button type="button" onClick={() => toggleAll(false)} className="text-stone-500 hover:text-stone-700 font-medium">Select None</button>
                 </div>
@@ -260,7 +260,7 @@ export default function BatchEmailForm({ airlines }: { airlines: AirlineOption[]
                               checked={isSelected}
                               disabled={!isValid}
                               onChange={() => togglePnr(pnr.id, isValid)}
-                              className="w-4 h-4 rounded border-stone-300 text-brand focus:ring-brand disabled:opacity-50"
+                              className="w-4 h-4 rounded border-stone-300 text-brand-dark focus:ring-brand disabled:opacity-50"
                             />
                           </td>
                           <td className="px-6 py-3">
