@@ -5,6 +5,7 @@ import {
   groupByRemittanceDay,
   IATA_PAYMENT_NOTICE_DAYS,
   validateIataPayment,
+  refundCounts,
 } from './iata-payments';
 
 // Period 20260903W bills 16–23 Sep 2026 and settles on 30 Sep 2026.
@@ -42,10 +43,26 @@ describe('iataPaymentState — settled outcomes', () => {
     expect(s.owed).toBe(false);
   });
 
-  it('is overdue even when long past, if it was never paid or refunded', () => {
+  // Owner, 2026-10-03: staff pay on time but rarely record it, so a passed
+  // remittance day is read as paid on that day — never as overdue.
+  it('a passed remittance day with nothing recorded reads as paid on that day', () => {
     const s = state({ todayIso: '2026-12-01' });
-    expect(s.status).toBe('overdue');
-    expect(s.owed).toBe(true);
+    expect(s.status).toBe('paid');
+    expect(s.assumed).toBe(true);
+    expect(s.paidOn).toBe(DUE);
+    expect(s.owed).toBe(false);
+    expect(s.label).toContain('(assumed)');
+  });
+
+  it('a recorded payment is never marked assumed', () => {
+    expect(state({ paymentDate: '2026-09-29', todayIso: '2026-12-01' }).assumed).toBe(false);
+  });
+
+  it('a refund with no date stays owed until its remittance day, then reads as paid', () => {
+    expect(state({ roundStatus: 'refunded', todayIso: '2026-09-29' }).owed).toBe(true);
+    const after = state({ roundStatus: 'refunded', todayIso: '2026-10-01' });
+    expect(after.status).toBe('paid');
+    expect(after.assumed).toBe(true);
   });
 });
 
@@ -73,23 +90,29 @@ describe('iataPaymentState — refunding to roll the bill a cycle', () => {
     expect(s.owed).toBe(false);
   });
 
-  it('a refund ONE DAY after the window closes does NOT cancel the bill', () => {
-    // 24 Sep is already the next billing period. The EMD was billed in
-    // 20260903W and still falls due on 30 Sep; the refund is a separate credit.
-    const s = state({ roundStatus: 'refunded', refundDate: '2026-09-24' });
+  // Owner, 2026-10-04: a refund can be claimed at any time. After the window it
+  // is credited on a later cycle's remittance day and never moves this payment,
+  // which stays due on the calendar's date.
+  it('a refund ONE DAY after the window closes does NOT cancel the payment', () => {
+    const s = state({ roundStatus: 'refunded', refundDate: '2026-09-24', todayIso: '2026-09-24' });
     expect(s.owed).toBe(true);
     expect(s.status).toBe('scheduled');
     expect(s.deadline).toBe(DUE);
     expect(s.lateRefund).toBe('after-billing');
-    expect(s.label).toContain('after its billing window closed');
+    expect(s.label).toContain('after its billing window closed 2026-09-23');
   });
 
-  it('a refund before the remittance day but after the window is still owed', () => {
-    // This is exactly the case an earlier version of this file got wrong: it
-    // used the remittance day as the cut-off and would have written the bill off.
-    const s = state({ roundStatus: 'refunded', refundDate: '2026-09-28' });
+  it('8WKIIF: refunded 28 Sep, after the window — still payable on 30 Sep', () => {
+    const s = state({ issuanceDate: '2026-09-19', roundStatus: 'refunded', refundDate: '2026-09-28', todayIso: '2026-09-28' });
     expect(s.owed).toBe(true);
     expect(s.deadline).toBe(DUE);
+  });
+
+  it('once its remittance day passes, a late-refunded round reads as paid ON the calendar date', () => {
+    const s = state({ issuanceDate: '2026-09-19', roundStatus: 'refunded', refundDate: '2026-09-28', todayIso: '2026-10-04' });
+    expect(s.status).toBe('paid');
+    expect(s.assumed).toBe(true);
+    expect(s.paidOn).toBe(DUE);
   });
 
   it('will not treat a refund with no recorded date as cancelled', () => {
@@ -166,17 +189,15 @@ describe('iataPaymentState — the countdown', () => {
     expect(s.label).toContain('today');
   });
 
-  it('counts the days late once the day has passed', () => {
-    const s = state({ todayIso: '2026-10-03' });
-    expect(s.status).toBe('overdue');
-    expect(s.daysLeft).toBe(-3);
-    expect(s.urgency).toBe('red');
-    expect(s.label).toContain('3 days');
+  it('the day after the remittance day it is paid (assumed), not late', () => {
+    const s = state({ todayIso: '2026-10-01' });
+    expect(s.status).toBe('paid');
+    expect(s.urgency).toBe('green');
+    expect(s.daysLeft).toBeNull();
   });
 
   it('says "1 day" and not "1 days"', () => {
     expect(state({ todayIso: '2026-09-29' }).label).toContain('in 1 day (');
-    expect(state({ todayIso: '2026-10-01' }).label).toContain('by 1 day ');
   });
 
   it('carries the IATA period code so a date can be traced to the PDF', () => {
@@ -211,11 +232,9 @@ describe('isIataPaymentDueForAlert', () => {
     expect(isIataPaymentDueForAlert(state({ todayIso: '2026-09-27' }), '2026-09-27')).toBe(false);
   });
 
-  it('never emails an overdue payment — it stays on the dashboard only', () => {
-    // Owner rule, 2026-08-25: alerts are future-only, so the daily email does
-    // not nag about something already late.
+  it('never emails a payment whose day has passed — it is read as paid', () => {
     const s = state({ todayIso: '2026-10-05' });
-    expect(s.status).toBe('overdue');
+    expect(s.status).toBe('paid');
     expect(isIataPaymentDueForAlert(s, '2026-10-05')).toBe(false);
   });
 
@@ -372,5 +391,22 @@ describe('validateIataPayment', () => {
 
   it('allows any past date when the issuance date is unknown', () => {
     expect(ok(validateIataPayment('2026-01-05', null, '2026-10-01'))).toBe('2026-01-05');
+  });
+});
+
+// Owner, 2026-10-03: a refund that cancelled its billing before IATA billed it
+// moved no money, so it is left out of Total Refunded. Every other refund counts.
+describe('refundCounts — what adds to Total Refunded', () => {
+  it('leaves out a refund inside the billing window', () => {
+    expect(refundCounts(state({ roundStatus: 'refunded', refundDate: BILLING_TO }))).toBe(false);
+  });
+  it('counts a refund after the billing window', () => {
+    expect(refundCounts(state({ roundStatus: 'refunded', refundDate: '2026-09-24' }))).toBe(true);
+  });
+  it('counts a refund on a round with a recorded payment, whenever it landed', () => {
+    expect(refundCounts(state({ roundStatus: 'refunded', refundDate: '2026-09-22', paymentDate: '2026-09-21' }))).toBe(true);
+  });
+  it('counts a refund with no recorded date — it cannot be shown to have cancelled anything', () => {
+    expect(refundCounts(state({ roundStatus: 'refunded', refundDate: null }))).toBe(true);
   });
 });

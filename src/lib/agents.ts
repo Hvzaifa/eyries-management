@@ -142,3 +142,41 @@ export function canEditAgent(user: AuthUser, agentCreatedByBranchId: string | nu
   if (!agentCreatedByBranchId) return false;
   return user.branchIds.includes(agentCreatedByBranchId);
 }
+
+/**
+ * Prisma `where` fragment for the agents a user sees on the **Agents pages**
+ * (owner, 2026-10-05). Head office sees every agent. A branch sees the agents
+ * holding seats on one of its own bookings, plus any agent it created itself.
+ *
+ * Separate from `agentVisibilityFilter`, which still governs who a branch may
+ * hand seats to; that rule was not asked to change. Returns **null meaning deny
+ * everything**, never `{}`, for a branch that resolved to no rows — the same
+ * fail-closed contract as `pnrBranchFilter`.
+ */
+export function agentPageFilter(user: AuthUser): Record<string, unknown> | null {
+  if (user.accountType === 'headoffice') return {};
+  if (user.branchIds.length === 0) return null;
+  return {
+    OR: [
+      { createdByBranchId: { in: user.branchIds } },
+      { assignments: { some: { releasedAt: null, pnr: { branchId: { in: user.branchIds } } } } },
+    ],
+  };
+}
+
+/**
+ * Whether this user may send an agent a payment notice about one booking
+ * (owner, 2026-10-05). Head office always; a branch for its own bookings, or
+ * for any booking of an agent it created. Editing the agent's record stays with
+ * `canEditAgent`.
+ */
+export function canSendAgentNotice(
+  user: AuthUser,
+  agentCreatedByBranchId: string | null,
+  pnrBranchId: string | null
+): boolean {
+  if (canEditAgent(user, agentCreatedByBranchId)) return true;
+  if (user.branchIds.length === 0 || !pnrBranchId) return false;
+  return user.branchIds.includes(pnrBranchId);
+}
+

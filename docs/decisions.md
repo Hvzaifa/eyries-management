@@ -1556,6 +1556,128 @@ Unchanged: the "EMDs To Issue" card still counts active bookings only — an EMD
   - `/favicon.ico` and `/icon.png` are served. The middleware already lets image files through without a login.
   - A phone-width page does not scroll sideways.
 
+### 2026-10-03 — A passed IATA remittance day reads as paid; in-window refunds leave Total Refunded
+
+**Request (owner):**
+1. A round refunded before IATA bills it (on or before the period's billing-to date) must not be payable to IATA, and must not add to the totals.
+2. When a round's IATA deadline passes, the company has probably paid and just not recorded it, so treat it as paid.
+
+**Found:** (1) was already true for what is owed: such a round is "rolled". It added to no issued figure either: Total EMD Value is seats × fare, and EMD Issued counts only rounds still held. It **did** add to **Total Refunded**, which summed every refund. This had been flagged and left open on 2026-09-22.
+
+**Answered by the owner:**
+- The total meant is **Total Refunded**: in-window refunds are left out.
+- Assumed payments are **worked out live and shown as assumed**, not written to the database.
+- They **go on "To be refunded"** like recorded payments.
+- ~~**There is no third kind of refund:** a refund after the window reads as paid.~~ **Superseded 2026-10-04:** a refund can come at any time, and after the window the payment still falls due on its remittance day.
+
+**This supersedes** two earlier rules:
+- 2026-09-22, "a round refunded after its billing window but never paid is still owed".
+- The overdue IATA state (red, "Overdue since …", "Past their remittance day"). Nothing is ever overdue to IATA now.
+
+**Built:**
+- `iataPaymentState()`:
+  - A passed remittance day, or a refund after the billing-to date, returns `paid` with `assumed: true` and `paidOn` set to the remittance day.
+  - The `overdue` status and the `after-billing` late-refund flag were removed.
+  - A refund with no recorded date stays owed until its remittance day passes.
+- `refundCounts()`: every refund counts except a rolled one. It drives Total Refunded on the dashboard.
+- `listRoundsToRefund` filters on the computed state, and its rows carry `paidAssumed`.
+- Bulk refund pre-ticks on a computed `paidToIata`.
+- The booking page shows "Paid to IATA (assumed) on …" and offers "Record payment date" instead of "Not paid after all".
+- The IATA page lost its past-due section, and its amber box now covers only refunds with no date.
+- The master-sheet import helper still records an assumed date only when the day has passed.
+
+**Day boundary (an assumption):** on the remittance day itself the round is still owed ("Pay today"). It reads as paid from the next day. "Passes" was read as "is over".
+
+**Verified:**
+- 621 tests: 7 old-rule tests rewritten, 6 added.
+- Live data on 2026-10-03:
+
+  | Figure | Before | After |
+  |---|---|---|
+  | Total Refunded, all 714 bookings | PKR 740,448,699 | PKR 120,269,127 |
+  | Owed to IATA | 156 EMDs, PKR 395.4M | 51 EMDs, PKR 203,186,363 (all settling 7 Oct) |
+  | "To be refunded" | ~450 rounds | 553 rounds, PKR 767,125,039, of which 103 assumed (PKR 191.1M) |
+  | Dashboard, needing action | 468 | 400 |
+
+- No booking shows a past IATA date.
+- In a browser, a booking shows both an assumed-paid round and a rolled one correctly.
+- **One live round** is refunded after its window but before its remittance day with no payment recorded (PKR 586,432). It is now read as paid, per the owner's rule.
+
+### 2026-10-04 — A refund after the billing window does not settle the payment; dates stay on the IATA calendar
+
+**Owner:** "Don't change the dates set by the IATA calendar. A refund can be claimed at any time period. In this case, although the payment is due on 30 September, refunding on 28th means that amount will be credited on next cycle's remittance day. The edge case remains the same."
+
+**This corrects two things:**
+- The 2026-10-03 reading that "a round is refunded either inside the window or after it has been paid", which made the system treat any refund after the window as already paid.
+- A fix made earlier on 2026-10-04 and reverted the same day. On the owner's restatement that a refund after the window only happens once paid, the assumed payment date was moved to the refund day when the refund came before the remittance day. Wrong: dates come from the calendar only.
+
+**Answered by the owner (asked):**
+- Between a refund after the window and the remittance day, the round **shows its full amount as payable on that day**. From the next day it reads as paid (assumed) on that day, like any round.
+- The later refund credit is **not shown**, for now.
+
+**Rule now:**
+- A refund inside the billing window rolls the bill (unchanged edge case).
+- Any other refund leaves the payment due on the calendar's remittance day.
+- A passed remittance day reads as paid on that day.
+- Total Refunded still leaves out only rolled refunds.
+
+**Built:**
+- `iataPaymentState()` restores the `after-billing` flag. Such a round falls through to the ordinary countdown: owed, then assumed paid on the remittance day.
+- The IATA page's amber box is "Refunded but still payable" again, and covers both refunds after the window and refunds with no date.
+- Tests: three rewritten for the restored rule, one added for 8WKIIF, and the refund-day test from earlier today removed (622).
+
+**Live, 2026-10-04:**
+- 8WKIIF round 2 (billing closed 23 Sep, refunded 28 Sep) reads "Paid to IATA (assumed) on 2026-09-30".
+- No total changed: its remittance day had already passed. IATA owed: 51 EMDs, PKR 203,186,363. To be refunded: 553. Total Refunded: PKR 120,269,127.
+
+### 2026-10-05 — Agents pages: receivable by seat type, two views, branch scoping
+
+**Request (owner):**
+- The agents section is cluttered.
+- Each agent page gets two switchable views: receivables PNR by PNR, and all PNRs combined.
+- Show Umrah / One way / Tour seats and receivable, group seats recovery and balance.
+- The main page shows the total receivable from all agents.
+- Branches currently see no agents. They should see the agents they sold seats to, with only their own recoveries. Head Office sees all.
+
+**Found:**
+- All 27 agents were imported as Head Office records. Branches saw only agents they had *created*, so they saw none.
+- Each agent sells through exactly one branch: Rawalpindi 11, Multan 8, Faisalabad 5, Karachi 3.
+- No recoveries, charges, discounts or taxes are recorded, so every receivable today is seats × fare.
+
+**Answered by the owner (asked):**
+- **Seat type is by segment:** Umrah → Umrah, Employment → One way, Tour → Tour. This matches all 73 agent bookings.
+- **A branch sees** agents sold through it, plus agents it created.
+- **Kept:** the EMD payments per round, the notice button and margin. **Removed:** the "Next due" column. Contacts and B2B code moved off the list.
+- **Bookings counted:** active and completed.
+- **Margin** is Head Office only.
+- **A branch may send notices** for its own bookings.
+- **List layout:** totals cards plus a simple table.
+- **The agent page opens on** "All PNRs combined".
+
+**Built:**
+- `src/lib/agent-receivables.ts` (pure, tested): `seatTypeOf`, `summarizeReceivables` (whole paisa; credit kept per booking) and `RECEIVABLE_PNR_STATUSES`.
+- `src/lib/agents.ts`: `agentPageFilter` and `canSendAgentNotice`, both tested. `agentVisibilityFilter` (assigning seats) is unchanged.
+- `src/lib/server/agent-ledger.ts`: one loader for both pages, scoped in the query. A branch gets only its own bookings.
+- `src/components/receivable-cards.tsx`, and both agents pages rewritten.
+- `sendAgentNotice` now checks `canSendAgentNotice` on the server.
+
+**Verified:**
+- 639 tests, lint and typecheck.
+- Live data:
+
+  | | Seats | Receivable (PKR) |
+  |---|---|---|
+  | All 27 agents | 1,886 | 192,443,443 |
+  | Umrah | 1,451 | 159,301,788 |
+  | One way | 400 | 29,980,910 |
+  | Tour | 35 | 3,160,745 |
+
+- The total equals an independent seats × fare sum.
+- The branch totals (Rawalpindi 84,556,270; Multan 57,905,710; Faisalabad 43,521,745; Karachi 6,459,718) add to the Head Office total. No branch sees another branch's booking.
+- Karachi opening a Rawalpindi-only agent gets "not found", and an unresolved branch account sees nothing.
+- Checked in a browser as Head Office and as Karachi, and at phone width with no sideways scroll.
+- **Notice buttons show "no email on file"** for every imported agent, since none has an address recorded.
+
 ## Template for new entries
 
 ```

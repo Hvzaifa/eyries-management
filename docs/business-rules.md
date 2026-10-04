@@ -216,31 +216,53 @@ owner's worked example (2026-09-22):
 > refunds with IATA **on or before 23 Sep** and issues a new EMD on **24 Sep** —
 > which falls in `20260904W` and settles **7 Oct**.
 
-Once the billing window closes the EMD has been billed, and a refund after that
-is a **separate credit in a later period**: the original bill still falls due on
-its own remittance day. Refunding on 26 September in the example above would
-*not* move anything — the money is still due on the 30th.
+Once the billing window closes the EMD has been billed. **A refund can be
+claimed at any time** (owner, 2026-10-04), but only one inside the billing window
+moves the bill. That is the edge case the company uses to shift a remittance
+date. A refund after the window never changes the payment: it **still falls due
+in full on the calendar's remittance day**, and the refunded amount is credited
+on a later cycle's remittance day. The owner's example: an EMD due 30 Sep and
+refunded 28 Sep is still paid on 30 Sep, with the refund credited in the next
+cycle. The system does not show that credit (owner's choice, 2026-10-04). It
+records the refund and counts it in Total Refunded.
 
-A refund that lands **inside** its billing window therefore does not add to
-total refunded: no money ever left, so none came back. A refund after it does,
-because the payment goes out and the credit returns separately.
+**Total Refunded leaves out in-window refunds** (owner, 2026-10-03): no money
+ever left, so none came back. Every other refund counts, because the payment
+went out and the money returned (`refundCounts()` in `iata-payments.ts`). On
+the live data this took Total Refunded from PKR 740.4M to PKR 120.3M: 400
+in-window refunds of PKR 620.2M had been counted. Total EMD Value (seats ×
+fare) and EMD Issued (rounds still held) were never affected.
 
 ### What is owed
 
-A round is owed to IATA when it has **no recorded payment date** and its refund,
-if any, **came too late to cancel the billing**. Three ways a round stops being
-owed, and one trap:
+A round is owed to IATA only while its **remittance day is today or ahead** and
+nothing settles it. It stops being owed when:
 
 - **paid** — a payment date is recorded;
-- **refunded on or before the billing-to date** — the billing was cancelled and
-  the bill moved to the round that replaced it; chasing both would count it
-  twice;
-- refunded **after** payment — the money went and came back.
+- **its remittance day has passed** — read as **paid on that day (assumed)**
+  (owner, 2026-10-03). Staff pay IATA on time but rarely record it, so a passed
+  day is never shown as overdue. This is worked out live, never written to the
+  database. Recording the real date replaces the assumption, and the booking
+  page offers "Record payment date" for it;
+- **refunded on or before the billing-to date** — rolled: the billing was
+  cancelled and the bill moved to the round that replaced it. Chasing both would
+  count it twice;
+A refund **after the billing-to date** does not stop a round being owed. It stays
+payable on its remittance day and then reads as paid (assumed) on that day, like
+any round. A refund with **no recorded date** can't be placed against the
+window, so it is treated the same way. Both are listed on the IATA page under
+"Refunded but still payable". **Dates always come from the IATA calendar.** An
+assumed payment is always dated on the remittance day, never moved by a
+refund. An EMD issued **outside the loaded calendar** has no
+remittance day, so it stays owed and undated until the calendar is loaded.
 
-The trap: a round **refunded after its billing window closed but never paid is
-still owed.** It is not `issued`, so any query written as "issued and unpaid"
-silently loses it. `iataPaymentState()` is the one place that decides, and every
-query filters on its verdict rather than on `status`.
+An assumed payment counts as paid everywhere a recorded one does:
+- it leaves the dashboard and the IATA page;
+- it appears on the Refunds page's **To be refunded** list, marked "assumed";
+- it is pre-ticked in bulk refund.
+
+`iataPaymentState()` is the one place that decides. Every query filters on its
+verdict, never on `status` or on `payment_date` alone.
 
 ### The IATA page, by license (owner, 2026-09-29)
 
@@ -568,6 +590,36 @@ positive and cannot be dated in the future; a payment recorded by mistake is
 out by a negative entry. Paying more than the balance is allowed and shows as
 **credit**, which is the same credit rule 13 describes when a round is refunded
 and re-issued.
+
+### The Agents pages (owner, 2026-10-05)
+
+**Seat types come from the booking's segment:**
+
+| Seat type | Segment | Meaning (owner) |
+|---|---|---|
+| **Umrah** | Umrah | return seats, Saudi Arabia only |
+| **One way** | Employment | no return; Saudi employment or any destination |
+| **Tour** | Tour | return seats, any destination except Saudi Arabia |
+
+A segment outside the list shows as "Other", and only when present.
+
+**What each figure is:**
+- **Receivable** is the agent total above (seats × fare + charge − discount + ticked tax).
+- **Group seats recovery** is the payments received.
+- **Balance receivable** is the outstanding amount, summed booking by booking. An overpayment shows as credit and is not netted against another booking.
+- **Only active and completed bookings count.** An agent can still owe after travel. Cancelled bookings are left out.
+
+**An agent's page** has two views, switched by buttons:
+- **All PNRs combined** (the default): seats and receivable per type, total receivable, recovered, balance.
+- **By PNR**: the same per booking, with the agent's share of each EMD round folded under each row, and the notice button.
+
+**The Agents list** shows the same totals for every visible agent, then one row per agent: seats, receivable, recovered, balance. Contacts and the B2B code are on the agent's page.
+
+**Who sees what:**
+- **Head Office** sees every agent and every booking, plus **margin**, which is Head Office only.
+- **A branch** sees the agents holding seats on its own bookings (plus any agent it created), with **figures from its own bookings only**: Karachi never sees Rawalpindi's recovery. Both are enforced in the query.
+- **Sending notices:** a branch may send a payment notice for its own bookings, even to an agent Head Office created. Editing the agent's record stays with whoever created it.
+- **Assigning seats:** who a branch may hand seats to (`agentVisibilityFilter`) is unchanged.
 
 ### Telling the agent (built 2026-09-22)
 

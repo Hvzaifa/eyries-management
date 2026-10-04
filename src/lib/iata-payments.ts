@@ -33,9 +33,18 @@
  *   - a recorded `payment_date`        -> **paid**, nothing owed;
  *   - refunded on/before `billingTo`   -> **rolled**: the billing was cancelled
  *     and the money moved to whichever round replaced it, nothing owed here;
- *   - refunded *after* `billingTo`     -> still **owed** on the original
- *     remittance day — the refund came too late to catch the cycle;
- *   - still `issued`, unpaid           -> **owed** on the remittance day.
+ *   - refunded *after* `billingTo`     -> the bill stands: still **owed** on
+ *     the calendar's remittance day, then paid (assumed) like any round. A
+ *     refund can be claimed at any time; after the window it is credited on a
+ *     later cycle's remittance day and never moves this payment (owner,
+ *     2026-10-04);
+ *   - unpaid, remittance day passed    -> **paid (assumed)** on that day. Staff
+ *     pay IATA on time but rarely record it, so a passed remittance day is read
+ *     as paid, not as overdue (owner, 2026-10-03). Worked out live, never
+ *     written: recording the real date replaces the assumption;
+ *   - unpaid, remittance day today or ahead -> **owed** on the remittance day.
+ *
+ * Only "rolled" keeps a refund out of Total Refunded — see `refundCounts`.
  *
  * The refund itself is also an IATA matter: *"the airline isn't concerned with
  * money — the refund request will be sent to IATA and IATA will process it"*
@@ -46,7 +55,7 @@ import { diffInDays, type Urgency } from './urgency';
 import { iataPaymentDeadline, iataPeriodFor, type IataPeriod } from './iata-calendar';
 
 export type IataPaymentStatus =
-  /** Payment to IATA has been recorded. */
+  /** Paid to IATA — recorded, or assumed (see `assumed`). */
   | 'paid'
   /**
    * Refunded within its own billing window, which cancels the billing — the
@@ -55,8 +64,6 @@ export type IataPaymentStatus =
   | 'rolled'
   /** Owed, but the loaded calendar does not reach the issuance date. */
   | 'unknown'
-  /** Owed and the remittance day has passed. */
-  | 'overdue'
   /** Owed today. */
   | 'due-today'
   /** Owed within the alert window. */
@@ -71,6 +78,12 @@ export interface IataPaymentState {
   /** The billing period the EMD was issued in — shown so a date can be traced to the PDF. */
   period: IataPeriod | null;
   paidOn: string | null;
+  /**
+   * True when `paid` is the system's reading, not a recorded payment: the
+   * remittance day passed, or the round was refunded after its billing window.
+   * `paidOn` is then the remittance day.
+   */
+  assumed: boolean;
   /** Days until the remittance day; negative when it has passed. Null when unknown or settled. */
   daysLeft: number | null;
   /** True when this round still represents money the company must pay IATA. */
@@ -83,9 +96,10 @@ export interface IataPaymentState {
    */
   rollBy: string | null;
   /**
-   * Set when the round is refunded but the refund came too late to cancel the
-   * billing, or its date was never recorded so we cannot tell. Money is still
-   * owed in both cases; the reason differs.
+   * Set when a refunded round is still owed: its refund came after the billing
+   * window (the bill stands; the refund is a later credit), or its date was
+   * never recorded so it cannot be shown to have caught the window. Either way
+   * it is owed until its remittance day passes.
    */
   lateRefund: 'after-billing' | 'date-unknown' | null;
   /** Its own colour, independent of the issuance-deadline colour on the same row. */
@@ -119,6 +133,7 @@ export function iataPaymentState(input: {
       deadline,
       period,
       paidOn: paymentDate,
+      assumed: false,
       daysLeft: null,
       owed: false,
       rollBy: null,
@@ -128,11 +143,7 @@ export function iataPaymentState(input: {
     };
   }
 
-  // Refunded, unpaid — did the refund catch the billing window?
-  //
-  // Only a refund landing ON OR BEFORE the period's billing-to date cancels the
-  // billing. After that the EMD has already been billed, and the original bill
-  // still falls due on its own remittance day whatever the refund does.
+  // Refunded, no payment recorded — did the refund catch the billing window?
   let lateRefund: IataPaymentState['lateRefund'] = null;
   if (roundStatus === 'refunded') {
     if (period && refundDate && refundDate <= period.billingTo) {
@@ -141,6 +152,7 @@ export function iataPaymentState(input: {
         deadline,
         period,
         paidOn: null,
+        assumed: false,
         daysLeft: null,
         owed: false,
         rollBy: null,
@@ -149,9 +161,11 @@ export function iataPaymentState(input: {
         urgency: 'grey',
       };
     }
-    // Still owed. Either the refund missed the window, or its date was never
-    // recorded and we cannot claim it caught one. Falls through to the ordinary
-    // countdown, flagged so the row explains itself.
+    // Not inside the window: the bill stands and falls due on the calendar's
+    // remittance day. A refund after the window is credited on a later cycle's
+    // remittance day and does not move this payment (owner, 2026-10-04). With no
+    // refund date we cannot claim it caught the window. Falls through to the
+    // ordinary countdown, flagged so the row explains itself.
     lateRefund = refundDate ? 'after-billing' : 'date-unknown';
   }
 
@@ -163,6 +177,7 @@ export function iataPaymentState(input: {
       deadline: null,
       period: null,
       paidOn: null,
+      assumed: false,
       daysLeft: null,
       owed: true,
       rollBy: null,
@@ -176,24 +191,32 @@ export function iataPaymentState(input: {
   // The decision date: refund on or before this and re-issue after it, and the
   // bill moves a cycle. Past it, the choice has already been made.
   const rollBy = period && period.billingTo >= todayIso ? period.billingTo : null;
-  const base = { deadline, period, paidOn: null, daysLeft, owed: true, rollBy, lateRefund } as const;
+  // Remittance day passed with nothing recorded: read as paid on that day
+  // (owner, 2026-10-03). Never "overdue" — staff can still record the real date.
+  if (daysLeft < 0) {
+    return {
+      status: 'paid',
+      deadline,
+      period,
+      paidOn: deadline,
+      assumed: true,
+      daysLeft: null,
+      owed: false,
+      rollBy: null,
+      lateRefund: null,
+      urgency: 'green',
+      label: `Paid to IATA (assumed) on ${deadline} — remittance day passed, no payment recorded`,
+    };
+  }
 
+  const base = { deadline, period, paidOn: null, assumed: false, daysLeft, owed: true, rollBy, lateRefund } as const;
   const why =
     lateRefund === 'after-billing'
-      ? ` — refunded ${refundDate}, after its billing window closed ${period?.billingTo}, so this bill still stands`
+      ? ` — refunded ${refundDate}, after its billing window closed ${period?.billingTo}, so this payment still stands`
       : lateRefund === 'date-unknown'
         ? ' — refunded with no date recorded, so it cannot be treated as cancelled'
         : '';
 
-  if (daysLeft < 0) {
-    const late = Math.abs(daysLeft);
-    return {
-      ...base,
-      status: 'overdue',
-      urgency: 'red',
-      label: `IATA payment overdue by ${late} day${late === 1 ? '' : 's'} (was due ${deadline})${why}`,
-    };
-  }
   if (daysLeft === 0) {
     return {
       ...base,
@@ -216,6 +239,15 @@ export function iataPaymentState(input: {
     urgency: daysLeft <= 5 ? 'amber' : 'green',
     label: `Pay IATA by ${deadline}${why}`,
   };
+}
+
+/**
+ * Whether a refund counts towards Total Refunded (owner, 2026-10-03). A refund
+ * that cancelled its billing before IATA billed it — a rolled round — moved no
+ * money, so none came back; every other refund does count.
+ */
+export function refundCounts(state: IataPaymentState): boolean {
+  return state.status !== 'rolled';
 }
 
 /**

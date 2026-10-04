@@ -37,8 +37,9 @@ export default async function IataPage({ searchParams }: { searchParams: Promise
   const requested = (await searchParams).license;
   const selected = tabs.find((t) => t.key === requested) ?? null;
   const dues = summarizeDues(dueForLicense(allDue, selected?.key ?? null), today);
-  const overdue = dues.groups.filter((g) => g.overdue);
-  const ahead = dues.groups.filter((g) => !g.overdue);
+  // No group is ever past its day: a passed remittance day reads as paid
+  // (owner, 2026-10-03), so every group here is today or ahead.
+  const ahead = dues.groups;
 
   return (
     <div className="min-h-screen flex flex-col bg-stone-50">
@@ -48,11 +49,12 @@ export default async function IataPage({ searchParams }: { searchParams: Promise
         <div>
           <h1 className="text-2xl font-bold text-stone-900 tracking-tight">IATA settlements</h1>
           <p className="text-sm text-stone-500 mt-1">
-            Every EMD with no recorded payment, grouped into the single payment that settles its
-            billing period. Dates come from the IATA remittance calendar ({IATA_CALENDAR_FROM} to{' '}
-            {IATA_CALENDAR_TO}), read from the day each EMD was issued. A refund removes a bill only
-            when it lands on or before that period’s billing-to date — the <em>roll by</em> date on
-            each row.
+            Every EMD still to be paid, grouped into the single payment that settles its billing
+            period. Dates come from the IATA remittance calendar ({IATA_CALENDAR_FROM} to{' '}
+            {IATA_CALENDAR_TO}), read from the day each EMD was issued. Once a remittance day has
+            passed, its EMDs are taken as paid on that day, even if no payment was recorded. A refund
+            on or before the period’s billing-to date (the <em>roll by</em> date on each row) cancels
+            the bill.
           </p>
         </div>
 
@@ -98,17 +100,6 @@ export default async function IataPage({ searchParams }: { searchParams: Promise
           </div>
         )}
 
-        {overdue.length > 0 && (
-          <section className="space-y-3">
-            <h2 className="text-sm font-semibold text-red-700 flex items-center gap-1.5">
-              <AlertTriangle className="w-4 h-4" /> Past their remittance day
-            </h2>
-            {overdue.map((g) => (
-              <SettlementGroup key={g.remittanceDay} group={g} />
-            ))}
-          </section>
-        )}
-
         {ahead.length > 0 && (
           <section className="space-y-3">
             <h2 className="text-sm font-semibold text-stone-800 flex items-center gap-1.5">
@@ -123,13 +114,14 @@ export default async function IataPage({ searchParams }: { searchParams: Promise
         {dues.lateRefunds.length > 0 && (
           <section className="rounded-2xl border border-amber-200 bg-amber-50/60 p-5 shadow-sm space-y-2">
             <h2 className="text-sm font-semibold text-amber-800 flex items-center gap-1.5">
-              <AlertTriangle className="w-4 h-4" /> Refunded but still owed ({dues.lateRefunds.length})
+              <AlertTriangle className="w-4 h-4" /> Refunded but still payable ({dues.lateRefunds.length})
             </h2>
             <p className="text-xs text-amber-700">
-              A refund only cancels a bill when it lands <strong>on or before</strong> the
+              A refund cancels the bill only when it lands <strong>on or before</strong> the
               billing-to date of the period the EMD was issued in. These refunds came after that
-              window closed — or have no recorded date — so the original bill still stands and the
-              refund is a separate credit in a later period. They are included in the totals above.
+              window, so the payment still falls due on its remittance day and the refund is
+              credited in a later cycle. Or they have no recorded date, so that can’t be told.
+              They are included in the totals above.
             </p>
             <ul className="text-xs text-amber-900 space-y-1 pt-1">
               {dues.lateRefunds.map((d) => (
@@ -138,9 +130,7 @@ export default async function IataPage({ searchParams }: { searchParams: Promise
                     {d.pnrCode}
                   </Link>{' '}
                   round {d.roundNumber} · issued {d.issuanceDate} · {formatPkr(d.emdAmount)} ·{' '}
-                  {d.lateRefund === 'date-unknown'
-                    ? 'refund date not recorded'
-                    : 'refunded after its billing window'}
+                  {d.lateRefund === 'date-unknown' ? 'refund date not recorded' : 'refunded after its billing window'}
                 </li>
               ))}
             </ul>
@@ -245,29 +235,21 @@ function SettlementGroup({
 }: {
   group: IataDues['groups'][number];
 }) {
-  const when = group.overdue
-    ? `overdue by ${Math.abs(group.daysLeft)} day${Math.abs(group.daysLeft) === 1 ? '' : 's'}`
-    : group.daysLeft === 0
-      ? 'today'
-      : `in ${group.daysLeft} day${group.daysLeft === 1 ? '' : 's'}`;
+  const when = group.daysLeft === 0 ? 'today' : `in ${group.daysLeft} day${group.daysLeft === 1 ? '' : 's'}`;
 
   return (
     <div className="rounded-2xl border border-stone-200 bg-white shadow-sm overflow-hidden">
       <div
         className={`flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 border-b ${
-          group.overdue
-            ? 'border-red-100 bg-red-50/70'
-            : group.daysLeft <= 2
-              ? 'border-red-100 bg-red-50/40'
-              : 'border-stone-100 bg-[#FAF7F1]'
+          group.daysLeft <= 2 ? 'border-red-100 bg-red-50/40' : 'border-stone-100 bg-[#FAF7F1]'
         }`}
       >
         <div className="flex items-center gap-2.5">
-          <Banknote className={`w-4 h-4 ${group.overdue ? 'text-red-500' : 'text-brand-dark'}`} />
+          <Banknote className="w-4 h-4 text-brand-dark" />
           <div>
             <p className="text-sm font-semibold text-stone-900">
               Pay {group.remittanceDay}{' '}
-              <span className={`font-normal ${group.overdue ? 'text-red-600' : 'text-stone-500'}`}>
+              <span className="font-normal text-stone-500">
                 — {when}
               </span>
             </p>
@@ -315,7 +297,7 @@ function SettlementGroup({
                   <p className="text-[11px] text-stone-400">roll by {d.rollBy}</p>
                 )}
                 {d.lateRefund === 'after-billing' && (
-                  <p className="text-[11px] text-amber-600">refunded too late</p>
+                  <p className="text-[11px] text-amber-600">refunded after billing</p>
                 )}
                 {d.lateRefund === 'date-unknown' && (
                   <p className="text-[11px] text-amber-600">refunded, no date</p>

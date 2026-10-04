@@ -118,7 +118,11 @@ export default function ToRefundList({ rows, canRecord }: { rows: RoundToRefund[
                     </td>
                     <td className="px-4 py-3 font-mono text-xs text-stone-600 whitespace-nowrap">{r.emdNumber ?? '—'}</td>
                     <td className="px-4 py-3 text-stone-600 whitespace-nowrap">{r.issuanceDate}</td>
-                    <td className="px-4 py-3 text-stone-600 whitespace-nowrap">{r.paidToIataOn}</td>
+                    <td className="px-4 py-3 text-stone-600 whitespace-nowrap">
+                      {r.paidToIataOn}
+                      {/* No payment recorded: its remittance day passed, so it is taken as paid. */}
+                      {r.paidAssumed && <span className="block text-[10px] text-stone-400">assumed</span>}
+                    </td>
                     <td className="px-4 py-3 text-stone-600">{r.branchName ?? '—'}</td>
                     <td className="px-4 py-3 font-mono text-stone-500">{r.airlineCode ?? '—'}</td>
                     <td className="px-4 py-3 text-stone-600 whitespace-nowrap">

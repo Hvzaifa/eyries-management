@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   agentNameKey,
+  agentPageFilter,
   agentVisibilityFilter,
   canEditAgent,
+  canSendAgentNotice,
   parseContactEmails,
   validateAgent,
   type AgentInput,
@@ -159,3 +161,48 @@ describe('canEditAgent', () => {
     expect(canEditAgent(branch([]), null)).toBe(false);
   });
 });
+
+// Owner, 2026-10-05: a branch sees the agents it has sold seats to, and their
+// money on its own bookings only.
+describe('agentPageFilter', () => {
+  it('shows head office every agent', () => {
+    expect(agentPageFilter(hq)).toEqual({});
+  });
+
+  it('shows a branch the agents holding seats on its bookings, and those it created', () => {
+    expect(agentPageFilter(branch(['b1']))).toEqual({
+      OR: [
+        { createdByBranchId: { in: ['b1'] } },
+        { assignments: { some: { releasedAt: null, pnr: { branchId: { in: ['b1'] } } } } },
+      ],
+    });
+  });
+
+  it('DENIES an unresolved branch rather than falling open', () => {
+    expect(agentPageFilter(branch([]))).toBeNull();
+  });
+});
+
+describe('canSendAgentNotice', () => {
+  it('lets head office chase any booking', () => {
+    expect(canSendAgentNotice(hq, null, 'b9')).toBe(true);
+  });
+
+  it("lets a branch chase a head-office agent about the branch's own booking", () => {
+    expect(canSendAgentNotice(branch(['b1']), null, 'b1')).toBe(true);
+  });
+
+  it("refuses a branch another branch's booking", () => {
+    expect(canSendAgentNotice(branch(['b1']), null, 'b2')).toBe(false);
+    expect(canSendAgentNotice(branch(['b1']), null, null)).toBe(false);
+  });
+
+  it('lets a branch chase its own agent on any booking', () => {
+    expect(canSendAgentNotice(branch(['b1']), 'b1', 'b2')).toBe(true);
+  });
+
+  it('refuses an unresolved branch', () => {
+    expect(canSendAgentNotice(branch([]), null, 'b1')).toBe(false);
+  });
+});
+

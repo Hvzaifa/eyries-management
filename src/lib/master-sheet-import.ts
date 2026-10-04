@@ -185,7 +185,8 @@ export function assumedIataPayment(r: Omit<PlannedRound, 'paymentDate'>, todayIs
     roundStatus: r.status,
     todayIso,
   });
-  return s.owed && s.deadline && s.deadline < todayIso ? s.deadline : null;
+  // Recorded only once the remittance day has passed; a stored date is never in the future.
+  return s.assumed && s.paidOn && s.paidOn < todayIso ? s.paidOn : null;
 }
 
 const EMD_NUMBER = /^\d{3} \d{10}$/;

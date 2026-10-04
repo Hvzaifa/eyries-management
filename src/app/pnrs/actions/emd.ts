@@ -12,7 +12,7 @@ import { str, dateVal, numVal } from '@/lib/form';
 import { requireHeadOffice, TX_TIMEOUT_MS } from '@/lib/server/guards';
 import { syncPnrTlDate } from '@/lib/server/pnr-tl';
 import { isValidEmdNumber, EMD_NUMBER_HINT } from '@/lib/bulk-emd';
-import { validateIataPayment } from '@/lib/iata-payments';
+import { iataPaymentState, validateIataPayment } from '@/lib/iata-payments';
 import { todayIsoInPkt } from '@/lib/urgency';
 
 export async function createEmdRound(formData: FormData) {
@@ -244,7 +244,23 @@ export async function fetchEmdRoundsByPnrs(pnrCodes: string[]) {
     ]
   });
 
-  return { rounds, error: undefined };
+  // Paid to IATA, recorded or assumed from a passed remittance day (owner,
+  // 2026-10-03) — what "To be refunded" pre-ticks. Worked out here, as nothing
+  // assumed is stored.
+  const today = todayIsoInPkt();
+  const withPaid = rounds.map((r) => ({
+    ...r,
+    paidToIata:
+      iataPaymentState({
+        issuanceDate: r.issuanceDate.toISOString().slice(0, 10),
+        paymentDate: r.paymentDate ? r.paymentDate.toISOString().slice(0, 10) : null,
+        refundDate: null,
+        roundStatus: r.status,
+        todayIso: today,
+      }).status === 'paid',
+  }));
+
+  return { rounds: withPaid, error: undefined };
 }
 
 export async function processBulkRefunds(refunds: { roundId: string, amount: number, date: string }[]) {

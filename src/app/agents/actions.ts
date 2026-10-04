@@ -16,6 +16,7 @@ import { validateAgentNotice } from '@/lib/agent-notices';
 import {
   agentNameKey,
   canEditAgent,
+  canSendAgentNotice,
   parseContactEmails,
   validateAgent,
 } from '@/lib/agents';
@@ -182,11 +183,11 @@ export async function updateAgent(formData: FormData): Promise<AgentActionResult
  * demand for money sent to an outside party on the company's behalf is not
  * something a cron job should decide.
  *
- * Authority: whoever may edit the agent may write to it. `canEditAgent` already
- * governs who can change `contact_emails`, and those addresses are the only
- * places a notice can go — so anyone who can change the destination can
- * certainly send to it. A branch chases the agents it created; Head Office
- * chases any.
+ * Authority (`canSendAgentNotice`): Head Office chases any booking. A branch
+ * chases the agents on its own bookings, including agents Head Office created
+ * (owner, 2026-10-05), and any booking of an agent it created. The recipient
+ * is still limited to the agent's recorded addresses, which only the agent's
+ * creator can change, so this widens who may press send, never where it goes.
  *
  * The recipient guard lives in `validateAgentNotice` and is enforced HERE, on
  * the server, not in the form. The airline batch email was an open mail relay
@@ -207,7 +208,7 @@ export async function sendAgentNotice(payload: {
     where: { id: assignmentId },
     include: {
       agent: { select: { id: true, name: true, contactEmails: true, createdByBranchId: true } },
-      pnr: { select: { id: true, pnr: true } },
+      pnr: { select: { id: true, pnr: true, branchId: true } },
     },
   });
   if (!assignment) return { ok: false, error: 'That seat hand-over no longer exists.' };
@@ -215,8 +216,10 @@ export async function sendAgentNotice(payload: {
     return { ok: false, error: 'Those seats have been handed back, so there is nothing to chase.' };
   }
 
-  if (!canEditAgent(user, assignment.agent.createdByBranchId)) {
-    return { ok: false, error: 'You cannot send notices to this agent.' };
+  // A branch may chase its own bookings' agents (owner, 2026-10-05), even an
+  // agent head office created; editing the agent's record stays with its creator.
+  if (!canSendAgentNotice(user, assignment.agent.createdByBranchId, assignment.pnr.branchId)) {
+    return { ok: false, error: 'You cannot send notices about this booking.' };
   }
 
   const check = validateAgentNotice({

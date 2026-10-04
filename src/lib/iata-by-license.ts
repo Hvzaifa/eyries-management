@@ -1,4 +1,4 @@
-import { groupByRemittanceDay, type RemittanceGroup } from './iata-payments';
+import { groupByRemittanceDay, type IataPaymentState, type RemittanceGroup } from './iata-payments';
 
 /**
  * The IATA page, one license at a time (owner, 2026-09-29).
@@ -32,8 +32,8 @@ export interface IataDueRound {
   deadline: string | null;
   /** Last day a refund could still move this bill to the next cycle. */
   rollBy: string | null;
-  /** Why a refunded round is nonetheless still owed. */
-  lateRefund: 'after-billing' | 'date-unknown' | null;
+  /** Set when a refunded round is still owed: refunded after its billing window, or no refund date. */
+  lateRefund: IataPaymentState['lateRefund'];
 }
 
 export interface IataDues {
@@ -41,10 +41,7 @@ export interface IataDues {
   groups: RemittanceGroup<IataDueRound>[];
   /** Owed, but issued outside the loaded calendar — no day can be named yet. */
   undated: IataDueRound[];
-  /**
-   * Owed despite being refunded, because the refund missed its billing window
-   * or has no recorded date. Surprising enough to be worth naming.
-   */
+  /** Owed despite being refunded: after the billing window, or with no recorded date. */
   lateRefunds: IataDueRound[];
   /** Every owed round, dated or not. */
   totalOwed: number;

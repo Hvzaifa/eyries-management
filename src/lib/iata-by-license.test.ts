@@ -95,7 +95,7 @@ describe('dueForLicense', () => {
 describe('summarizeDues — the cards for one license', () => {
   const all = [
     due({ roundId: 'a', emdAmount: 0.1, deadline: '2026-10-08' }),
-    due({ roundId: 'b', emdAmount: 0.2, deadline: '2026-10-15', lateRefund: 'after-billing' }),
+    due({ roundId: 'b', emdAmount: 0.2, deadline: '2026-10-15', lateRefund: 'date-unknown' }),
     due({ roundId: 'c', emdAmount: 1_000, licenseId: T2F.id, deadline: '2026-10-08' }),
     due({ roundId: 'd', emdAmount: 5, deadline: null, periodCode: null }),
   ];

@@ -1,147 +1,48 @@
-import { Fragment } from 'react';
 import { requirePageUser } from '@/lib/server/session';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Building2, Mail, Phone, CalendarClock } from 'lucide-react';
+import { ArrowLeft, Building2, ChevronDown, LayoutGrid, List, Mail, Phone } from 'lucide-react';
 import AppHeader from '@/components/app-header';
-import { prisma } from '@/lib/prisma';
-import { agentVisibilityFilter, canEditAgent } from '@/lib/agents';
-import { agentDues, duesForAssignment } from '@/lib/agent-dues';
-import { buildAgentNotice } from '@/lib/agent-notices';
-import { nextEmdSuggestion } from '@/lib/emd';
+import ReceivableCards, { SEAT_TYPE_DOTS } from '@/components/receivable-cards';
 import AgentRoundSchedule from '@/components/agent-round-schedule';
-import SendNoticeButton from '../send-notice-button';
+import { isHeadOffice } from '@/lib/auth';
+import { canEditAgent, canSendAgentNotice } from '@/lib/agents';
+import { loadAgentLedger, type AgentBookingLine } from '@/lib/server/agent-ledger';
+import { SEAT_TYPE_LABELS, summarizeReceivables } from '@/lib/agent-receivables';
+import { buildAgentNotice } from '@/lib/agent-notices';
 import { formatPkr } from '@/lib/format';
-import { todayIsoInPkt, diffInDays } from '@/lib/urgency';
+import { todayIsoInPkt } from '@/lib/urgency';
+import SendNoticeButton from '../send-notice-button';
+import AgentFormButton from '../agent-form-button';
+
+export const metadata = { title: 'Agent | Six Sigma' };
 
 /**
- * One agent: who they are, which seats they hold, and what they owe when.
+ * One agent, in two views switched by the buttons at the top (owner,
+ * 2026-10-05): every booking combined — seats and receivable by seat type,
+ * recovered, balance — and the same figures booking by booking.
  *
- * Every figure here is **calculated** — from the assignment's terms, the
- * booking's fare and tax, the EMD the airline is holding, and the payments
- * recorded. Nothing is stored, so nothing can go stale when a round is
- * refunded or a charge changes (`lib/agent-dues.ts`, phase 7 step 3).
- *
- * Read-only: money is recorded on the booking, where the seats are.
+ * A branch sees only its own bookings' figures, and an agent who holds no seats
+ * on them (and was not created by it) is not found. Margin is Head Office only.
+ * Every figure is calculated; money is recorded on the booking, not here.
  */
 export default async function AgentDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ view?: string }>;
 }) {
   const { user, authUser } = await requirePageUser();
   const { id } = await params;
-
-  // Visibility is applied in the QUERY, not after fetching: a branch must not be
-  // able to read another branch's agent by guessing the URL.
-  const where = agentVisibilityFilter(authUser);
-  if (where === null) notFound();
-
-  const agent = await prisma.agent.findFirst({
-    where: { id, ...where },
-    include: {
-      createdByBranch: { select: { name: true } },
-      assignments: {
-        where: { releasedAt: null },
-        orderBy: { assignedAt: 'desc' },
-        include: {
-          recoveries: { select: { amount: true } },
-          pnr: {
-            select: {
-              id: true,
-              pnr: true,
-              srNo: true,
-              seats: true,
-              sector: true,
-              outboundDate: true,
-              status: true,
-              fare: true,
-              airlineTaxes: true,
-              segment: true,
-              requestDate: true,
-              airline: { select: { code: true } },
-              branch: { select: { name: true } },
-              // What the airline holds, and by when — the two facts the EMD
-              // share is worked out from.
-              emdRounds: { select: { roundNumber: true, status: true, emdAmount: true, deadlineDate: true } },
-              ticketing: { select: { ticketIssuanceDeadline: true } },
-            },
-          },
-        },
-      },
-    },
-  });
-
-  if (!agent) notFound();
-
-  const totalSeats = agent.assignments.reduce((sum, a) => sum + a.seats, 0);
+  const byPnr = (await searchParams).view === 'pnrs';
   const today = todayIsoInPkt();
 
-  // One schedule per booking this agent holds seats on. The same pure functions
-  // the booking page uses, so the two pages cannot disagree about a figure.
-  const lines = agent.assignments.map((a) => {
-    const iso = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
-    // What the next EMD will cost, from the airline's own policy. The agent's
-    // share of it is money to collect BEFORE it is issued (owner ruling,
-    // 2026-09-22); null when no policy covers the airline, in which case no
-    // upcoming line is shown rather than a guessed one.
-    const upcoming = nextEmdSuggestion({
-      roundsIssued: a.pnr.emdRounds.filter((r) => r.status === 'issued').length,
-      seats: a.pnr.seats,
-      fare: Number(a.pnr.fare),
-      airlineCode: a.pnr.airline?.code ?? null,
-      segment: a.pnr.segment,
-      requestDateIso: iso(a.pnr.requestDate),
-      outboundDateIso: iso(a.pnr.outboundDate),
-      todayIso: today,
-    });
+  const [agent] = await loadAgentLedger(authUser, today, id);
+  if (!agent) notFound();
 
-    const { dues, margin } = duesForAssignment({
-      agentSeats: a.seats,
-      pnrSeats: a.pnr.seats,
-      fare: Number(a.pnr.fare),
-      airlineTaxes: a.pnr.airlineTaxes === null ? null : Number(a.pnr.airlineTaxes),
-      chargeType: a.chargeType,
-      chargeValue: a.chargeValue === null ? null : Number(a.chargeValue),
-      discountType: a.discountType,
-      discountValue: a.discountValue === null ? null : Number(a.discountValue),
-      chargeTax: a.chargeTax,
-      recoveries: a.recoveries.map((r) => Number(r.amount)),
-      rounds: a.pnr.emdRounds.map((r) => ({
-        roundNumber: r.roundNumber,
-        status: r.status,
-        emdAmount: Number(r.emdAmount),
-        deadlineDate: iso(r.deadlineDate),
-      })),
-      ticketIssuanceDeadline: iso(a.pnr.ticketing?.ticketIssuanceDeadline ?? null),
-      upcomingRoundAmount: upcoming.amount,
-    });
-    // The default text for a notice about whatever falls due next. Built on the
-    // server so the browser is never handed the means to compose one freely.
-    // Sendable whenever something is outstanding. An EMD share has no date and
-    // is chased without quoting one; a balance with no ticketing deadline is
-    // the case that still cannot be chased, because there is nothing to ask by.
-    const notice =
-      dues.next && (dues.next.kind === 'emd' || dues.next.date)
-        ? buildAgentNotice({
-            agentName: agent.name,
-            pnrCode: a.pnr.pnr,
-            sector: a.pnr.sector,
-            seats: a.seats,
-            outboundDate: iso(a.pnr.outboundDate),
-            kind: dues.next.kind,
-            amount: dues.next.amount,
-            dueDate: dues.next.date,
-          })
-        : null;
-    return { assignment: a, dues, margin, notice };
-  });
-
-  const owedTotal = lines.reduce((sum, l) => sum + l.dues.final.total, 0);
-  const paidTotal = lines.reduce((sum, l) => sum + l.dues.final.recovered, 0);
-  const outstandingTotal = lines.reduce((sum, l) => sum + l.dues.final.outstanding, 0);
-  const marginTotal = lines.reduce((sum, l) => sum + l.margin, 0);
-  const mayChase = canEditAgent(authUser, agent.createdByBranchId);
+  const isHQ = isHeadOffice(authUser);
+  const summary = summarizeReceivables(agent.lines);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -158,20 +59,33 @@ export default async function AgentDetailPage({
 
         <section className="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight text-stone-900">{agent.name}</h1>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <h1 className="text-2xl font-bold tracking-tight text-stone-900">{agent.name}</h1>
+                <span
+                  className={`text-[11px] px-2 py-0.5 rounded-full border ${
+                    agent.active
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      : 'bg-stone-100 text-stone-500 border-stone-200'
+                  }`}
+                >
+                  {agent.active ? 'active' : 'inactive'}
+                </span>
+              </div>
               <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm text-stone-500">
                 {agent.b2bCode && <span className="font-mono text-[13px]">{agent.b2bCode}</span>}
                 <span className="inline-flex items-center gap-1.5">
                   <Building2 className="w-3.5 h-3.5 text-stone-400" />
-                  {agent.createdByBranch?.name ?? 'Head Office'}
+                  Added by {agent.createdByBranchName ?? 'Head Office'}
                 </span>
-                {agent.contactEmails.length > 0 && (
-                  <span className="inline-flex items-center gap-1.5">
-                    <Mail className="w-3.5 h-3.5 text-stone-400" />
-                    {agent.contactEmails.join(', ')}
-                  </span>
-                )}
+                <span className="inline-flex items-center gap-1.5">
+                  <Mail className="w-3.5 h-3.5 text-stone-400" />
+                  {agent.contactEmails.length > 0 ? (
+                    agent.contactEmails.join(', ')
+                  ) : (
+                    <span className="text-amber-600">no email on file</span>
+                  )}
+                </span>
                 {agent.contactPhone && (
                   <span className="inline-flex items-center gap-1.5">
                     <Phone className="w-3.5 h-3.5 text-stone-400" />
@@ -180,154 +94,45 @@ export default async function AgentDetailPage({
                 )}
               </div>
             </div>
-            <span
-              className={`text-xs px-2.5 py-1 rounded-full border ${
-                agent.active
-                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                  : 'bg-stone-100 text-stone-500 border-stone-200'
-              }`}
-            >
-              {agent.active ? 'active' : 'inactive'}
-            </span>
+            {canEditAgent(authUser, agent.createdByBranchId) && (
+              <AgentFormButton
+                agent={{
+                  id: agent.id,
+                  name: agent.name,
+                  b2bCode: agent.b2bCode,
+                  contactEmails: agent.contactEmails,
+                  contactPhone: agent.contactPhone,
+                  active: agent.active,
+                }}
+              />
+            )}
           </div>
         </section>
 
-        <section className="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm">
-          <h2 className="text-sm font-semibold text-stone-900 mb-1">Seats held and money due</h2>
-          <p className="text-[11px] text-stone-400 mb-4">
-            {totalSeats} seat{totalSeats === 1 ? '' : 's'} across {agent.assignments.length} booking
-            {agent.assignments.length === 1 ? '' : 's'}. Every figure is calculated from the
-            booking&rsquo;s fare, this agent&rsquo;s terms and the payments recorded. The EMD share is
-            collected <strong>before each round is issued</strong> and carries no deadline of its
-            own; the balance falls due 3 days before ticketing.
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <nav aria-label="Choose a view" className="inline-flex rounded-xl border border-stone-200 bg-white p-1 shadow-sm">
+            <ViewButton href={`/agents/${agent.id}`} active={!byPnr} icon={<LayoutGrid className="w-3.5 h-3.5" />}>
+              All PNRs combined
+            </ViewButton>
+            <ViewButton href={`/agents/${agent.id}?view=pnrs`} active={byPnr} icon={<List className="w-3.5 h-3.5" />}>
+              By PNR
+            </ViewButton>
+          </nav>
+          <p className="text-[11px] text-stone-400">
+            {agent.lines.length} booking{agent.lines.length === 1 ? '' : 's'}
+            {isHQ ? '' : ` on ${authUser.branchName ?? 'your branch'}`} · active and completed
           </p>
+        </div>
 
-          {agent.assignments.length > 0 && (
-            <div className="mb-5 grid grid-cols-2 sm:grid-cols-5 gap-3">
-              {[
-                { label: 'Seats held', value: String(totalSeats) },
-                { label: 'Owes', value: formatPkr(owedTotal) },
-                { label: 'Paid', value: formatPkr(paidTotal) },
-                { label: 'Outstanding', value: formatPkr(outstandingTotal) },
-                { label: 'Margin', value: formatPkr(marginTotal) },
-              ].map((c) => (
-                <div key={c.label} className="rounded-xl border border-stone-200 bg-stone-50/60 px-4 py-3">
-                  <p className="text-[10px] font-medium uppercase tracking-wide text-stone-400">
-                    {c.label}
-                  </p>
-                  <p className="mt-1 text-sm font-bold text-stone-900 tabular-nums">{c.value}</p>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {agent.assignments.length === 0 ? (
-            <p className="text-sm text-stone-400 py-8 text-center">
-              No seats handed to this agent yet.
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-[11px] uppercase tracking-wide text-stone-400 border-b border-stone-200">
-                    <th className="py-2 pr-4 font-medium">SR#</th>
-                    <th className="py-2 pr-4 font-medium">PNR</th>
-                    <th className="py-2 pr-4 font-medium">Airline</th>
-                    <th className="py-2 pr-4 font-medium">Outbound</th>
-                    <th className="py-2 pr-4 font-medium text-right">Seats held</th>
-                    <th className="py-2 pr-4 font-medium text-right">Owes</th>
-                    <th className="py-2 pr-4 font-medium text-right">Paid</th>
-                    <th className="py-2 pr-4 font-medium text-right">Outstanding</th>
-                    <th className="py-2 pr-4 font-medium text-right">Margin</th>
-                    <th className="py-2 pr-4 font-medium">Next due</th>
-                    <th className="py-2 font-medium">Notice</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {lines.map(({ assignment: a, dues, margin, notice }) => (
-                    <Fragment key={a.id}>
-                    <tr className="border-b border-stone-100">
-                      <td className="py-3 pr-4 text-stone-500">{a.pnr.srNo}</td>
-                      <td className="py-3 pr-4">
-                        <Link
-                          href={`/pnrs/${a.pnr.id}`}
-                          className="font-mono text-brand-dark hover:text-brand-dark hover:underline"
-                        >
-                          {a.pnr.pnr}
-                        </Link>
-                        {a.pnr.status !== 'active' && (
-                          <span className="ml-2 text-[10px] text-stone-400">{a.pnr.status}</span>
-                        )}
-                      </td>
-                      <td className="py-3 pr-4 text-stone-600">{a.pnr.airline?.code ?? '—'}</td>
-                      <td className="py-3 pr-4 text-stone-600">
-                        {a.pnr.outboundDate ? a.pnr.outboundDate.toISOString().slice(0, 10) : '—'}
-                      </td>
-                      <td className="py-3 pr-4 text-right tabular-nums text-stone-800">
-                        {a.seats}
-                        <span className="text-[11px] text-stone-400"> / {a.pnr.seats}</span>
-                      </td>
-                      <td className="py-3 pr-4 text-right tabular-nums text-stone-800">
-                        {formatPkr(dues.final.total)}
-                      </td>
-                      <td className="py-3 pr-4 text-right tabular-nums text-stone-600">
-                        {formatPkr(dues.final.recovered)}
-                      </td>
-                      <td className="py-3 pr-4 text-right tabular-nums font-semibold text-stone-900">
-                        {dues.final.credit > 0
-                          ? `${formatPkr(dues.final.credit)} cr`
-                          : formatPkr(dues.final.outstanding)}
-                      </td>
-                      <td className="py-3 pr-4 text-right tabular-nums text-stone-600">
-                        {formatPkr(margin)}
-                      </td>
-                      <td className="py-3 pr-4">
-                        <NextDueCell dues={dues} today={today} />
-                      </td>
-                      <td className="py-3">
-                        {/* Sending is a human click, never the daily job. An
-                            undated balance offers no button: there is no date
-                            to quote and none may be invented (ruling 17). */}
-                        {mayChase && notice ? (
-                          <SendNoticeButton
-                            assignmentId={a.id}
-                            agentName={agent.name}
-                            pnrCode={a.pnr.pnr}
-                            contactEmails={agent.contactEmails}
-                            defaultSubject={notice.subject}
-                            defaultBody={notice.body}
-                          />
-                        ) : (
-                          <span className="text-[10px] text-stone-300">—</span>
-                        )}
-                      </td>
-                    </tr>
-                    {/* What this agent pays for each EMD round on this booking.
-                        No date per round — staff collect before the airline
-                        issues each one (owner ruling, 2026-09-22). */}
-                    <tr className="border-b border-stone-100 last:border-0">
-                      <td colSpan={11} className="pb-4 pt-1 pl-8 pr-4">
-                        <p className="text-[10px] font-medium uppercase tracking-wide text-stone-400 mb-1">
-                          EMD payments to make
-                        </p>
-                        <div className="max-w-md rounded-xl border border-stone-200 bg-stone-50/60 px-3 py-2">
-                          <AgentRoundSchedule
-                            rounds={dues.rounds}
-                            emd={dues.emd}
-                            agentSeats={a.seats}
-                            pnrSeats={a.pnr.seats}
-                            compact
-                          />
-                        </div>
-                      </td>
-                    </tr>
-                    </Fragment>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
+        {agent.lines.length === 0 ? (
+          <div className="rounded-2xl border border-stone-200 bg-white p-12 text-center text-sm text-stone-400 shadow-sm">
+            No seats handed to this agent on {isHQ ? 'an active or completed booking' : 'your branch’s bookings'}.
+          </div>
+        ) : byPnr ? (
+          <PnrTable agent={agent} isHQ={isHQ} authUser={authUser} />
+        ) : (
+          <ReceivableCards summary={summary} showMargin={isHQ} />
+        )}
       </main>
 
       <footer className="border-t border-stone-200 py-4">
@@ -340,61 +145,173 @@ export default async function AgentDetailPage({
   );
 }
 
-/**
- * What this agent owes next on one booking, and when.
- *
- * Three states, and the third is the one that matters: a balance with **no
- * ticketing deadline recorded** is owed but has no date, so it says so plainly
- * rather than showing a date this system invented. No reminder fires for it
- * either (owner ruling 17) — the deadline is a person's to enter.
- */
-function NextDueCell({
-  dues,
-  today,
+function ViewButton({
+  href,
+  active,
+  icon,
+  children,
 }: {
-  dues: ReturnType<typeof agentDues>;
-  today: string;
+  href: string;
+  active: boolean;
+  icon: React.ReactNode;
+  children: React.ReactNode;
 }) {
-  const next = dues.next;
-  if (!next) {
-    return <span className="text-[11px] text-emerald-700 font-medium">Settled in full</span>;
-  }
-
-  const what = next.kind === 'emd' ? 'EMD share' : 'Balance';
-
-  if (!next.date) {
-    // Two different reasons for having no date, and they must not read alike.
-    // An EMD share never has one; a balance has none only until somebody
-    // records the ticketing deadline.
-    return (
-      <span className="text-[11px] text-stone-500">
-        {formatPkr(next.amount)} — {what}
-        <span className="block text-stone-400">
-          {next.kind === 'emd'
-            ? 'collect before the next EMD is issued'
-            : 'no due date (ticketing deadline not set)'}
-        </span>
-      </span>
-    );
-  }
-
-  const days = diffInDays(today, next.date);
-  const tone =
-    days <= 2
-      ? 'bg-red-50 border-red-200 text-red-700'
-      : days <= 5
-        ? 'bg-amber-50 border-amber-200 text-amber-700'
-        : 'bg-stone-50 border-stone-200 text-stone-600';
-
   return (
-    <span className="inline-flex flex-col gap-0.5">
-      <span className="tabular-nums text-stone-800">{formatPkr(next.amount)}</span>
-      <span
-        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-medium whitespace-nowrap ${tone}`}
-      >
-        <CalendarClock className="w-3 h-3" />
-        {what} {days < 0 ? `overdue since ${next.date}` : `due ${next.date}`}
-      </span>
-    </span>
+    <Link
+      href={href}
+      scroll={false}
+      aria-current={active ? 'page' : undefined}
+      className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-colors ${
+        active ? 'bg-brand text-white shadow-sm' : 'text-stone-600 hover:bg-stone-100'
+      }`}
+    >
+      {icon}
+      {children}
+    </Link>
+  );
+}
+
+/**
+ * Booking by booking: seat type, seats, receivable, recovered, balance (and
+ * margin for Head Office), with the agent's share of each EMD round folded
+ * under the row until opened, and a notice button where one can be sent.
+ */
+function PnrTable({
+  agent,
+  isHQ,
+  authUser,
+}: {
+  agent: Awaited<ReturnType<typeof loadAgentLedger>>[number];
+  isHQ: boolean;
+  authUser: Parameters<typeof canSendAgentNotice>[0];
+}) {
+  const cols = isHQ ? 10 : 9;
+  return (
+    <section className="rounded-2xl border border-stone-200 bg-white shadow-sm overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-[11px] uppercase tracking-wide text-stone-500 border-b border-stone-200 bg-stone-50/60">
+              <th className="px-5 py-3 font-semibold">PNR</th>
+              <th className="px-4 py-3 font-semibold">Type</th>
+              <th className="px-4 py-3 font-semibold">Sector</th>
+              <th className="px-4 py-3 font-semibold whitespace-nowrap">Outbound</th>
+              <th className="px-4 py-3 font-semibold text-right">Seats</th>
+              <th className="px-4 py-3 font-semibold text-right">Receivable</th>
+              <th className="px-4 py-3 font-semibold text-right">Recovered</th>
+              <th className="px-4 py-3 font-semibold text-right">Balance</th>
+              {isHQ && <th className="px-4 py-3 font-semibold text-right">Margin</th>}
+              <th className="px-4 py-3 font-semibold">Notice</th>
+            </tr>
+          </thead>
+          {agent.lines.map((l) => (
+            <tbody key={l.assignmentId} className="border-b border-stone-100 last:border-0">
+              <tr>
+                <td className="px-5 pt-3.5 pb-1">
+                  <Link href={`/pnrs/${l.pnrId}`} className="font-mono font-medium text-brand-dark hover:underline">
+                    {l.pnrCode}
+                  </Link>
+                  <span className="block text-[11px] text-stone-400 whitespace-nowrap">
+                    SR#{l.srNo}
+                    {l.airlineCode ? ` · ${l.airlineCode}` : ''}
+                    {isHQ && l.branchName ? ` · ${l.branchName}` : ''}
+                    {l.pnrStatus !== 'active' ? ` · ${l.pnrStatus}` : ''}
+                  </span>
+                </td>
+                <td className="px-4 pt-3.5 pb-1">
+                  <span className="inline-flex items-center gap-1.5 text-xs text-stone-700 whitespace-nowrap">
+                    <span className={`w-2 h-2 rounded-full ${SEAT_TYPE_DOTS[l.seatType]}`} />
+                    {SEAT_TYPE_LABELS[l.seatType]}
+                  </span>
+                </td>
+                <td className="px-4 pt-3.5 pb-1 text-stone-600 whitespace-nowrap">{l.sector ?? '—'}</td>
+                <td className="px-4 pt-3.5 pb-1 text-stone-600 whitespace-nowrap">{l.outboundDate ?? '—'}</td>
+                <td className="px-4 pt-3.5 pb-1 text-right tabular-nums whitespace-nowrap text-stone-800">
+                  {l.seats}
+                  <span className="text-[11px] text-stone-400"> / {l.pnrSeats}</span>
+                </td>
+                <td className="px-4 pt-3.5 pb-1 text-right tabular-nums whitespace-nowrap text-stone-800">{formatPkr(l.receivable)}</td>
+                <td className="px-4 pt-3.5 pb-1 text-right tabular-nums whitespace-nowrap text-stone-600">{formatPkr(l.recovered)}</td>
+                <td className="px-4 pt-3.5 pb-1 text-right tabular-nums whitespace-nowrap font-semibold text-stone-900">
+                  {l.credit > 0 ? (
+                    <span className="text-emerald-700">{formatPkr(l.credit)} cr</span>
+                  ) : l.balance === 0 ? (
+                    <span className="text-emerald-700">Settled</span>
+                  ) : (
+                    formatPkr(l.balance)
+                  )}
+                </td>
+                {isHQ && <td className="px-4 pt-3.5 pb-1 text-right tabular-nums whitespace-nowrap text-stone-600">{formatPkr(l.margin)}</td>}
+                <td className="px-4 pt-3.5 pb-1">
+                  <NoticeCell line={l} agent={agent} authUser={authUser} />
+                </td>
+              </tr>
+              <tr>
+                <td colSpan={cols} className="px-5 pb-3">
+                  {/* The agent's share of each EMD round, collected before the
+                      round is issued (owner, 2026-09-22). Folded away so the
+                      table reads as one line per booking. */}
+                  <details className="group">
+                    <summary className="inline-flex items-center gap-1 cursor-pointer list-none text-[11px] font-medium text-stone-500 hover:text-brand-dark">
+                      <ChevronDown className="w-3 h-3 transition-transform group-open:rotate-180" />
+                      EMD payments per round
+                    </summary>
+                    <div className="mt-2 max-w-md rounded-xl border border-stone-200 bg-stone-50/60 px-3 py-2">
+                      <AgentRoundSchedule
+                        rounds={l.dues.rounds}
+                        emd={l.dues.emd}
+                        agentSeats={l.seats}
+                        pnrSeats={l.pnrSeats}
+                        compact
+                      />
+                    </div>
+                  </details>
+                </td>
+              </tr>
+            </tbody>
+          ))}
+        </table>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Sending is a human click, never the daily job. Offered when something is
+ * outstanding that can be asked for: an EMD share (no date, by design) or a
+ * dated balance. A balance with no ticketing deadline has nothing to ask by.
+ */
+function NoticeCell({
+  line: l,
+  agent,
+  authUser,
+}: {
+  line: AgentBookingLine;
+  agent: Awaited<ReturnType<typeof loadAgentLedger>>[number];
+  authUser: Parameters<typeof canSendAgentNotice>[0];
+}) {
+  const next = l.dues.next;
+  const sendable =
+    next && (next.kind === 'emd' || next.date) && canSendAgentNotice(authUser, agent.createdByBranchId, l.pnrBranchId);
+  if (!sendable) return <span className="text-[11px] text-stone-300">—</span>;
+  const notice = buildAgentNotice({
+    agentName: agent.name,
+    pnrCode: l.pnrCode,
+    sector: l.sector,
+    seats: l.seats,
+    outboundDate: l.outboundDate,
+    kind: next.kind,
+    amount: next.amount,
+    dueDate: next.date,
+  });
+  return (
+    <SendNoticeButton
+      assignmentId={l.assignmentId}
+      agentName={agent.name}
+      pnrCode={l.pnrCode}
+      contactEmails={agent.contactEmails}
+      defaultSubject={notice.subject}
+      defaultBody={notice.body}
+    />
   );
 }

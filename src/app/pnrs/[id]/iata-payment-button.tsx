@@ -48,7 +48,9 @@ export default function IataPaymentButton({
   const inputCls =
     'w-full bg-stone-50 border border-stone-300 rounded-xl px-3 py-2 text-sm text-stone-800 focus:outline-none focus:ring-2 focus:ring-brand-light/50 focus:border-brand-light transition-colors';
 
-  if (state.status === 'paid') {
+  // Only a recorded payment can be undone. An assumed one (a passed remittance
+  // day, owner 2026-10-03) offers recording the real date instead.
+  if (state.status === 'paid' && !state.assumed) {
     return (
       <button
         onClick={handleClear}
@@ -72,7 +74,7 @@ export default function IataPaymentButton({
         className="text-[11px] font-medium text-stone-500 hover:text-emerald-700 transition-colors inline-flex items-center gap-1 cursor-pointer border border-stone-200 bg-white px-2 py-1 rounded-md hover:bg-emerald-50 hover:border-emerald-200 shadow-sm"
       >
         <Banknote className="w-3 h-3" />
-        Mark paid to IATA
+        {state.assumed ? 'Record payment date' : 'Mark paid to IATA'}
       </button>
 
       {isOpen && (

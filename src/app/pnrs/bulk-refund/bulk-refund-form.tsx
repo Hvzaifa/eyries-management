@@ -14,6 +14,8 @@ type FetchedRound = {
   emdNumber: string | null;
   status: string;
   paymentDate: string | null;
+  /** Paid to IATA — recorded, or assumed from a passed remittance day. */
+  paidToIata: boolean;
   pnr: {
     pnr: string;
     investorCompany: string;
@@ -59,7 +61,7 @@ export default function BulkRefundForm({ initialPnrs = [] }: { initialPnrs?: str
         const initialStates: Record<string, RefundState> = {};
         res.rounds.forEach((r) => {
           initialStates[r.id] = {
-            selected: paidOnly ? r.paymentDate !== null : true,
+            selected: paidOnly ? r.paidToIata : true,
             amount: Number(r.emdAmount).toString(),
             date: today,
           };

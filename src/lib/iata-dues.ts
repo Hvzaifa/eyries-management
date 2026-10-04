@@ -9,12 +9,12 @@ import { licenseOfRound, type IataDueRound } from './iata-by-license';
  * "what has to go out on 30 September", not "what does this booking owe". The
  * rounds are therefore grouped by remittance day (owner ruling, 2026-09-22).
  *
- * A round is owed when it has no recorded payment AND its refund, if any, came
- * too late to cancel the billing — a refund only does that when it lands on or
- * before the billing-to date of the period the EMD was issued in. So the query
- * cannot filter on `status = 'issued'`: a refunded round whose refund missed
- * the window is still a bill. `iataPaymentState` makes that call per round and
- * this filters on its verdict.
+ * A round is owed only while nothing settles it and its remittance day is today
+ * or ahead; a passed day reads as paid (owner, 2026-10-03). A refund after the
+ * billing window does not settle it — the payment stands and the refund is a
+ * later credit (owner, 2026-10-04) — so the query does not filter on
+ * `status = 'issued'`.
+ * `iataPaymentState` makes the call per round and this filters on its verdict.
  */
 
 export type { IataDueRound } from './iata-by-license';
@@ -24,9 +24,10 @@ export async function findIataDueRounds(todayIso: string): Promise<IataDueRound[
   const rounds = await prisma.emdRound.findMany({
     where: {
       paymentDate: null,
-      // Deliberately NOT filtered to status = 'issued'. A round refunded after
-      // its billing window closed is still billed, so `iataPaymentState`
-      // decides below and this keeps the refunded ones in scope.
+      // Deliberately NOT filtered to status = 'issued': a round refunded after
+      // its billing window (or with no refund date) is still owed until its
+      // remittance day, so
+      // `iataPaymentState` decides below and this keeps refunded rounds in scope.
       // A cancelled or completed booking is not a live obligation to settle.
       pnr: { status: 'active' },
     },

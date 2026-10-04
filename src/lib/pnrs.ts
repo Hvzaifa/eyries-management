@@ -6,7 +6,7 @@ import { holderFilterKeys, holderLabel, seatLedger } from '@/lib/inventory';
 import { isTermType, type AgentTerms, type TermType } from '@/lib/agent-money';
 import { HELD_EMD_STATUS, nextEmdSuggestion } from '@/lib/emd';
 import { iataPaymentDeadline } from '@/lib/iata-calendar';
-import { iataPaymentState } from '@/lib/iata-payments';
+import { iataPaymentState, refundCounts } from '@/lib/iata-payments';
 import { todayIsoInPkt } from '@/lib/urgency';
 import { timeFromDb } from '@/lib/flight-details';
 import { nextStep } from '@/lib/issuance';
@@ -205,26 +205,28 @@ export async function listPnrs(user?: AuthUser): Promise<PnrListRow[]> {
       .filter((e) => HELD_ROUND_STATUSES.includes(e.status))
       .reduce((sum, e) => sum + Number(e.emdAmount), 0);
 
-    const totalRefunded = r.emdRounds
-      .filter((e) => e.status === 'refunded')
-      .reduce((sum, e) => sum + Number(e.refundAmount ?? 0), 0);
+    // One IATA verdict per round, shared by the refund total and what is owed.
+    const iata = r.emdRounds.map((e) => ({
+      round: e,
+      state: iataPaymentState({
+        issuanceDate: e.issuanceDate.toISOString().slice(0, 10),
+        paymentDate: isoOrNull(e.paymentDate),
+        refundDate: isoOrNull(e.refundDate),
+        roundStatus: e.status,
+        todayIso: today,
+      }),
+    }));
 
-    // What IATA is still owed on this booking: any round with no recorded
-    // payment whose refund, if any, came too late to cancel the billing. A
-    // refund only cancels it when it lands on or before the billing-to date of
-    // the period the EMD was issued in (owner, 2026-09-22) — so this cannot
-    // filter on `issued`, and `iataPaymentState` makes the call.
-    const unpaid = r.emdRounds.filter(
-      (e) =>
-        e.paymentDate === null &&
-        iataPaymentState({
-          issuanceDate: e.issuanceDate.toISOString().slice(0, 10),
-          paymentDate: null,
-          refundDate: e.refundDate ? e.refundDate.toISOString().slice(0, 10) : null,
-          roundStatus: e.status,
-          todayIso: today,
-        }).owed
-    );
+    // A refund that cancelled its billing before IATA billed it moved no money,
+    // so it is left out (owner, 2026-10-03) — see `refundCounts`.
+    const totalRefunded = iata
+      .filter(({ round, state }) => round.status === 'refunded' && refundCounts(state))
+      .reduce((sum, { round }) => sum + Number(round.refundAmount ?? 0), 0);
+
+    // What IATA is still owed on this booking. `iataPaymentState` decides: a
+    // rolled round is not owed, and a passed remittance day reads as paid
+    // (owner, 2026-10-03), so only today-or-later and undatable rounds remain.
+    const unpaid = iata.filter(({ state }) => state.owed).map(({ round }) => round);
     const iataDays = unpaid
       .map((e) => iataPaymentDeadline(e.issuanceDate.toISOString().slice(0, 10)))
       .filter((d): d is string => d !== null)
@@ -822,11 +824,16 @@ export interface RoundToRefund {
   emdAmount: number;
   issuanceDate: string;
   paidToIataOn: string;
+  /** True when no payment is recorded and the passed remittance day is read as paid. */
+  paidAssumed: boolean;
 }
 
 /**
  * EMD rounds waiting on their refund: issued, paid to IATA, and not yet
  * refunded (owner's definition, 2026-09-28). The Refunds page's second list.
+ * "Paid" includes a passed remittance day with no payment recorded, which is
+ * read as paid on that day (owner, 2026-10-03). That is worked out from the
+ * calendar, not stored, so the filter runs here rather than in the query.
  * Oldest issuance first — the longest-waiting refund is the one to chase.
  * Branch-scoped like every other read.
  */
@@ -834,7 +841,7 @@ export async function listRoundsToRefund(user: AuthUser): Promise<RoundToRefund[
   const scope = pnrBranchFilter(user);
   if (scope === null) return [];
   const rounds = await prisma.emdRound.findMany({
-    where: { status: 'issued', paymentDate: { not: null }, pnr: scope },
+    where: { status: 'issued', pnr: scope },
     orderBy: [{ issuanceDate: 'asc' }, { roundNumber: 'asc' }],
     select: {
       id: true,
@@ -857,20 +864,32 @@ export async function listRoundsToRefund(user: AuthUser): Promise<RoundToRefund[
       },
     },
   });
-  return rounds.map((r) => ({
-    roundId: r.id,
-    pnrId: r.pnr.id,
-    pnr: r.pnr.pnr,
-    pnrStatus: r.pnr.status,
-    branchName: r.pnr.branch?.name ?? null,
-    airlineCode: r.pnr.airline?.code ?? null,
-    seats: r.pnr.seats,
-    sector: r.pnr.sector,
-    outboundDate: isoOrNull(r.pnr.outboundDate),
-    roundNumber: r.roundNumber,
-    emdNumber: r.emdNumber,
-    emdAmount: Number(r.emdAmount),
-    issuanceDate: isoOrNull(r.issuanceDate)!,
-    paidToIataOn: isoOrNull(r.paymentDate)!,
-  }));
+  const today = todayIsoInPkt();
+  return rounds.flatMap((r) => {
+    const state = iataPaymentState({
+      issuanceDate: isoOrNull(r.issuanceDate),
+      paymentDate: isoOrNull(r.paymentDate),
+      refundDate: null,
+      roundStatus: 'issued',
+      todayIso: today,
+    });
+    if (state.status !== 'paid' || !state.paidOn) return [];
+    return [{
+      roundId: r.id,
+      pnrId: r.pnr.id,
+      pnr: r.pnr.pnr,
+      pnrStatus: r.pnr.status,
+      branchName: r.pnr.branch?.name ?? null,
+      airlineCode: r.pnr.airline?.code ?? null,
+      seats: r.pnr.seats,
+      sector: r.pnr.sector,
+      outboundDate: isoOrNull(r.pnr.outboundDate),
+      roundNumber: r.roundNumber,
+      emdNumber: r.emdNumber,
+      emdAmount: Number(r.emdAmount),
+      issuanceDate: isoOrNull(r.issuanceDate)!,
+      paidToIataOn: state.paidOn,
+      paidAssumed: state.assumed,
+    }];
+  });
 }

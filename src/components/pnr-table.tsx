@@ -340,14 +340,11 @@ export default function PnrTable({
             );
           }
           const days = diffInDays(todayIso, row.nextIataPayment);
-          const u: Urgency = days < 0 || days <= 2 ? 'red' : days <= 5 ? 'amber' : 'green';
+          // Never in the past: a passed remittance day reads as paid (owner,
+          // 2026-10-03), so only today-or-later payments reach here.
+          const u: Urgency = days <= 2 ? 'red' : days <= 5 ? 'amber' : 'green';
           const s = URGENCY_STYLES[u];
-          const label =
-            days < 0
-              ? `Overdue since ${row.nextIataPayment}`
-              : days === 0
-                ? `Pay today (${row.nextIataPayment})`
-                : `Pay ${row.nextIataPayment}`;
+          const label = days === 0 ? `Pay today (${row.nextIataPayment})` : `Pay ${row.nextIataPayment}`;
           return (
             <span className="inline-flex flex-col gap-0.5">
               <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[11px] whitespace-nowrap font-medium ${s.badge}`}>
