@@ -9,7 +9,6 @@ import {
   emdAmountFor,
   EMD_STATUSES,
   HELD_EMD_STATUS,
-  isEmdStatus,
   nextEmdSuggestion,
 } from './emd';
 
@@ -276,14 +275,6 @@ describe('EMD statuses', () => {
 
   it('treats an issued round as the EMD the airline holds', () => {
     expect(HELD_EMD_STATUS).toBe('issued');
-  });
-
-  it('rejects the statuses that were removed', () => {
-    expect(isEmdStatus('issued')).toBe(true);
-    expect(isEmdStatus('refunded')).toBe(true);
-    for (const gone of ['paid', 'refund_requested', 'expired', 'pending', null]) {
-      expect(isEmdStatus(gone)).toBe(false);
-    }
   });
 });
 

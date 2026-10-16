@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   holderFilterKeys,
-  holderKind,
   holderLabel,
   liveAgentSeats,
   seatLedger,
@@ -134,21 +133,6 @@ describe('validateSeatsChange', () => {
 
   it('leaves an untouched booking alone', () => {
     expect(validateSeatsChange(0, { agentSeats: 0 })).toBeNull();
-  });
-});
-
-describe('holderKind', () => {
-  it('reads as unassigned, agent, bot or mixed', () => {
-    expect(holderKind(ledgerOf(30, []), 0)).toBe('unassigned');
-    expect(holderKind(ledgerOf(30, [30]), 1)).toBe('agent');
-    expect(holderKind(ledgerOf(30, [], 30), 0)).toBe('bot');
-    expect(holderKind(ledgerOf(30, [10]), 1)).toBe('mixed'); // 20 still unassigned
-    expect(holderKind(ledgerOf(30, [10, 20]), 2)).toBe('mixed'); // two agents
-    expect(holderKind(ledgerOf(30, [15], 15), 1)).toBe('mixed'); // agent + bot
-  });
-
-  it('calls a booking with no seats unassigned rather than crashing', () => {
-    expect(holderKind(ledgerOf(0, []), 0)).toBe('unassigned');
   });
 });
 

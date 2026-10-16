@@ -1,3 +1,8 @@
+import { fieldListForPrompt } from './booking-schema';
+import { aiAttempts, failureReason, providerErrorCode, type AiAttempt, type FailureReason } from './providers';
+import { flagPastDates } from './draft-checks';
+import { todayIsoInPkt } from '@/lib/urgency';
+
 export type FieldConfidence = 'high' | 'medium' | 'low';
 
 export interface ParsedField<T> {
@@ -67,71 +72,37 @@ export interface ParsedBookingDraft {
   modelUsed?: string;
 }
 
-const SYSTEM_PROMPT = `You are an expert airline group booking data extraction assistant for an airline seat management system.
-Your task is to analyze pasted airline confirmation emails, GDS PNR texts (Sabre, Amadeus, Galileo, Navitaire), or booking slips, and extract structured fields.
+/**
+ * The instructions, built per request so they carry today's date: airline
+ * messages write dates without a year ("14NOV"), and without today's date the
+ * model filled in 2023 or 2024 (found 2026-10-05). The field list comes from
+ * `booking-schema.ts`; Gemini is additionally held to the JSON schema.
+ */
+export function bookingPrompt(todayIso: string): string {
+  return `You extract airline group booking details from pasted confirmation emails, GDS PNR texts (Sabre, Amadeus, Galileo, Navitaire), booking slips or screenshots.
 
-Return ONLY a valid JSON array of objects matching this exact schema. If the text contains multiple distinct bookings or PNRs, return multiple objects in the array. For every field, return an object with "value", "confidence" ("high", "medium", or "low"), and optional "notes" explaining your extraction.
+Today is ${todayIso}. A date written without a year is the next occurrence on or after today.
 
-Schema:
-[
-  {
-  "pnr": { "value": string | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "gdsPnr": { "value": string | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "airlineCode": { "value": string | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "investorCompany": { "value": string | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "licenseName": { "value": string | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "branchName": { "value": string | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "segment": { "value": string | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "seats": { "value": number | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "sector": { "value": string | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "requestDate": { "value": "YYYY-MM-DD" | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "outboundDate": { "value": "YYYY-MM-DD" | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "inboundDate": { "value": "YYYY-MM-DD" | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "pnrTlDate": { "value": "YYYY-MM-DD" | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "fare": { "value": number | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "airlineTaxes": { "value": number | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "psf": { "value": number | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "tripType": { "value": "one_way" | "round_trip" | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "outboundDepartureCity": { "value": string | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "outboundArrivalCity": { "value": string | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "outboundDepartureTime": { "value": "HH:mm" | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "outboundArrivalTime": { "value": "HH:mm" | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "outboundFlightCode": { "value": string | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "outboundBaggagePieces": { "value": number | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "outboundBaggageKg": { "value": number | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "inboundDepartureCity": { "value": string | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "inboundArrivalCity": { "value": string | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "inboundDepartureTime": { "value": "HH:mm" | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "inboundArrivalTime": { "value": "HH:mm" | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "inboundFlightCode": { "value": string | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "inboundBaggagePieces": { "value": number | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "inboundBaggageKg": { "value": number | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "outboundStops": { "value": [ { "city": string, "flightCode": string | null, "arrivalTime": "HH:mm" | null, "departureTime": "HH:mm" | null } ], "confidence": "high"|"medium"|"low", "notes": string },
-  "inboundStops": { "value": [ { "city": string, "flightCode": string | null, "arrivalTime": "HH:mm" | null, "departureTime": "HH:mm" | null } ], "confidence": "high"|"medium"|"low", "notes": string },
-  "mealIncluded": { "value": boolean | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "roundIssuanceDate": { "value": "YYYY-MM-DD" | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "roundPaymentPct": { "value": number | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "roundEmdAmount": { "value": number | null, "confidence": "high"|"medium"|"low", "notes": string },
-  "roundEmdNumber": { "value": string | null, "confidence": "high"|"medium"|"low", "notes": string },
-    "roundDeadlineDate": { "value": "YYYY-MM-DD" | null, "confidence": "high"|"medium"|"low", "notes": string },
-    "roundDeadlineTime": { "value": "HH:mm" | null, "confidence": "high"|"medium"|"low", "notes": string }
-  }
-]
+Reply with JSON only, as a table: {"columns": [<the fields you found>], "rows": [[<one value per column, null if this booking lacks it>], ...], "unsure": [[<row index>, "<field>"], ...]}. One row per distinct booking/PNR. Name each field once in "columns" — never repeat field names per row. List in "unsure" only the values you are not confident about.
 
-Guidelines:
-1. Dates must be formatted as YYYY-MM-DD. If year is missing in text, infer current or next logical year based on travel dates.
-2. Airline code should be 2-character IATA if identifiable (e.g. SV for Saudia, PA for Airblue, 9P for Fly Jinnah, PK for PIA, ER for Serene, FZ for Flydubai, QR for Qatar Airways).
-3. Sector format: standard IATA 3-letter codes joined by dashes (e.g. "ISB-JED", "LHE-MED-JED-LHE", "KHI-DXB-KHI").
-4. Seats and monetary amounts (fare, taxes, psf, emdAmount) must be numbers without commas or currency symbols.
-5. If a field cannot be found in the text, set value to null and confidence to "low".
-6. Never make up booking codes or amounts. If ambiguous, set confidence to "low" and explain in notes.
-7. Flights: tripType is "round_trip" when the booking has a return flight, "one_way" when it has only one. The outbound fields describe the first flight and outboundDate is its departure date; the inbound fields describe the return flight and inboundDate is its departure date. For one_way, set every inbound field to null. Cities are 3-letter IATA airport codes (e.g. ISB, JED, MED). Times are 24-hour HH:mm local times as printed. Flight codes are the airline designator followed by the flight number with no space (e.g. "SV727", "PK303", "9P842"). If a leg has connecting flights, use the first flight's code and departure, and the final arrival city and time, and list every intermediate airport in order in that leg's Stops: city (3-letter code), flightCode = the code of the flight DEPARTING that stop (null if the same flight continues), and the arrival and departure times at the stop. A direct flight has Stops [].
-8. Baggage is the checked allowance PER PASSENGER on each flight: BaggagePieces is the number of bags, BaggageKg is the weight limit of EACH bag in kg. "2PC 23KG" or "2 x 23kg" means pieces 2, kg 23. "30KG" alone means pieces null, kg 30. If one allowance is stated for the whole trip, use it for both flights. Do not count hand/cabin baggage. If not stated, null.
-9. mealIncluded: true if the booking says meals are included, false if it says they are not, null if it does not say. It applies to the whole booking, not one flight.
-10. Return ONLY the JSON array. Do not include markdown code block formatting or explanation text outside the JSON.`;
+Fields:
+${fieldListForPrompt()}
+
+Rules:
+1. Dates YYYY-MM-DD; times 24-hour HH:mm as printed.
+2. airlineCode is the 2-character IATA code (SV Saudia, PA Airblue, 9P Fly Jinnah, PK PIA, ER Serene, FZ Flydubai, QR Qatar Airways).
+3. sector: 3-letter airport codes joined by dashes (ISB-JED, LHE-MED-JED-LHE).
+4. Numbers without commas or currency symbols. fare and airlineTaxes are per passenger.
+5. Not found: value null, confidence "low". Never invent codes or amounts; if unsure, confidence "low".
+6. tripType "round_trip" when there is a return flight, else "one_way" (then every inbound field null). Outbound fields describe the first flight; inbound the return. Flight codes are designator + number, no space (SV727, 9P842). For connections use the first flight's code and departure and the final arrival, and list each intermediate airport in that leg's Stops: city, flightCode of the flight DEPARTING the stop (null if the same flight continues), arrival and departure times. Direct flight: [].
+7. Baggage is checked allowance PER PASSENGER: pieces = number of bags, kg = limit of EACH bag. "2PC 23KG" = 2 and 23; "30KG" alone = pieces null, kg 30. One allowance for the trip applies to both flights. Ignore cabin baggage.
+8. mealIncluded: true if meals are included, false if stated not included, null if not mentioned.
+9. round* fields describe the first EMD / deposit: issue date, percentage (30 for 30%), amount, EMD number, and the deadline date and time.`;
+}
 
 export function cleanJsonString(raw: string): string {
-  let cleaned = raw.trim();
+  // A reasoning model may prefix its answer with a <think> block.
+  let cleaned = raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
   // Remove markdown code fences if present
   if (cleaned.startsWith('```json')) {
     cleaned = cleaned.slice(7);
@@ -239,7 +210,39 @@ function parseBoolean(data: Record<string, unknown>, key: string): ParsedField<b
   return value === null ? { value: null, confidence: 'low' } : { value, confidence: item && typeof item === 'object' ? confidenceOf(item) : 'medium' };
 }
 
-export function parseRawLlmJson(jsonText: string, rawPastedText: string, modelUsed?: string): ParsedBookingDraft[] {
+/**
+ * The table-shaped reply (`bookingPrompt`) as one object per booking in the
+ * `{ field: { value, confidence } }` shape the rest of this file reads. A value
+ * the model listed as unsure is low confidence; any other found value takes
+ * the provider's confidence. Null when the reply is not a table.
+ */
+export function tableToBookings(parsed: unknown, foundConfidence: FieldConfidence): Record<string, unknown>[] | null {
+  const t = parsed as { columns?: unknown; rows?: unknown; unsure?: unknown };
+  if (!t || !Array.isArray(t.columns) || !Array.isArray(t.rows)) return null;
+  const columns = t.columns.map((c) => String(c));
+  const unsure = new Set(
+    (Array.isArray(t.unsure) ? t.unsure : [])
+      .filter((u): u is unknown[] => Array.isArray(u) && u.length >= 2)
+      .map((u) => `${Number(u[0])}:${String(u[1])}`)
+  );
+  return t.rows
+    .filter((r): r is unknown[] => Array.isArray(r))
+    .map((row, i) =>
+      Object.fromEntries(
+        columns.map((c, j) => [
+          c,
+          { value: row[j] ?? null, confidence: unsure.has(`${i}:${c}`) ? 'low' : foundConfidence },
+        ])
+      )
+    );
+}
+
+export function parseRawLlmJson(
+  jsonText: string,
+  rawPastedText: string,
+  modelUsed?: string,
+  foundConfidence: FieldConfidence = 'high'
+): ParsedBookingDraft[] {
   const cleaned = cleanJsonString(jsonText);
   let parsed: unknown;
   try {
@@ -248,8 +251,10 @@ export function parseRawLlmJson(jsonText: string, rawPastedText: string, modelUs
     throw new Error(`Failed to parse LLM JSON output: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // Ensure it's an array
-  const parsedArray = Array.isArray(parsed) ? parsed : [parsed];
+  // The table reply (current); {"bookings": [...]}; or a bare array / object.
+  const table = tableToBookings(parsed, foundConfidence);
+  const bookings = (parsed as { bookings?: unknown })?.bookings;
+  const parsedArray = table ?? (Array.isArray(bookings) ? bookings : Array.isArray(parsed) ? parsed : [parsed]);
 
   return parsedArray.map((item) => {
     const obj = item as Record<string, unknown>;
@@ -303,26 +308,8 @@ export function parseRawLlmJson(jsonText: string, rawPastedText: string, modelUs
   });
 }
 /**
- * Gemini's OpenAI-compatible endpoint, reached with `GEMINI_API_KEY`.
- *
- * The env var name is only a label — this URL is what decides which service
- * receives the request. That distinction cost a debugging session: the key's
- * *value* was swapped to Gemini while the URL still pointed at OpenRouter, so
- * every call 401'd and the intake route reported it as the same generic 500 it
- * reports for any other failure.
- *
- * Groq and Cerebras providers were removed on 2026-09-09 — same reasoning that
- * removed Ollama on 2026-09-07 (docs/decisions.md). Neither key is set on the
- * deployed app, so neither was ever reachable in production; Cerebras answered
- * 402 (no credit) and Groq's pinned models had 404'd out of existence, so the
- * "fallback" was three guaranteed failures before the only working provider.
- * Gemini is multimodal, so one provider now serves both text and screenshots.
- */
-const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
-
-/**
  * The AI service cannot be used at all with the configuration it was given —
- * no key, or a key the provider rejects. Distinct from a parse failure so the
+ * no key, or a key every provider rejects. Distinct from a parse failure so the
  * route can say so plainly instead of "could not parse this input".
  *
  * Found on 2026-09-25: the configured `GEMINI_API_KEY` was not a Gemini API key
@@ -337,32 +324,9 @@ export class AiConfigError extends Error {
 }
 
 /**
- * HTTP statuses that mean "this key will not work", not "this attempt failed".
- * 401 = not a valid credential; 403 = valid but not permitted (API disabled,
- * key restricted). Retrying another model with the same key cannot help.
- */
-export function isKeyRejection(status: number): boolean {
-  return status === 401 || status === 403;
-}
-
-/**
- * The provider is up but will not serve this request right now — rate limited
- * or "experiencing high demand". Worth one quick retry, and never the user's
- * input at fault.
- *
- * Found on 2026-09-25: Google answers 503 "This model is currently experiencing
- * high demand" intermittently (1 in 3 probes on two models that day), and the
- * screenshot path had a single model and no retry — so every busy moment
- * reached staff as "failed to parse", which reads like a bad screenshot.
- */
-export function isTransientStatus(status: number): boolean {
-  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
-}
-
-/**
- * Every model was busy or unreachable. Distinct from a parse failure so the
- * route can tell staff to try again shortly, rather than suggest the input is
- * the problem.
+ * Every provider was busy, out of quota or too slow. Distinct from a parse
+ * failure so the route can tell staff to try again shortly, rather than
+ * suggest the input is the problem.
  */
 export class AiBusyError extends Error {
   constructor(message: string) {
@@ -375,6 +339,7 @@ export class AiBusyError extends Error {
 class ProviderHttpError extends Error {
   constructor(
     readonly status: number,
+    readonly code: string,
     message: string
   ) {
     super(message);
@@ -383,34 +348,18 @@ class ProviderHttpError extends Error {
 }
 
 /**
- * Tried in order until one returns usable JSON.
- *
- * Checked against the live API on 2026-09-25 with a rendered booking
- * confirmation (PNR, seats, sector, dates, fare, taxes, segment): both models
- * extracted every field correctly from the image and from pasted text.
- *
- * - `gemini-2.5-flash` first — the model this app has been tuned against.
- * - `gemini-3.5-flash-lite` as the backup — the replacement Google names for
- *   the retired `gemini-2.5-flash-lite` (which answered 404 "no longer
- *   available to new users"), and the faster of the two (~3 s vs ~9 s on an
- *   image). The old rule "flash-lite is not trusted with screenshots" was about
- *   the 2.5 generation; a human confirms every draft before it is saved either
- *   way.
- *
- * `gemini-3.5-flash` and `gemini-flash-latest` were also tried and were
- * returning 503 "high demand" at the time, so neither is relied on.
+ * Per-request deadline. One booking takes ~4–6 s; a screenshot of 14 bookings
+ * 10–14 s with the table reply. 35 s leaves room for a larger table while
+ * keeping ~20 s of the budget for the next provider. A timed-out request is
+ * not retried on the same model — a request that slow would be slow again
+ * (found 2026-10-05: two 25 s timeouts on one model used the whole budget).
  */
-const TEXT_MODELS = ['gemini-2.5-flash', 'gemini-3.5-flash-lite'];
-const VISION_MODELS = ['gemini-2.5-flash', 'gemini-3.5-flash-lite'];
-
-/** Per-request deadline. Several requests may be made in sequence. */
-const MODEL_TIMEOUT_MS = 45_000;
+const ATTEMPT_TIMEOUT_MS = 35_000;
 
 /**
- * Everything together — every model, every retry — must finish inside this,
+ * Everything together — every provider, every retry — must finish inside this,
  * or the hosting platform ends the function first and staff see a bare error
- * instead of a message. Well inside Vercel's 60 s ceiling for a function that
- * sets no `maxDuration`.
+ * instead of a message. The route sets `maxDuration = 60`.
  */
 const TOTAL_BUDGET_MS = 55_000;
 
@@ -420,130 +369,144 @@ function retryDelayMs(): number {
   return Number.isFinite(v) && v >= 0 ? v : 1_500;
 }
 
-/**
- * The models to try, in order.
- *
- * `GEMINI_MODEL` pins a single model and skips the fallback, so a bad model can
- * be routed around from the Vercel dashboard without a redeploy
- * (docs/operations.md).
- */
-function modelsToTry(hasImage: boolean): string[] {
-  const pinned = process.env.GEMINI_MODEL;
-  if (pinned) return [pinned];
-  return hasImage ? VISION_MODELS : TEXT_MODELS;
+export type ContentPart = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } };
+
+export interface AiRequest {
+  system: string;
+  user: string | ContentPart[];
+  /** JSON schema for Gemini's structured output; without one (or on Groq), JSON mode. */
+  schema?: object;
+  schemaName?: string;
 }
 
-export async function parseAirlineMessage(
-  rawText: string,
-  opts: { imageBase64?: string; imageMimeType?: string } = {}
-): Promise<ParsedBookingDraft[]> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
+/**
+ * Sends one request through the providers in order until a reply is accepted.
+ *
+ * `accept` turns the reply into the result and throws if it is unusable, which
+ * moves on to the next attempt exactly like an HTTP failure would.
+ *
+ * - **busy** (5xx) or **timeout**: one retry after a short wait, then move on;
+ * - **quota** (429): move on at once — retrying an exhausted quota only burns
+ *   the time budget, which is how a quota hit used to surface as "busy";
+ * - **key** (401/403): skip every remaining attempt on that provider;
+ * - **invalid** (other status, or a reply `accept` rejects): move on.
+ *
+ * Every failure is logged as one line naming provider, model, reason, HTTP
+ * status, the provider's error code and the time taken — never a request or
+ * reply body, which carry passenger names and PNRs.
+ */
+export async function callAi<T>(req: AiRequest, accept: (content: string, attempt: AiAttempt) => T): Promise<T> {
+  const attempts = aiAttempts();
+  if (attempts.length === 0) {
     throw new AiConfigError('GEMINI_API_KEY is not configured, so no booking can be parsed.');
   }
 
-  const hasImage = !!opts.imageBase64;
-  const models = modelsToTry(hasImage);
-
-  // Build the user message content — multimodal when an image is present
-  type ContentPart =
-    | { type: 'text'; text: string }
-    | { type: 'image_url'; image_url: { url: string } };
-
-  const userContent: string | ContentPart[] = hasImage
-    ? [
-        {
-          type: 'image_url' as const,
-          image_url: {
-            url: `data:${opts.imageMimeType || 'image/png'};base64,${opts.imageBase64}`,
-          },
-        },
-        ...(rawText.trim()
-          ? [{ type: 'text' as const, text: `Also consider this accompanying text:\n\n${rawText}` }]
-          : []),
-        { type: 'text' as const, text: 'Extract the booking and EMD details from this airline booking screenshot.' },
-      ]
-    : `Extract the booking and EMD details from the following message:\n\n${rawText}`;
-
   const startedAt = Date.now();
   const remaining = () => TOTAL_BUDGET_MS - (Date.now() - startedAt);
-
+  const rejectedProviders = new Set<AiAttempt['provider']>();
   let lastError: Error | null = null;
-  // True while every failure so far has been the provider being busy or slow —
-  // decides whether staff are told "try again shortly" or "could not parse".
-  let onlyTransientFailures = true;
+  // True while every failure so far was busy / quota / timeout — decides
+  // whether staff are told "try again shortly" or "could not parse".
+  let onlyTransient = true;
 
-  for (const model of models) {
-    // A busy model gets one quick retry before moving on; demand spikes on
-    // Google's side are usually seconds long.
-    for (let attempt = 1; attempt <= 2; attempt++) {
+  for (const attempt of attempts) {
+    if (rejectedProviders.has(attempt.provider)) continue;
+    for (let tryNo = 1; tryNo <= 2; tryNo++) {
       // Never start a request the time budget cannot finish.
       if (remaining() < 5_000) break;
+      const t0 = Date.now();
       try {
-        // Every call needs its own deadline. Without one, a model that accepts
-        // the connection and then stalls holds the request open until the
-        // hosting platform kills the whole function.
-        const response = await fetch(GEMINI_URL, {
-          signal: AbortSignal.timeout(Math.min(MODEL_TIMEOUT_MS, remaining())),
+        const response = await fetch(attempt.url, {
+          signal: AbortSignal.timeout(Math.min(ATTEMPT_TIMEOUT_MS, remaining())),
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${apiKey}`,
-          },
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${attempt.apiKey}` },
           body: JSON.stringify({
-            model,
+            model: attempt.model,
             messages: [
-              { role: 'system', content: SYSTEM_PROMPT },
-              { role: 'user', content: userContent },
+              { role: 'system', content: req.system },
+              { role: 'user', content: req.user },
             ],
             temperature: 0.1,
+            response_format:
+              attempt.output === 'json_schema' && req.schema
+                ? { type: 'json_schema', json_schema: { name: req.schemaName ?? 'reply', schema: req.schema } }
+                : { type: 'json_object' },
+            ...(attempt.reasoningEffort ? { reasoning_effort: attempt.reasoningEffort } : {}),
+            ...(attempt.maxTokens ? { max_completion_tokens: attempt.maxTokens } : {}),
           }),
         });
 
         if (!response.ok) {
-          const errorText = await response.text();
-          if (isKeyRejection(response.status)) {
-            throw new AiConfigError(
-              `Gemini rejected GEMINI_API_KEY (${response.status}) on model ${model}: ${errorText}`
-            );
-          }
+          const body = await response.text();
           throw new ProviderHttpError(
             response.status,
-            `Gemini API error (${response.status}) on model ${model}: ${errorText}`
+            providerErrorCode(body),
+            `${attempt.provider} ${attempt.model} answered ${response.status}`
           );
         }
 
-        const data = (await response.json()) as {
-          choices?: { message?: { content?: string } }[];
-        };
-
+        const data = (await response.json()) as { choices?: { message?: { content?: string } }[] };
         const content = data.choices?.[0]?.message?.content;
-        if (!content) {
-          throw new Error(`Empty response received from model ${model}.`);
-        }
+        if (!content) throw new Error(`Empty reply from ${attempt.provider} ${attempt.model}.`);
 
-        return parseRawLlmJson(content, rawText || '[image upload]', model);
+        const result = accept(content, attempt);
+        console.info(`[AI] ${attempt.provider}/${attempt.model} ok ${Date.now() - t0}ms`);
+        return result;
       } catch (err) {
-        // A rejected key fails identically on every model; stop here rather
-        // than spending another request to learn the same thing.
-        if (err instanceof AiConfigError) throw err;
         lastError = err instanceof Error ? err : new Error(String(err));
-        console.warn(`[AI Parsing] ${model} attempt ${attempt} failed: ${lastError.message}`);
+        const timedOut = lastError.name === 'TimeoutError' || lastError.name === 'AbortError';
+        const reason: FailureReason =
+          err instanceof ProviderHttpError ? failureReason(err.status) : timedOut ? 'timeout' : 'invalid';
+        console.warn(
+          `[AI] ${attempt.provider}/${attempt.model} try ${tryNo} failed: reason=${reason}` +
+            ` http=${err instanceof ProviderHttpError ? err.status : '-'}` +
+            ` code=${err instanceof ProviderHttpError ? err.code || '-' : '-'} ${Date.now() - t0}ms`
+        );
 
-        const transient =
-          (err instanceof ProviderHttpError && isTransientStatus(err.status)) ||
-          (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError'));
-        if (!transient) {
-          onlyTransientFailures = false;
-          break; // not worth retrying this model — try the next one
+        if (reason === 'key') {
+          rejectedProviders.add(attempt.provider);
+          break;
         }
-        if (attempt === 1) await new Promise((r) => setTimeout(r, retryDelayMs()));
+        if (reason === 'invalid') onlyTransient = false;
+        // Only a busy provider is worth asking again; a timeout moves on.
+        if (reason === 'busy' && tryNo === 1) {
+          await new Promise((r) => setTimeout(r, retryDelayMs()));
+          continue;
+        }
+        break;
       }
     }
   }
 
-  if (lastError && onlyTransientFailures) {
-    throw new AiBusyError(`Every AI model was busy or timed out. Last error: ${lastError.message}`);
+  // Every configured provider refused its key: an administrator's problem.
+  if (attempts.every((a) => rejectedProviders.has(a.provider))) {
+    throw new AiConfigError(`Every AI provider rejected its key. Last error: ${lastError?.message ?? 'none'}`);
+  }
+  if (lastError && onlyTransient) {
+    throw new AiBusyError(`Every AI provider was busy, out of quota or timed out. Last error: ${lastError.message}`);
   }
   throw lastError || new AiBusyError('No AI request could be made within the time allowed.');
+}
+
+export async function parseAirlineMessage(
+  rawText: string,
+  opts: { imageBase64?: string; imageMimeType?: string } = {},
+  todayIso: string = todayIsoInPkt()
+): Promise<ParsedBookingDraft[]> {
+  const hasImage = !!opts.imageBase64;
+  const user: string | ContentPart[] = hasImage
+    ? [
+        { type: 'image_url', image_url: { url: `data:${opts.imageMimeType || 'image/png'};base64,${opts.imageBase64}` } },
+        ...(rawText.trim() ? [{ type: 'text' as const, text: `Also consider this accompanying text:\n\n${rawText}` }] : []),
+        { type: 'text', text: 'Extract the booking and EMD details from this airline booking screenshot.' },
+      ]
+    : `Extract the booking and EMD details from the following message:\n\n${rawText}`;
+
+  return callAi(
+    { system: bookingPrompt(todayIso), user },
+    (content, attempt) =>
+      parseRawLlmJson(content, rawText || '[image upload]', `${attempt.provider}/${attempt.model}`, attempt.confidence).map((d) =>
+        flagPastDates(d, todayIso)
+      )
+  );
 }

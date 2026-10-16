@@ -1,8 +1,15 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { parseAirlineMessage, AiConfigError, AiBusyError } from '@/lib/ai/parse-booking';
-import { parseExcelFile } from '@/lib/ai/parse-excel';
+import { parseExcelFile, ExcelMappingError } from '@/lib/ai/parse-excel';
 import { createRateLimiter } from '@/lib/rate-limit';
+
+/**
+ * The AI chain's own budget is 55 s (`callAi`); without this the platform
+ * default could end the function first, and staff would see a bare error
+ * instead of a message.
+ */
+export const maxDuration = 60;
 
 /** Max base64 image size: ~10 MB raw → ~13.3 MB base64. */
 const MAX_IMAGE_BASE64_LENGTH = 14_000_000;
@@ -62,11 +69,11 @@ export async function POST(request: Request) {
         );
       }
       const buffer = Buffer.from(body.excelBase64, 'base64');
-      const drafts = parseExcelFile(
+      const { drafts, notice } = await parseExcelFile(
         buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer,
         body.excelFileName || 'upload.xlsx'
       );
-      return NextResponse.json({ ok: true, drafts });
+      return NextResponse.json({ ok: true, drafts, notice });
     }
 
     const text = body.text?.trim() ?? '';
@@ -109,12 +116,17 @@ export async function POST(request: Request) {
           ok: false,
           error:
             'The AI service is not set up correctly (its API key is missing or was rejected). ' +
-            'Ask an administrator to update GEMINI_API_KEY. You can still enter the booking manually.',
+            'Ask an administrator to update GEMINI_API_KEY (and GROQ_API_KEY, if set). You can still enter the booking manually.',
         },
         { status: 503 }
       );
     }
-    // The provider was busy on every model, even after a retry. Nothing is
+    // A spreadsheet with no recognisable PNR column: say so, rather than
+    // "could not parse", which reads like a broken file.
+    if (err instanceof ExcelMappingError) {
+      return NextResponse.json({ ok: false, error: err.message }, { status: 422 });
+    }
+    // Every provider was busy, out of quota or too slow, even after a retry. Nothing is
     // wrong with the screenshot, and saying so would send staff re-cropping an
     // image that was never the problem.
     if (err instanceof AiBusyError) {

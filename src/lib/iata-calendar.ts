@@ -110,7 +110,8 @@ export const IATA_CALENDAR_FROM = IATA_PERIODS[0].billingFrom;
 
 /**
  * Last day the calendar covers. An EMD issued after this needs next year's
- * calendar loading — see `iataCalendarGapNotice`.
+ * calendar loading — `/iata` lists such EMDs under "Outside the loaded
+ * calendar" (docs/operations.md, "Loading a new IATA calendar").
  */
 export const IATA_CALENDAR_TO = IATA_PERIODS[IATA_PERIODS.length - 1].billingTo;
 
@@ -139,31 +140,4 @@ export function iataPeriodFor(issuanceIso: string | null | undefined): IataPerio
  */
 export function iataPaymentDeadline(issuanceIso: string | null | undefined): string | null {
   return iataPeriodFor(issuanceIso)?.remittanceDay ?? null;
-}
-
-/**
- * Why a date has no period, phrased for a staff member rather than a developer.
- * `null` when the date is covered and there is nothing to explain.
- */
-export function iataCalendarGapNotice(issuanceIso: string | null | undefined): string | null {
-  if (!issuanceIso) return null;
-  const day = issuanceIso.slice(0, 10);
-  if (iataPeriodFor(day)) return null;
-  if (day > IATA_CALENDAR_TO) {
-    return `The IATA calendar loaded here ends on ${IATA_CALENDAR_TO}. Load the next one to get payment dates after that.`;
-  }
-  return `The IATA calendar loaded here starts on ${IATA_CALENDAR_FROM}, so there is no payment date for ${day}.`;
-}
-
-/**
- * Remittance days from `fromIso` onwards, earliest first — the settlement
- * dates still ahead of the company.
- *
- * Several billing periods can share a remittance day in principle, so the days
- * are de-duplicated: this answers "when do we next have to pay IATA", and two
- * entries for one date would be two answers to one question.
- */
-export function upcomingRemittanceDays(fromIso: string): string[] {
-  const days = IATA_PERIODS.filter((p) => p.remittanceDay >= fromIso).map((p) => p.remittanceDay);
-  return [...new Set(days)].sort();
 }

@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   canEditPnr,
-  hasUnresolvedBranch,
   pnrBranchFilter,
   isHeadOffice,
   canManageEmd,
@@ -50,14 +49,6 @@ describe('pnrBranchFilter — the scoping fragment', () => {
 
   it('treats an absent user as unscoped (server-side callers with no session)', () => {
     expect(pnrBranchFilter(undefined)).toEqual({});
-  });
-});
-
-describe('hasUnresolvedBranch', () => {
-  it('is true only for a branch account with no matching branch row', () => {
-    expect(hasUnresolvedBranch(orphan)).toBe(true);
-    expect(hasUnresolvedBranch(rwp)).toBe(false);
-    expect(hasUnresolvedBranch(hq)).toBe(false);
   });
 });
 

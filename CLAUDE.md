@@ -25,8 +25,6 @@ Then, as the task requires:
 - `docs/operations.md` — scripts, database changes, backups, security, the daily cron
 - `docs/phases/` — the build plan, one file per phase
 - `docs/reference/` — findings that inform work without governing it
-- `docs/sessions/` — narrative notes from past sessions (secondary; `PROGRESS.md`
-  and `docs/decisions.md` are the primary record)
 
 ## Golden rules
 

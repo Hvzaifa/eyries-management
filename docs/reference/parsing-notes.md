@@ -1,10 +1,8 @@
 # Parsing Notes — Phase 2 Step 3
 
-**Provider:** Gemini only — `gemini-2.5-flash`, falling back to `gemini-2.5-flash-lite`
-for text (see `src/lib/ai/parse-booking.ts`). Ollama was removed on 2026-09-07, and
-Groq, Cerebras and OpenRouter on 2026-09-09; none of their keys were set on the deployed
-app, so the "fallback chain" was only ever a series of failures before the one provider
-that worked (docs/decisions.md).
+**Providers:** these findings were recorded with earlier models. The current
+providers, models and retry rules are in `docs/operations.md`, "The AI intake",
+and `src/lib/ai/providers.ts` — the authority for which models run.
 
 ## Summary
 
@@ -33,6 +31,6 @@ The AI Intake parser (`/api/ai/parse-pnr`) handles structured and semi-structure
 
 ## Recommendations
 
-1. **SV Umrah bulk lists** (like the 15-PNR screenshot): Best handled via Excel upload or structured text paste. The deterministic Excel parser (`parse-excel.ts`) is 100% reliable for tabular data, whereas an LLM can get overwhelmed by huge blocks of text.
+1. **SV Umrah bulk lists** (like the 15-PNR screenshot): Best handled via Excel upload or structured text paste. A spreadsheet's values are copied by code (`excel-mapping.ts`) — the AI only says which column is which — whereas an LLM reading a huge block of text can get overwhelmed.
 2. **Single PNR confirmations**: LLM parsing works well for extracting PNR, dates, seats, sector, and fare. Staff should expect to manually fill investor, license and branch.
-3. **Model choice**: the fallback chain's model ids have never been verified against the providers' current catalogues — worth checking, since an invalid id fails silently and simply falls through to the next candidate.
+3. **Model choice**: check the configured models with `npm run ai:check` when parsing starts failing — a retired model answers 404 rather than failing silently.

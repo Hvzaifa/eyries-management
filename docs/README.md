@@ -30,7 +30,6 @@ each one exists because something went wrong once.
 | [`operations.md`](operations.md) | Running the thing: scripts, database changes, backups, the daily cron, security posture |
 | [`phases/`](phases/README.md) | The build plan, one file per phase, broken into numbered steps |
 | [`reference/`](reference/README.md) | Findings that inform work without governing it (e.g. AI parsing behaviour per airline) |
-| [`sessions/`](sessions/README.md) | Narrative notes from past working sessions (secondary — `PROGRESS.md` and `decisions.md` are the primary record) |
 
 ---
 

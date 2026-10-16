@@ -11,13 +11,9 @@
     "test": "vitest run",
     "db:apply": "npx tsx db/apply-schema.ts",
     "db:seed": "npx tsx prisma/seed.ts",
-    "db:seed:users": "npx tsx scripts/seed-users.ts",
     "job:deadline-check": "npx tsx scripts/deadline-check.ts",
-    "db:security": "npx tsx db/apply-security.ts",
+    "ai:check": "npx tsx scripts/ai-check.ts",
     "postinstall": "prisma generate"
-  },
-  "prisma": {
-    "seed": "npx tsx prisma/seed.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^6.19.3",

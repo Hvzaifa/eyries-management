@@ -140,9 +140,6 @@ export function validateSeatsChange(
   return null;
 }
 
-/** How a PNR's seats are held, for the dashboard's Holder column (step 3). */
-export type HolderKind = 'unassigned' | 'agent' | 'bot' | 'mixed';
-
 /**
  * The dashboard's Holder column (owner rulings, 2026-09-20).
  *
@@ -204,16 +201,4 @@ export function holderFilterKeys(ledger: SeatLedger, agents: HolderPart[]): stri
   if (ledger.botAllotment > 0) keys.push(BOT_HOLDER);
   if (ledger.unassigned > 0 || keys.length === 0) keys.push(COMPANY_HOLDER);
   return [...new Set(keys)];
-}
-
-export function holderKind(ledger: SeatLedger, agentCount: number): HolderKind {
-  const holders =
-    (ledger.agentSeats > 0 ? 1 : 0) +
-    (ledger.botAllotment > 0 ? 1 : 0) +
-    (ledger.unassigned > 0 ? 1 : 0);
-  if (holders === 0) return 'unassigned'; // a 0-seat booking
-  if (holders > 1) return 'mixed';
-  if (ledger.unassigned > 0) return 'unassigned';
-  if (ledger.botAllotment > 0) return 'bot';
-  return agentCount > 1 ? 'mixed' : 'agent';
 }

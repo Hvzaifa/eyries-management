@@ -5,8 +5,6 @@ import {
   IATA_CALENDAR_TO,
   iataPeriodFor,
   iataPaymentDeadline,
-  iataCalendarGapNotice,
-  upcomingRemittanceDays,
 } from './iata-calendar';
 import { diffInDays } from './urgency';
 
@@ -146,50 +144,5 @@ describe('iataPaymentDeadline', () => {
   it('never invents a date it was not given', () => {
     expect(iataPaymentDeadline('2027-02-01')).toBeNull();
     expect(iataPaymentDeadline(null)).toBeNull();
-  });
-});
-
-describe('iataCalendarGapNotice', () => {
-  it('says nothing when the date is covered', () => {
-    expect(iataCalendarGapNotice('2026-09-22')).toBeNull();
-    expect(iataCalendarGapNotice(null)).toBeNull();
-  });
-
-  it('asks for the next calendar when the date is past the end', () => {
-    const notice = iataCalendarGapNotice('2027-03-01');
-    expect(notice).toContain('2026-12-31');
-    expect(notice).toContain('Load the next one');
-  });
-
-  it('explains a date before the calendar starts differently', () => {
-    const notice = iataCalendarGapNotice('2025-06-01');
-    expect(notice).toContain('starts on 2026-01-01');
-    expect(notice).not.toContain('Load the next one');
-  });
-});
-
-describe('upcomingRemittanceDays', () => {
-  it('lists settlement days from a date onwards, earliest first', () => {
-    const days = upcomingRemittanceDays('2026-09-22');
-    // 22 Sep is itself a remittance day — it settles the 8–15 Sep period. The
-    // next settlement is NOT the one for the period today falls in (30 Sep);
-    // an earlier window can still be awaiting payment.
-    expect(days[0]).toBe('2026-09-22');
-    expect(days[1]).toBe('2026-09-30');
-    expect(days[days.length - 1]).toBe('2027-01-07');
-    expect([...days].sort()).toEqual(days);
-  });
-
-  it('includes a remittance day falling on the date itself', () => {
-    expect(upcomingRemittanceDays('2026-09-30')[0]).toBe('2026-09-30');
-  });
-
-  it('has no duplicates', () => {
-    const days = upcomingRemittanceDays('2026-01-01');
-    expect(new Set(days).size).toBe(days.length);
-  });
-
-  it('runs out rather than extrapolating', () => {
-    expect(upcomingRemittanceDays('2027-06-01')).toEqual([]);
   });
 });

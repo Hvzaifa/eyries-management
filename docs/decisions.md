@@ -1678,6 +1678,347 @@ Unchanged: the "EMDs To Issue" card still counts active bookings only — an EMD
 - Checked in a browser as Head Office and as Karachi, and at phone width with no sideways scroll.
 - **Notice buttons show "no email on file"** for every imported agent, since none has an address recorded.
 
+### 2026-10-05 — AI intake made reliable: faster models, Groq backup, structured output, AI-mapped spreadsheets
+
+**Report (owner):**
+- Screenshots in production return "The AI service is busy right now".
+- Excel uploads recognise nothing, or always leave certain fields empty.
+- Should AI read the spreadsheets instead of hard-coded matching? Free tools first.
+
+**Found (measured, not assumed):**
+- **The key works.** All current Gemini Flash models answered locally. "Busy" was the app running out of time or quota:
+  - The first model, `gemini-2.5-flash`, is now restricted to existing users and took **17 s** where `gemini-3.5-flash-lite` took **4 s** with the same answers.
+  - The prompt made the model write a value, a confidence and a prose note on ~45 fields.
+  - Screenshots went up at full size.
+  - A 429 quota hit was retried as if it were "busy".
+  - The log never said which of these happened.
+- **Dates without a year** ("14NOV") came back as **2023/2024**: the model was never told today's date.
+- **The Excel parser:**
+  - It assumed headers on row 1; the master sheet has a totals row there.
+  - It matched headers by substring: "type" caught INVESTMENT TYPE as the segment, and "code" matched anything.
+  - It hard-coded flights and every EMD round field to empty.
+- **Groq's free plan** caps `qwen/qwen3.8-27b` at **1,000 output tokens a minute** (measured; a larger request is refused). A full reply in the value-and-confidence shape is ~1,160 tokens.
+
+**Answered by the owner (asked):**
+- `PNRs.xlsx` goes in through a **separate bulk import script** later, not this form.
+- In the form, **the AI maps columns and code copies values**.
+- The **free Gemini tier is acceptable**, although Google may use free-tier inputs to improve its products.
+- **Add Groq** as a backup.
+- **Update architecture.md**: it still named the Claude API, which the app never used and which is not free.
+- Vercel uses the same key as local.
+
+**Built:**
+- `providers.ts`: the attempt order is Gemini `3.5-flash-lite` → `3.5-flash` → Groq. Quota moves on at once; busy or timeout retries once; a rejected key skips that provider. Every failure logs one line with the reason, HTTP status and provider code, and never a body.
+- `booking-schema.ts`: one field list. Gemini gets a JSON schema; Groq gets JSON mode with a **compact** reply (plain values, found fields only, thinking off, 900-token cap). The prose notes are gone.
+- `bookingPrompt` states today's date. `flagPastDates` marks a past flight or deadline date low confidence with a note ("check the year"), and the form lists those notes under "Check before saving".
+- The browser shrinks screenshots to 1,600 px JPEG before upload.
+- `excel-mapping.ts` + `parse-excel.ts`:
+  - One AI request returns a column map, which code validates.
+  - The dictionary fallback matches whole headers.
+  - Values are copied exactly: Excel serial dates, %-formatted fractions, EMD numbers.
+  - The form loads at most 100 rows, with a notice pointing large sheets to the bulk import.
+- `npm run ai:check` health check.
+- Docs updated: `operations.md`, `architecture.md`, `.env.example`.
+
+**Verified:**
+- 677 tests.
+- Live, through the app's code:
+
+  | Path | Before | After |
+  |---|---|---|
+  | Text | 17 s | **4.6 s** |
+  | Screenshot | 16 s | **4.1 s** |
+  | Screenshot, Gemini forced to fail → Groq | — | **1.9 s** |
+
+  Every field matched on all three, including the year (2026), and the log line named the reason.
+- In the browser, a 3,200 px screenshot was sent as a 60 KB JPEG and parsed correctly.
+- `PNRs.xlsx` through the new path (AI mapping 5.1 s, dictionary 0.8 s): 1,769 bookings found. Fifty rows × 21 fields were compared with an independent openpyxl read: **0 mismatches on either path**.
+
+### 2026-10-05 — A screenshot of many bookings still said "busy": the reply is now a table
+
+**Report (owner):** the 14-booking table screenshot (PNRs 72HTPS…75ACGQ) still returned "The AI service is busy" locally. The Excel upload worked.
+
+**Cause (reproduced with the owner's image):** `gemini-3.5-flash-lite` was **still writing** when it hit the 25 s per-request limit, twice. One value-and-confidence object per field, times 14 bookings, is ~16,000 tokens. The retry after a timeout used up the whole 55 s budget, so no other model was ever tried. The Excel path was fine because it asks only for a column map.
+
+**Measured on the same image:**
+
+| Reply shape | Size | Time |
+|---|---|---|
+| Value-and-confidence object per field | ~16,000 tokens | cut off at 25 s |
+| Plain objects | 2,800 tokens | 23 s |
+| **Table**: field names once, one row per booking | **~1,800 tokens** | **10–14 s**, all 14 correct |
+
+Vercel's own limit on Hobby with Fluid compute (the default) is 300 s, so the 60 s cap is the app's choice. It is kept, because Fluid compute can't be confirmed from here and a higher setting might fail the deploy.
+
+**Changed:**
+- `bookingPrompt` asks every provider for `{"columns", "rows", "unsure"}`. `tableToBookings` turns it into drafts; a value listed in `unsure` is low confidence, and other found values take the provider's confidence (Gemini high, Groq medium).
+- The per-field JSON schema is gone. Field names were the bulk of the reply, and the column map for spreadsheets still uses a schema.
+- Per-request limit 35 s; **a timeout moves on to the next model** instead of retrying the same one.
+- Groq's 900-token cap covers one or a few bookings; a dozen-booking screenshot is Gemini's job.
+
+**Verified:**
+- 682 tests.
+- The owner's screenshot, three runs through the app's code: **14 drafts, 0 wrong**, in 8.3–12.1 s. Checked per row: PNR, outbound and return dates (including January 2027), both flight codes (normalised "SV 739" → SV739), seats, LHE cities and the EMD value.
+- In the browser: 14 bookings, the first fully filled.
+- Single booking: text 2.2 s and screenshot 2.4 s, every field correct.
+
+### 2026-10-05 — PNRs.xlsx replaces the master-sheet import; travelled bookings come in as completed; agents belong to their branch
+
+**Instruction (owner):** upload `PNRs.xlsx`, including bookings that have passed (outbound date passed and refunded) in the completed section, branch-wise, with each branch having access to its agents. Follow the rules of the earlier import, and ask rather than assume.
+
+**Asked and answered before anything was written:**
+1. **Replace, don't merge.** The bookings and agents from the 2026-09-28 import were backed up and cleared, then `PNRs.xlsx` was loaded. *"Every thing should match the new PNR.xlsx data"*, with no duplicates. Two changes made in the app on 5 Oct that are not in the sheet were **not** re-applied: 7VL25D round 2 (EMD 729 3812308883, PKR 7,981,281) and the round-1 refund on 7EQ5BF. Both are in the backup.
+2. **Agents on completed bookings: assigned, shown as unpaid.** The 2026-09-19 rule applies to completed bookings too: the agent holds the booking's whole seat count. No payment is recorded, so the Agents pages show the full amount outstanding until recoveries are entered.
+3. **Each agent belongs to its branch.** An agent's `created_by_branch_id` is the branch its bookings are in. That branch sees the agent, can edit it and can send notices; other branches cannot see it; Head Office sees all. Every agent in the sheet sells through exactly one branch. One that sold through several would stay with Head Office and be flagged; the rule is in place but no agent needed it.
+
+**What changed from the 2026-09-28 rules:** the third exclusion ("outbound passed and every EMD refunded") now imports the booking as `completed`. `importStatus` uses the app's own definition: outbound before today and every real round refunded. A booking flying today stays active. Everything else is as on 2026-09-28:
+- Left out: rows whose Total EMD Value is 0, and rows where no EMD was ever issued.
+- Past-but-unrefunded bookings stay active and flagged.
+- IATA payment is assumed on the remittance day once it has passed.
+- 2ND EMD TL is round 1's deadline.
+- Agents are named verbatim.
+- Duplicate PNR codes hold back every copy.
+
+**Found on the way:**
+- The sheet has 2,709 non-blank rows, but 940 are blank template rows. 1,049 of the 2,709 have a Total EMD Value of 0: the 940 blank rows, plus 109 zero-seat rows like those left out on 2026-09-28.
+- One of the 73 zero-seat rows that carry an EMD amount still holds PKR 739,045 unrefunded. It is left out by the zero-value rule and listed under "Left out by rule".
+- A formula error (`#REF!`, 94FSP3's 2ND EMD TL) used to read as a silent blank. The importer now flags error cells ("Spreadsheet error"). This was the only one, and that booking is completed.
+
+**Result:** 1,769 real rows → 1,108 left out by rule (1,049 zero value, 59 never issued), and 2 held back: 7F7LKY on rows 330 and 397, two completed rows for different agents.
+- **1,599 bookings** (SR#1–1599): **662 active / 937 completed**.
+- 3,030 rounds: 575 held, 2,455 refunded. IATA payment assumed on 2,169 of them.
+- 1,580 ticketing rows and 54 parent links.
+- **73 agents on 415 bookings**, every one belonging to a branch: Rawalpindi 36, Multan 14, Faisalabad 9, Peshawar 5, Karachi 5, Lahore 2, Islamabad 1, Gujranwala 1.
+- 684 bookings are listed in `PNRs Import — Rows to Check (2026-10-05).xlsx`. Most are selling-side columns (cancelled tickets, penalty EMD) on travelled bookings. Also listed: percentages over 100%, shared agent names, and 12 past-but-unrefunded bookings.
+
+**Verified:**
+- The plan, and again the database after writing, were compared with an independent openpyxl read of the sheet: **56,467 values, 0 mismatches**. Two differences are expected: the `#REF!` cell, left blank, and `DUNIYA AVIATION` / `Duniya Aviation`, which is one agent by the case-insensitive rule.
+- Through the app's own loaders, all 1,599 booking pages load. Each branch lists only its own bookings (together they add up to 1,599) and only its own agents, with 0 cross-branch lines.
+- Branch agent lines add up to Head Office's 415. The agent receivable is PKR 1,761,132,247, with nothing recovered.
+- IATA owed: 110 rounds, PKR 411,891,010. To be refunded: 466 rounds.
+
+### 2026-10-12 — Airline `PA` is Airblue
+
+**Question:** The airline coded `PA` was left as a bare code on 2026-08-24, pending owner confirmation.
+**Answer (owner, 2026-10-12):** `PA` is **Airblue** (Air Blue). This closes the open item in the 2026-08-24 "Airline lookup names confirmed" entry. The AI intake prompt already reads `PA` as Airblue. Not yet done: `prisma/seed.ts` has no `PA` entry, and the live `airlines` row still carries the code as its name. Updating that row is a production write and waits for the owner's go-ahead. `PA` also still has no contact email, so the batch airline email cannot reach it (2026-09-07).
+
+### 2026-10-13 — Owner rulings on the proposed workflow (`Group Procurement.xlsx`)
+
+**Question:** The proposed workflow in `Group Procurement.xlsx` ("Proposed Workflow" sheet) conflicts with several recorded rulings. Which one wins in each case?
+**Answer (owner, 2026-10-13, ten rounds of questions):** Recorded here as given. **None of this is built yet.** Each item waits for a phase document (CLAUDE.md rule 1). Items marked *open* also wait for the owner. `business-rules.md` and `data-model.md` will be updated when each item is built, so they keep describing what the system actually does.
+
+**EMD rounds and refunds**
+- **A1. Refund requested (reverses part of 2026-09-21).** Bring back a `refund_requested` round status, and only that one. Round statuses become `issued` → `refund_requested` → `refunded`.
+  - Head Office may mark any round as refund requested. A branch may do so only for its own PNRs.
+  - **Only Head Office records the actual refund.**
+  - A `refund_requested` round **can't go back** to `issued`.
+  - **IATA holds the money; emails go only to airlines.**
+  - A `refund_requested` round **no longer counts as money held**:
+    - it's left out of the dashboard's held totals;
+    - it's left out of the "currently holding" figure that agents' EMD shares are worked out from (business-rules, agent money).
+- **A6. To be refunded (reverses 2026-09-28's definition).**
+  - *To be refunded* lists only PNRs **whose ticket issuance deadline has passed**, or whose tickets are all confirmed as issued (A8).
+  - An EMD that's paid to IATA **stays on the main dashboard** until the ticket issuance deadline.
+  - The system **only flags** PNRs. A person then marks the rounds as refund requested (A1).
+  - Rounds **not paid to IATA** are not listed.
+  - **Every new PNR must have a ticket issuance deadline** when it's created. Existing data is left as it is.
+  - Airlines don't extend ticket deadlines.
+- **A8. Ticket tracking (reverses 2026-09-19's ticket-count rules and the 2026-09-28 "no ticket record" reading).**
+  - **Head Office and branches** (each for its own PNRs) may answer **"all tickets issued?"** at **any time**.
+  - **Yes:** the PNR's EMDs move to *To be refunded* immediately.
+  - **No:** the user types **how many tickets remain**. Tickets issued is worked out as seats − remaining.
+  - This reverses the current direction, where tickets issued is typed and the balance is calculated.
+- **A9. Unissued seats after ticketing, SV only (replaces "considered cancelled", 2026-09-19).**
+  - **Up to 10%** of an SV PNR's seats may go unissued (released) after the ticketing deadline. 10% is **rounded down**, so 25 seats allow 2.
+  - Beyond that, **the airline's penalty** applies, at whatever amount the airline charges.
+  - The penalty is borne by **whoever owns the seats**: the agent for an agent's seats, and otherwise the company (branches never owe, 2026-10-05; confirmed by the owner).
+  - The system shows that the 10% limit has been passed, and **staff enter the penalty**. This covers both cases:
+    - **seats belonging to an agent:** the penalty is charged to that agent, and the agent's balance includes it;
+    - **the company's own seats:** the penalty is recorded the same way.
+  - This supersedes the owner's earlier answer in this round that no penalty amount is recorded for any airline. The only penalty amount not recorded is the airline's penalty on a **cancelled** PNR. There, only "penalty paid: yes/no" is kept, though the penalty charged to each agent is still entered.
+- **A10. Unissued seats on non-SV PNRs.** The 10% allowance is SV only. On any other airline, unissued seats after the ticketing deadline are **set for manual penalty calculation**: staff work out the penalty and **record it**. It is borne by whoever owns the seats, as in A9.
+- **B1. Payment (reaffirms 2026-09-21).** Payment stays a matter between the company and IATA. An EMD deadline remains an issuance deadline.
+- **B2. No third policy EMD (reaffirms 2026-09-22 and 2026-09-28).** No airline has a third-EMD policy. Rounds 3–4 remain re-issues of rounds 1–2.
+
+**PNR end states (reverses 2026-08-25's four-condition definition of cancelled)**
+- **A2, B3. Released and cancelled are two different end states.**
+  - **Released:** the PNR ends **before EMD-1 is issued**, either deliberately or because the **EMD-1 issuance deadline was missed**.
+    - A branch may release only its own PNRs. Head Office may release any PNR, also only before EMD-1.
+    - A **reason is required** and is shown to Head Office in the activity log.
+    - A PNR **can't be released if any agent on it has paid**. An unpaid agent's seats end with the release.
+    - A release **can't be undone**.
+  - **Cancelled:** the **EMD-2 issuance deadline was missed**. That deadline comes from the airline's policy, e.g. SV departure − 20 days in the 60+ day band.
+    - The issued EMDs are **forfeited**, but **once the penalty EMD is paid, they can be refunded**. This supersedes the earlier answer in this round that no money is refunded.
+    - **The penalty amount is not tracked.** The system records **whether the penalty has been paid** (yes/no). Once it is marked paid, the forfeited EMDs go on *To be refunded*.
+    - Until then the EMDs show as **`forfeited`**, a new round status approved by the owner. Round statuses become `issued`, `refund_requested`, `forfeited` and `refunded`.
+    - Agents **don't owe** the unpaid rest of their EMD share.
+    - **Agents pay the penalty, and the remainder of what they paid is paid back to them.**
+    - **Two triggers, in order.** A missed EMD-2 deadline cancels the PNR whether or not an agent holds seats. If EMD-2 *was* issued but the agent's tickets weren't issued by the ticketing deadline, the PNR is cancelled then.
+    - **The penalty charged to the agent is entered by staff**, and the system works out the amount paid back: the agent's payments less that penalty. This is a new field, approved by the owner, and the one exception to "no penalty amount is recorded".
+  - Once an EMD is issued and the airline informed, the PNR can't be released.
+  - **The system never changes the status itself** (the current ruling stands). It flags the missed deadline, and a person sets released or cancelled. **Superseded 2026-10-14 for cancellation, which is now automatic. Release is still done by a person.**
+  - **Existing `cancelled` PNRs with no issued EMD become `released`.** Those with issued EMDs stay `cancelled`.
+  - **Partial ticketing does not cancel.** A PNR where only some tickets were issued (e.g. 20 of 30) stays alive, and the SV 10% rule (A9) governs the unissued seats. **A PNR is cancelled at the ticketing deadline only when no tickets at all were issued.**
+  - Unissued seats on a PNR that stays alive: SV, see A9; other airlines, see A10.
+
+**Splits (SV only)**
+- **A3, D1. Splits (reverses parts of 2026-09-01, 2026-09-07 and 2026-09-19).**
+  - **Only SV has child PNRs. Splitting is blocked for every other airline.**
+  - **Branches may split their PNRs, including after EMD-1 is issued.** This is an exception to the A4 edit lock.
+  - **Issued EMDs stay with the parent**, shown as issued **before the split, for the original seats**.
+    - The child shows only its **next** EMD, with a note that EMD-1 was paid by the parent.
+    - The parent's EMD covers the child's seats only when the split happens after it was issued.
+  - Rounds not yet issued are calculated for the child on the child's own seats.
+  - The child's **EMD deadlines are copied from the parent**.
+  - If the child's outbound date moves, its **ticket issuance deadline is recalculated as outbound − 3 days**.
+  - The child is **edit-locked like its parent**.
+  - **One split takes one agent's seats.** Seats from two agents need two splits.
+  - Split seats **stay with the same agent**.
+    - The agent's **terms are unchanged on both PNRs**.
+    - The agent's payments count **collectively across the original seats**. Example: QFC's 30 seats split 15 + 15 to move 15 to another outbound date; QFC is still billed and credited as one 30-seat deal.
+  - **Refund timing:** the parent's EMDs, including the EMD-1 that covers the child's seats, move to *To be refunded* after the **parent's** ticketing deadline. The child's own EMDs move after the child's deadline.
+  - The current `splitPnr` code tests whether EMD-1 is *refunded*, which matches neither the old rule nor this one.
+  - A split **can't mix** an agent's seats with unassigned seats.
+
+**Editing and flight details**
+- **A4. Edits and flight times (reverses part of 2026-09-26).**
+  - The 2026-09-07 rule is kept: a branch can't edit a PNR once EMD-1 is issued.
+  - **Every flight of a new PNR requires a departure time and an arrival time, including stops.**
+  - Overnight flights also record the **arrival date**, including at stops. These are new fields, approved by the owner.
+  - Existing bookings are left as they are.
+  - SV's ticketing deadline stays **outbound date − 3 days**, not exactly 72 hours.
+
+**Branches**
+- **A5. Branch emails (reverses part of 2026-09-07).**
+  - Branches may send **refund emails only**, through the system, to the **airline's recorded address**, with **Head Office copied**.
+  - No email goes to IATA.
+  - Ticket counts: see A8.
+- **A7. Alerts (replaces the 2026-08-24 email digest).**
+  - The current alert rules are kept: the 0–2 day window and future dates only.
+  - Alerts are **shown in the system only**. A branch sees its own PNRs' alerts, and Head Office sees all of them.
+  - The **daily alert email to the staff list stops**.
+- **B4. Branch inventory (reaffirms 2026-09-07 scoping).**
+  - Branches can't see each other's inventory.
+  - **Only Head Office** may move a PNR between branches, and only the **whole PNR**. Individual seats can't be moved.
+  - A moved PNR belongs entirely to the receiving branch.
+  - The reason and the receiving branch are logged.
+  - **A PNR with seats assigned to an agent can't be moved.**
+
+**Scope**
+- **B5. Price rules (reaffirms rulings 10 and 12).** Stays as implemented: charge or discount, as a % of base fare or PKR per seat, plus the tax tick. "Face Value" and "Net-Net" are not added.
+- **C1. Fetch (reaffirms `architecture.md`).** "Fetch" in step 3 does not mean direct GDS or mailbox integration. Paste-and-parse AI intake is the intended route.
+- **C2. Accounting ledger (reverses the business-rules "no reconciliation in v1" and the `architecture.md` limit on financial actions).**
+  - **The portal keeps its own ledger. It replaces the company's accounting software for group-booking money only, for now.** That covers EMDs, IATA payments, refunds, agent payments and penalties, not the company's whole books.
+  - **Each agent and each airline has its own account.**
+  - **Branches never owe**, so the 2026-10-05 ruling stands over the workflow's "branch receivables" debit.
+  - Staff enter the **exchange rate (ROE)**. Amounts are recorded in **PKR only**.
+  - **The entries for each event will be supplied by the owner later.** The ledger can't be designed until then. **Supplied 2026-10-14; see that entry.**
+
+### 2026-10-14 — Auto-cancellation, agent paybacks, phase order, ledger entries
+
+**Question:** The phase 9 draft asked the owner four sign-off questions, and the ledger (C2, 2026-10-13) was waiting for the owner's accounting entries.
+**Answer (owner, 2026-10-14):**
+
+- **Automatic cancellation (reverses part of 2026-10-13 B3, and the business-rules line "the system never automatically marks a PNR as cancelled").** A PNR is **cancelled automatically** once the due date passes for either trigger:
+  - **EMD-2:** the EMD-2 issuance deadline passes without EMD-2 being issued;
+  - **ticketing:** EMD-2 was issued, but no tickets were issued by the ticketing deadline.
+
+  Release is unchanged: it's still flagged and done by a person.
+- **Paying agents back.** The system **records** the money paid back to an agent after a cancellation (date and amount), not just the amount owed. This needs a new record of money returned to agents, approved by the owner. `agent_recoveries` stays receipts only.
+- **Phase order.** Phase 9 (procurement workflow) is built **before** Phase 8 (bot sales). The bot is built later.
+- **Splits, confirmed.** Issued EMDs stay on the parent **only when the split happens after they were issued**. A split before any EMD is issued gives each PNR its own rounds, calculated on its own seats, with deadlines copied from the parent.
+- **Ledger entries (C2).** These are the only entries the ledger holds:
+
+  | Event | Debit | Credit |
+  |---|---|---|
+  | 1. EMD issued | Advances to Airlines (EMDs) | Payable to Airlines (by license: TA / TF / HD / TU) |
+  | 2. EMD refunded | Payable to Airlines | Advances to Airlines (EMDs) |
+  | 3. Penalty | Agent / Company Loss (PSF) | Payable to Airlines (by license) |
+  | 4. Cancellation, option A | as entry 2 | |
+  | 4. Cancellation, option B | Agent / Company Loss (PSF) | Advances to Airlines (EMDs) |
+
+  Payments to IATA, agent payments and paybacks are **not** posted.
+
+**Follow-up answers (owner, 2026-10-14):**
+
+- **Automatic cancellation, details:**
+  - The ticketing trigger fires only when staff have **recorded that no tickets were issued**. A blank count never triggers it.
+  - **No reversal, no exceptions.** The owner's reason: an EMD-2 issuance isn't confirmed to IATA without an email, and only the system sends that email, so it will always be recorded.
+  - The EMD-2 deadline is the one on EMD-1: the policy date for SV, the staff-entered date for other airlines. A booking whose EMD-1 covers 100% never triggers.
+  - It applies to **PNRs entered from now on only**.
+  - **No extra safeguard** (owner, 2026-10-14). The airline email is sent **after** an EMD is issued, to tell the airline so they can update the status at their end. Because only the system sends it, an EMD must be recorded in the system before the airline can be told. So an issued EMD-2 can't go unrecorded, and recording isn't made to depend on the email.
+  - There is **no manual cancellation**.
+- **Ledger:**
+  - **Cancellation option A** applies when the forfeited EMDs are refunded after the penalty is paid. **Option B** applies when they're never refunded and become a loss. **Staff choose.**
+  - **Penalty on a cancelled PNR:** staff enter both each agent's penalty and the company's share, and entry 3 posts them. This supersedes the 2026-10-13 rule that the airline's penalty on a cancelled PNR isn't recorded.
+  - **Licenses:** TA / TF / HD / TU were examples. The accounts follow the **licenses dropdown** (the `licenses` table).
+  - **Accounts:**
+    - Payable to Airlines: **one per license**;
+    - Advances to Airlines (EMDs): **one per airline**;
+    - Loss (PSF): one per agent, plus the company.
+  - **Opening entries:** the ledger **starts with entries for EMDs issued before it existed**.
+  - **Reports:** a journal of every entry, account balances, and an Excel export.
+
+**Ledger answers to the Phase 10 draft (owner, 2026-10-14):**
+
+- **Partial refunds:** when the airline refunds less than the EMD amount, the difference is **recorded as a loss**.
+- **Old rounds with missing data** (license, amount or refund date) **will be fixed by hand** before the opening entries are posted. The script must not fill the gaps itself.
+- **Penalty license:** entry 3 credits Payable to Airlines for the **EMD rounds' license**, not the PNR's.
+- **Write-offs (4B):** the loss is split between agents and the company **by share of the seats**.
+- **Access:** branches see the entries for **their own PNRs**. **Only Head Office sees the ledger** itself (journal, balances, export).
+- **Corrections edit the original entry** rather than posting a reversing entry. The old values are kept in `activity_log`, as for every other edit.
+- **Penalties for unissued seats** (Phase 9 Step 4) **also post entry 3**.
+- **Partial-refund loss** is split between agents and the company **by share of the seats**, as for write-offs.
+- **Penalty license:** a penalty is paid through **its own penalty EMD**. Staff pick the license that penalty EMD was issued against when entering the penalty, and entry 3 credits that license's Payable account in full. This supersedes "the EMD rounds' license" above. Recording the penalty's license needs a license field alongside each penalty amount, approved in principle by this answer.
+
+### 2026-10-16 — Cleanup before Phase 9: no more reloads from the sheet; what was removed and why
+
+**Question:** The owner asked for every unused file and all dead code to be removed before Phases 9 and 10, each with a reason. Which files are of no use, and how is that proven rather than guessed?
+**Answer (owner, 2026-10-16):** **The database will not be reloaded from the spreadsheet again.** It is now the record. That settled the one group that couldn't be judged from the code. Everything else was decided on evidence.
+
+**How "unused" was established.**
+- [Knip](https://knip.dev) (v5) was run in two passes:
+  - with tests and scripts counted as users;
+  - with only the app and scripts counted, to find code that nothing but its own test calls.
+- `tsc --noUnusedLocals --noUnusedParameters` and ESLint were run for dead code inside functions.
+- Each finding was then checked by hand.
+
+The code was already clean: no unused files, imports, variables or parameters. Two Knip findings were false positives, because Knip can't see these uses:
+- `tailwindcss` is loaded by `@import "tailwindcss"` in `globals.css`;
+- `eslint-config-next` is loaded by name through `FlatCompat`.
+
+**Files removed.** All are restorable from git (`docs/operations.md`, "Retired in the 2026-10-16 cleanup"):
+- **`scripts/import-master-sheet.ts`, `src/lib/master-sheet-import.ts` (+ test)** — the importer, retired by the ruling above. The app used one helper from it, `excelSerialToIso`. That helper moved into `src/lib/ai/excel-mapping.ts`, and its "midnight a few seconds short" case (2026-08-26) joined the `cellDate` test so the coverage stayed.
+- **`scripts/reset-bookings.ts`, `scripts/reset-transactional-data.ts`** — they emptied the database for a reload, so on a live system they could only destroy data.
+- **`scripts/seed-users.ts`** — it created the `@eyries.local` logins the owner deleted on 2026-10-16. Running it would have brought them back. It was the only user of the RLS-bypassing service-role key. "Login accounts" in `operations.md` replaces it.
+- **`db/apply-security.sql`, `db/apply-security.ts`** — a one-off fix applied on 2026-09-07. `db/schema.sql` states every statement for all twelve tables, while these covered eight and nine. The `.ts` file also claimed to run the `.sql` file and didn't.
+- **`docs/sessions/`** — one note whose every point is in `PROGRESS.md` and `data-model.md`. It named files that no longer exist, and no note had been written since 2026-09-01.
+- Two untracked caches: the root `.DS_Store` (Finder metadata) and `tsconfig.tsbuildinfo` (TypeScript's cache, which goes stale; regenerated on the next run).
+
+**Dead code removed** — reachable only from its own test:
+- `holderKind` and its type: it still returned `'mixed'`, which the comment above it says is gone (owner rulings, 2026-09-20). `holderLabel` and `holderFilterKeys` replaced it.
+- `hasUnresolvedBranch`: the deny-everything behaviour is enforced and tested through `pnrBranchFilter`.
+- `isEmdStatus`: a hard-coded copy of the status list that Phase 9 would have left stale.
+- `iataCalendarGapNotice` and `upcomingRemittanceDays`: `/iata` handles calendar gaps itself.
+- `isKeyRejection` and `isTransientStatus`: wrappers the AI retry loop no longer calls. Their tests now test `failureReason` directly, which had no test of its own.
+
+**Also corrected.**
+- `package.json#prisma` was removed. Prisma's own CLI warns it *"is deprecated and will be removed in Prisma 7"* on every command, Vercel's build included. It only configured `prisma db seed`, which nothing runs; `npm run db:seed` runs the same file.
+- The staff notice for a spreadsheet over 100 rows pointed to "the bulk import", which no longer exists. It now says to upload the rest as a separate sheet.
+- `operations.md` said RLS covered eleven tables; it covers twelve.
+- `parsing-notes.md` described models that were replaced on 2026-10-05.
+
+**Kept on purpose.**
+- `NO_TERMS`, a fixture constant shared by two test files.
+- `scripts/deadline-check.ts`, which runs the daily job until Phase 9 Step 9 changes it.
+- `scripts/ai-check.ts`.
+- `prisma/seed.ts`.
+- `next-env.d.ts`: Next.js generates it and its own header says not to edit it (nextjs.org/docs/app/api-reference/config/typescript).
+
+**Not committed** (owner, 2026-10-16: the owner commits). The importer files had uncommitted changes from the 2026-10-05 run that git couldn't restore. A copy is in `backups/retired-2026-10-16/` (gitignored) as `*.ts.bak`, an extension that no build tool reads.
+
+**Verified:** 29 test files and 648 tests pass, lint is clean, the strict unused check is clean, and `next build` compiles all 18 routes.
+
 ## Template for new entries
 
 ```

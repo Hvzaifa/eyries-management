@@ -179,10 +179,6 @@ export function clampEmd2Deadline(
 export const EMD_STATUSES = ['issued', 'refunded'] as const;
 export type EmdStatus = (typeof EMD_STATUSES)[number];
 
-export function isEmdStatus(value: string | null | undefined): value is EmdStatus {
-  return value === 'issued' || value === 'refunded';
-}
-
 /** EMD the airline is holding: everything issued and not yet refunded. */
 export const HELD_EMD_STATUS: EmdStatus = 'issued';
 

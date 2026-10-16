@@ -105,15 +105,6 @@ export async function resolveAuthUser(user: SessionIdentity): Promise<AuthUser> 
 }
 
 /**
- * A branch account whose branch name matches no row in `branches`. Such an
- * account must be shown nothing at all — the failure mode to avoid is treating
- * "no branch to filter on" as "no filter needed".
- */
-export function hasUnresolvedBranch(user: AuthUser): boolean {
-  return user.accountType === 'branch' && user.branchIds.length === 0;
-}
-
-/**
  * Prisma `where` fragment restricting a query to the PNRs this user may see.
  *
  * Returns `null` to mean **deny everything** — callers must check for null and

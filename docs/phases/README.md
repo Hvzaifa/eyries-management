@@ -35,3 +35,13 @@ the one before it.
 
 Phase 8 cannot go live until Phase 6 Step 4 is committed: until agent-held
 bookings carry assignments, unassigned seats are not really unassigned.
+
+## Procurement workflow
+
+Brought into scope by the owner's rulings of 2026-10-13 on `Group Procurement.xlsx`
+(see [`../decisions.md`](../decisions.md)).
+
+| Phase | Status | Covers |
+|---|---|---|
+| [9 — Procurement workflow](phase-9-procurement-workflow.md) | **Draft, awaiting owner sign-off — built before Phase 8** | Release and cancel, refund requested, ticket tracking and penalties, SV-only splits, branch moves, branch refund emails, in-app alerts |
+| [10 — Ledger](phase-10-ledger.md) | **Draft, awaiting owner sign-off** | The group-booking ledger: four entry types, opening entries for existing EMDs, journal, balances and Excel export |

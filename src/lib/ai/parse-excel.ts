@@ -1,102 +1,106 @@
 import * as xlsx from 'xlsx';
-import type { ParsedBookingDraft, ParsedField } from './parse-booking';
+import type { ParsedBookingDraft } from './parse-booking';
+import { callAi } from './parse-booking';
+import { flagPastDates } from './draft-checks';
+import {
+  MAPPING_RESPONSE_SCHEMA,
+  MAX_FORM_ROWS,
+  applyMapping,
+  heuristicMapping,
+  mappingPrompt,
+  sampleForPrompt,
+  validateMapping,
+  type ColumnMapping,
+} from './excel-mapping';
+import { todayIsoInPkt } from '@/lib/urgency';
+
+/** The sheet has no column that can be read as a PNR, by the AI or the dictionary. */
+export class ExcelMappingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ExcelMappingError';
+  }
+}
+
+export interface ExcelParseResult {
+  drafts: ParsedBookingDraft[];
+  /** Data rows found, which may exceed the drafts returned (`MAX_FORM_ROWS`). */
+  totalRows: number;
+  /** Shown to staff above the drafts, e.g. when only the first rows were loaded. */
+  notice: string | null;
+}
 
 /**
- * Parses an Excel or CSV file buffer into an array of ParsedBookingDrafts.
- * Uses deterministic mapping based on column headers.
+ * An uploaded Excel or CSV file as booking drafts (rewritten 2026-10-05).
+ *
+ * One AI request reads the top rows and returns which column is which field —
+ * whatever the headers are called, a totals row on top, round columns repeated
+ * per round. The values are then copied by `applyMapping`, never by the AI.
+ * If no AI answers, or its map is unusable, the fixed dictionary maps the
+ * columns instead, so an upload still works on a bad day.
+ *
+ * The old parser assumed headers on row 1 (the master sheet has a totals row
+ * there), matched headers by substring ("type" caught INVESTMENT TYPE as the
+ * segment), and hard-coded flights and every EMD round field to empty.
  */
-export function parseExcelFile(buffer: ArrayBuffer, filename: string): ParsedBookingDraft[] {
-  const wb = xlsx.read(buffer, { type: 'buffer' });
-  const sheetName = wb.SheetNames[0];
-  const sheet = wb.Sheets[sheetName];
-  
-  if (!sheet) return [];
+export async function parseExcelFile(
+  buffer: ArrayBuffer,
+  filename: string,
+  todayIso: string = todayIsoInPkt()
+): Promise<ExcelParseResult> {
+  const wb = xlsx.read(buffer, { type: 'array' });
+  // The first sheet that has any rows — a workbook's bookings sheet comes first.
+  const sheet = wb.SheetNames.map((n) => wb.Sheets[n]).find((s) => s?.['!ref']);
+  if (!sheet) throw new ExcelMappingError('This file has no rows to read.');
 
-  // Parse to JSON array of objects
-  const rows = xlsx.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+  const firstRowNumber = xlsx.utils.decode_range(sheet['!ref']!).s.r + 1;
+  const rawRows = xlsx.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: true, defval: null, blankrows: true });
+  const formattedRows = xlsx.utils
+    .sheet_to_json<unknown[]>(sheet, { header: 1, raw: false, defval: '', blankrows: true })
+    .map((row) => row.map((c) => String(c ?? '')));
+  const width = Math.max(0, ...formattedRows.slice(0, 20).map((r) => r.length));
 
-  return rows.map((row, index) => {
-    // Basic heuristics to find columns regardless of exact naming
-    const keys = Object.keys(row);
-    const getVal = (possibleNames: string[]): unknown => {
-      const key = keys.find(k => possibleNames.some(pn => k.toLowerCase().includes(pn.toLowerCase())));
-      return key ? row[key] : null;
-    };
-
-    const makeField = <T>(val: unknown): ParsedField<T> => {
-      if (val === null || val === undefined || val === '') {
-        return { value: null, confidence: 'low' };
+  let mapping: ColumnMapping | null = null;
+  let method = 'excel: columns mapped by dictionary';
+  let confidence: 'high' | 'medium' = 'medium';
+  try {
+    mapping = await callAi(
+      {
+        system: mappingPrompt(),
+        user: `File: ${filename}\n\n${sampleForPrompt(formattedRows)}`,
+        schema: MAPPING_RESPONSE_SCHEMA,
+        schemaName: 'column_mapping',
+      },
+      (content, attempt) => {
+        const parsed = validateMapping(JSON.parse(content.replace(/<think>[\s\S]*?<\/think>/g, '').trim()), width, formattedRows.length);
+        if (!parsed) throw new Error('The column map had no usable PNR column.');
+        method = `excel: columns mapped by ${attempt.provider}/${attempt.model}`;
+        confidence = 'high';
+        return parsed;
       }
-      return { value: val as T, confidence: 'high' };
-    };
+    );
+  } catch (err) {
+    // No AI, or no usable answer: the dictionary takes over.
+    console.warn(`[AI] excel column mapping fell back to the dictionary: ${err instanceof Error ? err.name : 'error'}`);
+  }
+  mapping ??= heuristicMapping(formattedRows);
+  if (!mapping) {
+    throw new ExcelMappingError('No PNR column could be found in this sheet. Check that it has a header row with a PNR column.');
+  }
 
-    const makeNumField = (val: unknown): ParsedField<number> => {
-      if (val === null || val === undefined || val === '') return { value: null, confidence: 'low' };
-      const num = Number(String(val).replace(/[^0-9.-]/g, ''));
-      return isNaN(num) ? { value: null, confidence: 'low' } : { value: num, confidence: 'high' };
-    };
-
-    const makeDateField = (val: unknown): ParsedField<string> => {
-      if (!val) return { value: null, confidence: 'low' };
-      // Handle Excel date serial numbers
-      if (typeof val === 'number') {
-        const d = new Date((val - (25567 + 2)) * 86400 * 1000); // Excel epoch adjustment
-        if (!isNaN(d.getTime())) return { value: d.toISOString().slice(0,10), confidence: 'high' };
-      }
-      // Try parsing string
-      const d = new Date(String(val));
-      if (!isNaN(d.getTime())) return { value: d.toISOString().slice(0,10), confidence: 'high' };
-      return { value: null, confidence: 'low' };
-    };
-
-    return {
-      requestDate: makeDateField(getVal(['request date', 'date of req', 'req date'])),
-      investorCompany: makeField<string>(getVal(['investor', 'company', 'agency'])),
-      licenseName: makeField<string>(getVal(['license', 'licence'])),
-      branchName: makeField<string>(getVal(['branch', 'city'])),
-      pnr: makeField<string>(getVal(['pnr', 'record locator'])),
-      gdsPnr: makeField<string>(getVal(['gds', 'sabre', 'amadeus', 'galileo'])),
-      segment: makeField<string>(getVal(['segment', 'type', 'purpose'])),
-      airlineCode: makeField<string>(getVal(['airline', 'carrier', 'code'])),
-      seats: makeNumField(getVal(['seats', 'pax', 'qty', 'quantity'])),
-      outboundDate: makeDateField(getVal(['outbound', 'dep date', 'departure date'])),
-      inboundDate: makeDateField(getVal(['inbound', 'return date', 'arr date'])),
-      sector: makeField<string>(getVal(['sector', 'route', 'itinerary'])),
-      pnrTlDate: makeDateField(getVal(['tl date', 'time limit', 'expiry'])),
-      airlineTaxes: makeNumField(getVal(['tax', 'taxes'])),
-      psf: makeNumField(getVal(['psf', 'service fee'])),
-      fare: makeNumField(getVal(['fare', 'price', 'amount'])),
-
-      // A sheet has no agreed columns for the individual flights; the review
-      // form reads the cities back out of the sector and asks for the rest.
-      tripType: { value: null, confidence: 'low' },
-      outboundDepartureCity: { value: null, confidence: 'low' },
-      outboundArrivalCity: { value: null, confidence: 'low' },
-      outboundDepartureTime: { value: null, confidence: 'low' },
-      outboundArrivalTime: { value: null, confidence: 'low' },
-      outboundFlightCode: { value: null, confidence: 'low' },
-      outboundBaggagePieces: { value: null, confidence: 'low' },
-      outboundBaggageKg: { value: null, confidence: 'low' },
-      inboundDepartureCity: { value: null, confidence: 'low' },
-      inboundArrivalCity: { value: null, confidence: 'low' },
-      inboundDepartureTime: { value: null, confidence: 'low' },
-      inboundArrivalTime: { value: null, confidence: 'low' },
-      inboundFlightCode: { value: null, confidence: 'low' },
-      inboundBaggagePieces: { value: null, confidence: 'low' },
-      inboundBaggageKg: { value: null, confidence: 'low' },
-      outboundStops: { value: null, confidence: 'low' },
-      inboundStops: { value: null, confidence: 'low' },
-      mealIncluded: { value: null, confidence: 'low' },
-
-      roundIssuanceDate: { value: null, confidence: 'low' },
-      roundPaymentPct: { value: null, confidence: 'low' },
-      roundEmdAmount: { value: null, confidence: 'low' },
-      roundEmdNumber: { value: null, confidence: 'low' },
-      roundDeadlineDate: { value: null, confidence: 'low' },
-      roundDeadlineTime: { value: null, confidence: 'low' },
-
-      rawPastedText: `Imported from Excel row ${index + 2} (${filename})`,
-      modelUsed: 'deterministic-excel-parser',
-    };
+  const { drafts, totalRows } = applyMapping(mapping, rawRows, formattedRows, {
+    filename,
+    method,
+    confidence,
+    firstRowNumber,
   });
+
+  return {
+    drafts: drafts.map((d) => flagPastDates(d, todayIso)),
+    totalRows,
+    notice:
+      totalRows > MAX_FORM_ROWS
+        ? `This sheet has ${totalRows} bookings; the first ${MAX_FORM_ROWS} are loaded for review here. Upload the rest as a separate sheet.`
+        : null,
+  };
 }

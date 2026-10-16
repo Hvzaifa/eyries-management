@@ -19,14 +19,14 @@ access · Supabase Auth · TanStack Table · Resend · Vercel hosting.
 
 1. `npm install`
 2. `cp .env.example .env` and fill in all values (Supabase dashboard → Project
-   Settings → API; the service role key is only needed for `db:seed:users`).
+   Settings → API).
 3. `npx prisma generate` — generate the Prisma client.
-4. `npm run db:apply` — apply `db/schema.sql` (idempotent; safe to re-run).
+4. `npm run db:apply` — apply `db/schema.sql`, including row level security
+   (idempotent; safe to re-run).
 5. `npm run db:seed` — seed lookup tables (licenses, branches, airlines).
-6. `npm run db:seed:users` — create sample users. Accounts are **head office**
-   or **branch** (the old admin/staff/viewer roles were replaced on 2026-09-07 —
-   see `docs/decisions.md`). Passwords come from `SEED_*_PASSWORD` env vars; the
-   script refuses to run without them and has no defaults.
+6. Create the logins in the Supabase dashboard and set each one's account type
+   — **head office** or **branch** — as described in
+   [`docs/operations.md`](docs/operations.md), "Login accounts".
 7. `npm run dev` — http://localhost:3000
 
 ## Scripts
@@ -38,10 +38,9 @@ access · Supabase Auth · TanStack Table · Resend · Vercel hosting.
 | `npm run typecheck` | TypeScript, no emit |
 | `npm run db:apply` | Apply `db/schema.sql` to the database |
 | `npm run db:seed` | Seed lookup tables |
-| `npm run db:seed:users` | Create/reset sample auth users (needs service role key) |
 | `npm test` | Unit tests (vitest) |
 | `npm run job:deadline-check` | Dry-run the daily deadline alert (add `-- --send` to deliver) |
-| `npm run db:security` | Dry-run the RLS / view security statements (add `-- --commit` to apply) |
+| `npm run ai:check` | Probe each configured AI provider once (no booking data sent) |
 
 ## Layout
 

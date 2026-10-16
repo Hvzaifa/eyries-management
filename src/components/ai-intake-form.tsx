@@ -8,6 +8,7 @@ import { normalizeSegment } from '@/lib/booking-entry';
 import type { PnrFormOptions } from '@/lib/pnrs';
 import type { ParsedBookingDraft, FieldConfidence } from '@/lib/ai/parse-booking';
 import { draftFlightValues } from '@/lib/ai/draft-flights';
+import { draftNotes } from '@/lib/ai/draft-checks';
 
 type Phase = 'paste' | 'review';
 
@@ -85,6 +86,39 @@ function draftToFormValues(
   return { values, confidenceMap };
 }
 
+/** A screenshot's longest side once shrunk for upload. GDS text stays legible at this size. */
+const MAX_IMAGE_SIDE = 1600;
+
+/**
+ * Shrinks a large screenshot in the browser before upload (2026-10-05): a phone
+ * screenshot at full size was slow to send and slow for the model to read, which
+ * fed the "AI is busy" timeouts. Re-encoded as JPEG 0.85; an image already
+ * small enough is sent untouched. Falls back to the original if the browser
+ * cannot decode it.
+ */
+async function imageToUploadBase64(file: File): Promise<{ base64: string; mimeType: string }> {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, MAX_IMAGE_SIDE / Math.max(bitmap.width, bitmap.height));
+    if (scale === 1) {
+      bitmap.close();
+      return { base64: await fileToBase64(file), mimeType: file.type };
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('no canvas');
+    ctx.fillStyle = '#ffffff'; // a transparent PNG would turn black as JPEG
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    return { base64: canvas.toDataURL('image/jpeg', 0.85).split(',')[1], mimeType: 'image/jpeg' };
+  } catch {
+    return { base64: await fileToBase64(file), mimeType: file.type };
+  }
+}
+
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -114,6 +148,7 @@ export default function AiIntakeForm({
   const [drafts, setDrafts] = useState<ParsedBookingDraft[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [completedIndexes, setCompletedIndexes] = useState<Set<number>>(new Set());
+  const [notice, setNotice] = useState<string | null>(null);
 
   // File upload state
   const [file, setFile] = useState<File | null>(null);
@@ -184,8 +219,9 @@ export default function AiIntakeForm({
             payload.excelBase64 = await fileToBase64(file);
             payload.excelFileName = file.name;
           } else {
-            payload.imageBase64 = await fileToBase64(file);
-            payload.imageMimeType = file.type;
+            const img = await imageToUploadBase64(file);
+            payload.imageBase64 = img.base64;
+            payload.imageMimeType = img.mimeType;
           }
         }
 
@@ -208,6 +244,7 @@ export default function AiIntakeForm({
         }
 
         setDrafts(parsedDrafts);
+        setNotice(typeof data.notice === 'string' ? data.notice : null);
         setCurrentIndex(0);
         setCompletedIndexes(new Set());
         setPhase('review');
@@ -222,6 +259,7 @@ export default function AiIntakeForm({
     setDrafts([]);
     setCurrentIndex(0);
     setCompletedIndexes(new Set());
+    setNotice(null);
     setError(null);
     removeFile();
   };
@@ -362,6 +400,8 @@ export default function AiIntakeForm({
   const currentDraft = drafts[currentIndex];
   const { values, confidenceMap } = draftToFormValues(currentDraft, options);
 
+  const notes = draftNotes(currentDraft);
+
   const confCounts = Object.values(confidenceMap).reduce((acc, c) => {
     if (c) acc[c] = (acc[c] || 0) + 1;
     return acc;
@@ -401,6 +441,26 @@ export default function AiIntakeForm({
           </div>
         </div>
       </section>
+
+      {notice && (
+        <div className="flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>{notice}</span>
+        </div>
+      )}
+
+      {notes.length > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-xs text-amber-900">
+          <p className="font-semibold mb-1 flex items-center gap-1.5">
+            <AlertTriangle className="w-3.5 h-3.5" /> Check before saving
+          </p>
+          <ul className="list-disc pl-5 space-y-0.5">
+            {notes.map((n) => (
+              <li key={n}>{n}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* Split screen layout */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">

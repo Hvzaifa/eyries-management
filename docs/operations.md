@@ -13,13 +13,10 @@ database holding real bookings — read the warning on a command before running 
 | `npm run build` | no | Production build. **Run before calling any change done** |
 | `npm test` | no | Unit tests (vitest) |
 | `npm run lint` / `npm run typecheck` | no | ESLint / TypeScript |
-| `npm run db:apply` | **yes** | Applies `db/schema.sql`. Idempotent |
-| `npm run db:security` | **yes** with `-- --commit` | RLS + view protection. Dry-runs by default |
+| `npm run db:apply` | **yes** | Applies `db/schema.sql`, row level security included. Idempotent |
 | `npm run db:seed` | **yes** | Lookup tables only (licenses, branches, airlines) |
-| `npm run db:seed:users` | **yes** | Creates/resets auth accounts. Needs `SEED_*_PASSWORD` |
 | `npm run job:deadline-check` | **yes** (backfill) | Dry-runs the daily alert; `-- --send` delivers it |
-| `npx tsx scripts/reset-bookings.ts` | **yes** with `--commit` | Clears bookings and everything hanging off them (rounds, ticketing, allocations, assignments, recoveries) but **keeps agents** and the lookup tables. Backs up to `backups/<timestamp>/` first. Dry-runs by default |
-| `npx tsx scripts/reset-transactional-data.ts` | **yes** with `--commit` | **Irreversible.** Clears bookings, EMD rounds, ticketing, allocations, agents, assignments and the activity log, and restarts the SR# at 1. Keeps licenses, branches and airlines, and never touches auth accounts. Dry-runs by default. **Back up first** |
+| `npm run ai:check` | no | Probes each configured AI provider once (no booking data sent) |
 
 ### Retired one-off scripts (removed 2026-09-25)
 
@@ -36,6 +33,23 @@ build or run the system. Each is recoverable from git:
 `archive/one-off-scripts` is a branch holding exactly those files on top of
 `main` as it stood on 2026-09-25. It is not meant to be merged — only read from.
 
+### Retired in the 2026-10-16 cleanup
+
+Each was checked for remaining users first (`decisions.md`, 2026-10-16). None is
+needed to build, run or rebuild the system:
+
+| Files | Why they went | Restore with |
+|---|---|---|
+| `scripts/import-master-sheet.ts`, `src/lib/master-sheet-import.ts` (+ test) | The spreadsheet importer. The owner ruled the database will not be reloaded from the sheet again; it is now the record. Its one helper the app still uses, the Excel date reader, moved into `src/lib/ai/excel-mapping.ts` | The committed version: `git checkout 957c2ca -- <path>`. Its last version, with the uncommitted changes from the 2026-10-05 run, was copied to `backups/retired-2026-10-16/` on the owner's machine as `*.ts.bak` |
+| `scripts/reset-bookings.ts`, `scripts/reset-transactional-data.ts` | Emptied the database for a reload. With no reload planned they could only destroy live data | `git checkout 957c2ca -- <path>` |
+| `scripts/seed-users.ts` | Created the five `@eyries.local` logins, which the owner deleted on 2026-10-16. Logins are now made in the Supabase dashboard (below). It was the only user of the service-role key, so `SUPABASE_SERVICE_ROLE_KEY` and `SEED_*_PASSWORD` left `.env.example` too | `git checkout 957c2ca -- <path>` |
+| `db/apply-security.sql`, `db/apply-security.ts` | One-off fix, applied to the live database on 2026-09-07. `db/schema.sql` carries every statement, for all twelve tables (these covered eight and nine), and `npm run db:apply` re-applies it | `git checkout 957c2ca -- <path>` |
+| `docs/sessions/` | One 2026-09-01 note whose every point is in `PROGRESS.md` and `data-model.md`, and whose file paths no longer existed | `git checkout 957c2ca -- docs/sessions` |
+
+**Owner action:** `SUPABASE_SERVICE_ROLE_KEY` bypasses row level security and
+nothing uses it any more. Delete it from the local `.env`, and make sure it is
+not set on Vercel.
+
 > `npm run typecheck` can report success while `npm run build` fails: TypeScript
 > uses an incremental cache (`tsconfig.tsbuildinfo`) that can go stale. If the
 > two ever disagree, delete that file. **Trust the build.**
@@ -48,10 +62,37 @@ a script is a published credential.
 
 Required to run: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
 `DATABASE_URL`, `DIRECT_URL`.
-Required for specific features: `SUPABASE_SERVICE_ROLE_KEY` (user seeding),
-`RESEND_API_KEY` + `ALERT_FROM_EMAIL` + `STAFF_ALERT_EMAILS` (email),
-`CRON_SECRET` (daily job), `GEMINI_API_KEY` (AI intake),
-`SEED_*_PASSWORD` (user seeding).
+Required for specific features: `RESEND_API_KEY` + `ALERT_FROM_EMAIL` +
+`STAFF_ALERT_EMAILS` (email), `CRON_SECRET` (daily job), `GEMINI_API_KEY` and
+`GROQ_API_KEY` (AI intake).
+
+## Login accounts
+
+Logins are created in the Supabase dashboard (**Authentication → Users → Add
+user**). What a login may do comes from its **app metadata**, which the app reads
+in `src/lib/auth.ts`:
+
+- `{"account_type": "headoffice"}` — Head Office.
+- `{"account_type": "branch", "branch_name": "<name>"}` — that branch only. The
+  name must match a row in `branches` (case does not matter).
+
+A login with neither, or with a branch name that matches no row, signs in and
+sees nothing. App metadata can only be set with admin access, which is what makes
+it safe; never use **user** metadata, which a user can change themselves. Set it
+in the SQL Editor, one login at a time, checking the `where` clause matches
+exactly one row first — an update without it would change every login:
+
+```sql
+update auth.users
+set raw_app_meta_data = coalesce(raw_app_meta_data, '{}'::jsonb)
+  || '{"account_type": "branch", "branch_name": "Rawalpindi"}'::jsonb
+where email = 'branch-login@example.com';
+```
+
+The setting reaches a session at its next sign-in. Writes check it with the Auth
+server at once; pages read the session token, so a downgraded login keeps its old
+view for up to the token's lifetime (one hour by default). To cut someone off
+immediately, delete or ban the user.
 
 ## Changing the database
 
@@ -68,7 +109,7 @@ wrong before — see `decisions.md`, 2026-09-07 "db/schema.sql had drifted".
 
 ## Security posture
 
-- **RLS is enabled on all eleven tables with no policies**, which denies the
+- **RLS is enabled on all twelve tables with no policies**, which denies the
   public `anon` role entirely. Authorisation lives in the app layer
   (`src/lib/auth.ts`); RLS is a deny-by-default backstop, not a second
   authorisation model.
@@ -97,8 +138,8 @@ wrong before — see `decisions.md`, 2026-09-07 "db/schema.sql had drifted".
   overrides when a Next or Prisma upgrade brings them in natively.
 - The app is unaffected by either: Prisma connects as `postgres`, which owns the
   tables and holds `BYPASSRLS`.
-- Apply or re-check all of this with `npm run db:security` (dry run) then
-  `npm run db:security -- --commit`.
+- `npm run db:apply` applies all of this; `db/schema.sql` states it explicitly
+  for every table and is safe to re-run.
 
 Verify from outside with the public key — both must return `401`:
 
@@ -131,8 +172,7 @@ not checked at the time and was wrong.)
    access tokens will remain to be accepted, so no users will be forcefully
    signed out"*, with no downtime.
 5. **No need to revoke the legacy secret.** Nothing is gained, and anything still
-   holding a legacy key — most likely a legacy `service_role` key used by
-   `npm run db:seed:users` — would stop working. Leave it as "previously used".
+   holding a legacy key would stop working. Leave it as "previously used".
 
 Checked before recommending this: nothing in this repository verifies JWTs
 with the legacy secret itself (no `jose`/`jsonwebtoken`), and there are no Edge
@@ -141,34 +181,57 @@ a previously used key can be moved back to standby and rotated to.
 
 ## The AI intake: models, retries, and when it fails
 
-`src/lib/ai/parse-booking.ts` calls Google Gemini through its OpenAI-compatible
-endpoint, trying `gemini-2.5-flash` then `gemini-3.5-flash-lite`, for both
-pasted text and screenshots. A model that answers **busy** (429/5xx, "high
-demand") or times out gets **one retry** after 1.5 s, then the next model is
-tried; everything is capped at 55 s so it finishes before Vercel ends the
-function.
+`src/lib/ai/providers.ts` lists the attempts, tried in order for pasted text,
+screenshots and spreadsheet column mapping (2026-10-05):
+
+| # | Provider / model | Notes |
+|---|---|---|
+| 1 | Gemini `gemini-3.5-flash-lite` | Fastest: about 2–3 s for one booking, 8–12 s for a screenshot of 14 |
+| 2 | Gemini `gemini-3.5-flash` | Same answers, slower (`reasoning_effort: low`). Sometimes answers 503 "UNAVAILABLE" |
+| 3 | Groq `qwen/qwen3.8-27b` | Only when `GROQ_API_KEY` is set. Its free plan caps output at 1,000 tokens/minute (thinking off, `max_completion_tokens` 900), which covers one or a few bookings. A screenshot of a dozen bookings is beyond it. JSON mode needs the word "json" in the prompt |
+
+**The reply is a table**: field names once, then one row of values per booking, plus a list of the values the model is unsure of, which are marked low confidence. Reply size decides the time taken. On a 14-booking screenshot, the earlier per-field format ran past the time limit; the table takes 8–12 s.
+
+**Retry rules:**
+- **busy** (5xx): one retry after 1.5 s.
+- **timeout**: move on. A request that slow would be slow again.
+- **quota** (429): move on at once.
+- **key** (401/403): skip that provider.
+- Each request is capped at 35 s, and everything at 55 s (the route sets `maxDuration = 60`).
+- Vercel Hobby with Fluid compute (the default) allows up to 300 s, so this limit can be raised in the route if larger screenshots ever need it. Check Settings → Functions first.
+
+**Every failure logs one line** in Vercel → Logs, without any booking data:
+
+```
+[AI] gemini/gemini-3.5-flash-lite try 1 failed: reason=quota http=429 code=RESOURCE_EXHAUSTED 412ms
+```
+
+A success logs `[AI] <provider>/<model> ok <ms>`.
+
+**Health check:** `npm run ai:check` probes every configured attempt once with a tiny request (no booking data) and prints `ok`, `quota`, `busy`, `timeout`, `key` or `invalid` for each. Run it with the production keys in `.env` whenever staff report problems.
 
 What staff see, and what it means:
 
 | Message | Cause | Fix |
 |---|---|---|
-| "The AI service is not set up correctly…" (503) | `GEMINI_API_KEY` missing, or Google rejected it (401/403) | Update `GEMINI_API_KEY` **in Vercel → Settings → Environment Variables**, then redeploy. A key changed only in the local `.env` does not reach production |
-| "The AI service is busy right now…" (503) | Every model stayed busy or timed out | Wait a minute and retry. Transient on Google's side |
-| "Could not parse this input…" (500) | A model answered but the reply was unusable | Try again, or enter manually. Details are in Vercel → Logs, line `AI Intake parse error:` |
+| "The AI service is not set up correctly…" (503) | No key is set, or every provider rejected its key (401/403) | Update `GEMINI_API_KEY` / `GROQ_API_KEY` **in Vercel → Settings → Environment Variables**, then redeploy. A key changed only in the local `.env` does not reach production |
+| "The AI service is busy right now…" (503) | Every attempt was busy, out of quota or timed out | Read the `[AI] … reason=` lines. If the reason is `quota`, the free daily limit is used up (Google AI Studio → rate limits); otherwise retry in a minute |
+| "Could not parse this input…" (500) | A model answered but the reply was unusable | Try again, or enter manually |
+| "No PNR column could be found…" (422) | A spreadsheet with no recognisable PNR column, to the AI or the dictionary | Check that the sheet has a header row with a PNR column |
 
-**When Google retires a model** (it answers 404 "no longer available"), list what
-the key can use and pick a replacement:
+**Spreadsheets** (`parse-excel.ts`, `excel-mapping.ts`):
+- One AI request maps the columns from the top 8 rows. Code then copies every value.
+- With no AI available, a fixed dictionary maps the columns instead.
+- The form loads at most **100** rows per upload; staff are told to upload the rest as a separate sheet.
+
+**When Google retires a model** (404 "no longer available"), list what the key can use:
 
 ```bash
 curl -s "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200" \
   -H "x-goog-api-key: $GEMINI_API_KEY" | grep '"name"'
 ```
 
-For an immediate fix without a code change, set `GEMINI_MODEL` in Vercel to a
-working model name — it pins that one model and skips the list — then update
-`TEXT_MODELS` / `VISION_MODELS` in code. Verified on 2026-09-25:
-`gemini-2.5-flash-lite` retired for this key; `gemini-2.5-flash` and
-`gemini-3.5-flash-lite` both extract every field from a test screenshot.
+Set `GEMINI_MODEL` in Vercel to pin a working model at once (`GROQ_MODEL` does the same for Groq), then update `GEMINI_MODELS` in `providers.ts`.
 
 ## Where page time goes, and how to check it
 
@@ -199,32 +262,6 @@ operation, dump the data first** — every table to timestamped JSON under
 
 Restoring means re-inserting from those JSON files in FK-safe order:
 `pnrs` → `emd_rounds` / `ticketing` / `allocations` → `activity_log`.
-
-## Re-importing the master sheet
-
-`scripts/import-master-sheet.ts` (rules in `src/lib/master-sheet-import.ts`,
-unit-tested) loads `Groups EMD Master Sheet.xlsx`, tab "OB 01JUN26 Onward".
-Last run 2026-09-28; the owner's rulings it encodes are in `decisions.md` under
-that date.
-
-1. **Dry run first** — `npx tsx scripts/import-master-sheet.ts` prints the plan
-   and writes `Master Sheet Import — Rows to Check (<date>).xlsx` (summary, rows
-   to check, rows left out by rule, IATA payments assumed). Nothing is written.
-2. Optional independent check: `--dump=plan.json` writes the full plan so it can
-   be compared cell by cell against the sheet (done on 2026-09-28: 13,339 values,
-   0 mismatches).
-3. **The database must hold no bookings and no agents** — the script refuses
-   otherwise, because it loads rather than merges. Clear it with
-   `scripts/reset-bookings.ts --commit` (backs up first) and delete agents
-   separately if they are to be re-created from the sheet.
-4. `--commit` writes everything in one transaction.
-
-"Today" is the PKT date the script runs on: which rows count as travelled, and
-which IATA remittance days count as passed, both depend on it.
-
-The earlier importer (`scripts/import-legacy.ts`, retired 2026-09-25) is still
-recoverable from `9a6c1e0` but predates agents, the two-status EMD model and
-the IATA columns; use the script above instead.
 
 ## Deploying to Vercel
 
@@ -264,8 +301,9 @@ unusual except the two items called out below, both of which have bitten before.
 | `RESEND_API_KEY`, `ALERT_FROM_EMAIL`, `STAFF_ALERT_EMAILS` | for email | Deadline alerts and airline emails |
 | `NEXT_PUBLIC_APP_URL` | for email | **Not needed for the site to run** — it appears in exactly one place, the "Open the dashboard" link inside the daily alert email (`src/lib/deadlines.ts`). Without it that link falls back to `http://localhost:3000` and points at the recipient's own machine |
 | `GEMINI_API_KEY` | for AI intake | Google AI Studio key. Paste-and-parse and screenshot upload both fail without it. It must be a **Gemini** key — the code posts to Gemini's OpenAI-compatible endpoint, so a key from any other provider returns 401 no matter what the variable is named |
-| `GEMINI_MODEL` | optional | Pins one model instead of the `gemini-2.5-flash` → `gemini-2.5-flash-lite` fallback. Lets a misbehaving model be routed around from the dashboard without a redeploy |
-| `SUPABASE_SERVICE_ROLE_KEY`, `SEED_*_PASSWORD` | **no** | Local scripts only. Do not put the service-role key on Vercel — it bypasses RLS |
+| `GEMINI_MODEL` | optional | Pins one Gemini model instead of `gemini-3.5-flash-lite` → `gemini-3.5-flash`. Lets a misbehaving model be routed around from the dashboard without a redeploy |
+| `GROQ_API_KEY` | recommended | Free key from console.groq.com. Adds Groq as the backup provider when Gemini is busy or out of quota. Without it the intake is Gemini-only |
+| `GROQ_MODEL` | optional | Pins the Groq model (default `qwen/qwen3.8-27b`) |
 
 ### The two things that catch people
 

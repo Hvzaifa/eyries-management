@@ -7,7 +7,8 @@ Staff browser                      WhatsApp bot (separate system, not built here
      │                                        ▼
 Web app (Next.js, TypeScript, App Router) ◄── /api/v1  (read packages, hold seats,
      │                                                   report paid, cancel a hold)
-     ├──► Claude API   (Phase 2 only — reads pasted airline text into a draft form)
+     ├──► Gemini API (free tier), Groq as backup — reads pasted text, screenshots
+     │      and spreadsheet columns into draft bookings
      │
      ├──► PostgreSQL (Supabase)   — all real data
      │
@@ -46,7 +47,7 @@ paid for, cancel that hold. No customer personal data is sent here.
 | Scheduled job | Vercel Cron | One job, runs once a day, checks upcoming deadlines |
 | Email | Resend | Reliable delivery, keeps a sent-log |
 | File storage | Supabase Storage | Private by default, signed URLs |
-| AI parsing | Claude API | Only used to convert pasted airline text into draft form fields (Phase 2). A human always confirms before saving. |
+| AI parsing | Google Gemini (free tier), Groq (free) as backup — both through their OpenAI-compatible endpoints | Free tools first (owner, 2026-10-05; the app has used Gemini since 2026-09-09, and the Claude API named here originally is not free). Converts pasted text and screenshots into draft fields, and maps a spreadsheet's columns (the values themselves are copied by code). It never decides money or deadline logic, and a human always confirms before saving |
 | Bot integration | Plain REST under `/api/v1`, API-key auth | One consumer, a handful of endpoints. No GraphQL, no gateway, no queue, no webhooks back — the bot polls what it needs (rule 7) |
 | Hosting | Vercel, functions pinned to **Singapore (`sin1`)** | Zero server maintenance for a small internal team. The region is set in `vercel.json` to sit beside the database (Supabase `ap-southeast-1`); Vercel's default for new projects is Washington D.C., which put every query across the Pacific (2026-09-24) |
 | Database access | Prisma 6 over the **node-postgres driver adapter** (`@prisma/adapter-pg`) through Supabase's transaction pooler | One network round trip per query. The built-in engine in `pgbouncer=true` mode measured about five (2026-09-24). `relationJoins` makes an `include` one query instead of one per relation |
