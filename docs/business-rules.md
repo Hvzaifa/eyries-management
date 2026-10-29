@@ -118,12 +118,50 @@ such bookings overdue).
 ### What the dashboard lists, and the Refunds page (owner, 2026-09-28)
 
 The dashboard is kept to work still to be done there: **active bookings with an
-EMD still to issue, or an IATA payment not yet recorded** (`isDashboardWork` in
-`src/lib/dashboard.ts`). A round that is **issued, paid to IATA and not yet
-refunded** is listed on the Refunds page under **To be refunded**; the page's
-other button, **Refunds recorded**, is the refund log. Cancelled and completed
+EMD still to issue, an IATA payment not yet recorded, or a paid EMD whose refund
+is not due yet** (`isDashboardWork` in `src/lib/dashboard.ts`; the third since
+Phase 9 Step 3). ~~A round that is **issued, paid to IATA and not yet refunded**
+is listed on the Refunds page under **To be refunded**.~~ *(Superseded
+2026-10-28, Phase 9 Step 3 — see "To be refunded" below.)* The page's other
+button, **Refunds recorded**, is the refund log. Cancelled and completed
 bookings appear on the dashboard when the status filter asks for them, and the
 search box finds any booking.
+
+### To be refunded (Phase 9 Step 3, A6; owner, 2026-10-13 and 2026-10-28)
+
+A round is listed on the Refunds page under **To be refunded** when it is
+**paid to IATA** (recorded, or assumed from a passed remittance day) and its
+booking's refund is **due** (`refundTiming` in `src/lib/refunds.ts`):
+
+- **every ticket is issued** — tickets issued ≥ seats, from the count staff type
+  under Ticketing today (owner, 2026-10-28: use it now; Step 4's "All tickets
+  issued?" replaces how it is entered), or
+- the **ticket issuance deadline passed at least a day ago** (deadline earlier
+  than today), or
+- the booking has **no ticket deadline** and its **outbound date has passed**
+  (owner, 2026-10-28). Until then it stays on the dashboard, flagged "No ticket
+  deadline — add one under Ticketing". No date is guessed.
+
+Until it is due, a paid EMD **stays on the main dashboard**. Rounds not paid to
+IATA are never listed. A blank ticket count never counts as all issued. Later,
+forfeited rounds also go on the list once the penalty is marked paid (Step 5).
+
+**The system only flags.** A person marks the rounds **refund requested**:
+- a branch on its own bookings, Head Office on any;
+- only a round on the list, from the list (several bookings at once) or from the
+  round on the booking page;
+- it can't be undone: a requested round never goes back to `issued`, and the
+  Edit round form can't set or undo it.
+
+A requested round **stays on the list, labelled "Requested"** (a filter picks
+To request / Requested) until **Head Office records the refund**, singly or in
+bulk, which accepts `issued` or `refund_requested` rounds.
+
+A requested round is **no longer money held**: it leaves the dashboard's EMD
+Issued figure and the "currently holding" figure behind agents' EMD shares, so
+an agent's share drops as soon as a round is requested. For IATA it is
+unchanged — a request is not a refund, so it neither rolls a bill nor
+cancels a payment.
 
 ### Two EMDs, then tickets (owner, 2026-09-28)
 
@@ -140,7 +178,98 @@ The 2nd EMD must only auto-generate **after staff verify the airline's email con
 
 ## What happens if a deadline is missed with no extension requested
 
-The PNR is marked **"at risk — confirm with airline"**. The system never automatically marks a PNR as cancelled — only a human, after confirming with the airline, changes status to cancelled. The software reflects reality; it doesn't decide it.
+The PNR is marked **"at risk — confirm with airline"**. ~~The system never automatically marks a PNR as cancelled — only a human, after confirming with the airline, changes status to cancelled.~~ *(Superseded 2026-10-13/14: before EMD-1 a person **releases** the booking — below; after it, ~~cancellation becomes automatic in Phase 9 Step 5~~ a missed EMD-2 or ticketing deadline is **flagged and a person cancels** — owner, 2026-10-28; see "Cancelled".)* The software reflects reality; it doesn't decide it.
+
+## Released (Phase 9 Step 2; rulings A2 and B3, 2026-10-13)
+
+A booking that ends **before EMD-1 is issued** is **released**, not cancelled:
+deliberately, or because the EMD-1 deadline was missed. **Cancelled** now means
+the EMD-2 or ticketing deadline was missed and a person cancelled it (Step 5).
+
+- **Who:** a branch may release its own bookings; Head Office may release any.
+- **Refused** once any EMD round exists (Head Office too), when the booking is
+  not active, and when **any agent has paid anything on it** (owner,
+  2026-10-20). Paid seats can no longer be taken back (2026-10-23), so a
+  payment now always sits on seats the agent still holds.
+- **A reason is required.** It is written to the change history in the same
+  transaction, where Head Office reads it.
+- Agents still holding seats lose them with the release; each is logged.
+- **It cannot be undone.** The edit form cannot move a booking out of
+  `released`, and no EMD can be issued or seat assigned on it.
+- **Flag, don't act.** An active booking whose EMD-1 deadline (`pnr_tl_date`)
+  has passed with no EMD shows **"At risk — confirm with airline"** on the
+  dashboard and the booking page. A person releases it; the system never does.
+  The deadline day itself is not yet "passed".
+- **The edit form sets only active or completed** (owner, 2026-10-20). Released
+  needs the Release action; cancelled needs the Cancel action on a flagged
+  booking (Step 5). The form can move a booking out of neither.
+- A released booking counts nowhere that only active bookings count: the
+  dashboard work list, alerts, EMD issuance, IATA dues and agent money. The
+  dashboard's status filter lists it.
+
+## Cancelled (Phase 9 Step 5; B3, 2026-10-13/14; owner, 2026-10-28)
+
+~~The daily job cancels a PNR automatically~~ *(owner, 2026-10-28, reversing
+2026-10-14: the daily job never cancels).* The system **flags** a booking and a
+person decides.
+
+**The flag — "Cancellation review"** (dashboard and booking page; the daily
+email is unchanged). Only an **active** booking **created on or after
+29 Oct 2026** (Pakistan time; owner: "created from tomorrow") — every earlier
+booking, imported or entered, is never flagged:
+- **EMD-2:** EMD-1 is the only EMD issued, covers less than 100%, and the
+  deadline recorded on EMD-1 has passed (the day itself is not yet passed);
+- **Ticketing:** the EMDs are complete — EMD-2 issued, **or EMD-1 covering
+  100%** (owner, 2026-10-28) — the ticket issuance deadline has passed, and
+  staff **recorded that no tickets were issued** (remaining = every seat). A
+  blank count never flags; partial ticketing never flags.
+
+**A rolled round and its re-issue count as one EMD for the flags** (owner,
+2026-10-28): a round refunded inside its IATA billing window to move the bill is
+the same EMD as the round that re-issues it, so a re-issued EMD-1 numbered
+round 2 is not EMD-2. If the re-issue carries no deadline, the rolled round's at
+the same percentage stands for it. **The booking page and dashboard still show
+and count every round.**
+
+**Deciding.** A branch on its own bookings, Head Office on any (as release),
+with a **reason**. Only a flagged booking can be cancelled — there is no other
+manual cancellation. **It can't be undone.** If staff keep it active, the flag
+stays until its cause goes away (EMD-2 issued, or a ticket count recorded).
+
+**On cancellation** (one transaction, each change logged with the flag that
+fired and the reason):
+- every round the airline still holds — `issued` or `refund_requested` — becomes
+  **`forfeited`** ("the whole PNR is forfeited"). A refunded round keeps its
+  refund; a rolled one is only the earlier record of an EMD whose re-issue is
+  forfeited;
+- `penalty_paid` is set to **No**;
+- agents keep their seats on record; no seat can then be assigned, moved, taken
+  back or re-priced.
+
+**Forfeited** rounds are not money held (they leave EMD Issued and agents' EMD
+shares) but are still owed to IATA on the calendar as before. **Penalty paid**
+(Head Office): once **Yes**, the forfeited rounds **paid to IATA** go on "To be
+refunded" (labelled "Forfeited · penalty paid", their own filter) and Head
+Office records their refund directly; they are not requested. A forfeited round
+cannot be refunded, or changed in the Edit round form, before then. The switch
+can go back to No until one of them has been refunded.
+
+**Penalties** are entered as in Step 4 — each agent's (`penalty_amount`) and
+the company's (`company_penalty_amount`), each with its penalty EMD's license —
+from the moment the booking is cancelled (Head Office, or a branch on its own).
+
+**Agents** (B3; owner, 2026-10-14 and 2026-10-28):
+- they owe **only their penalty** — not their fare, terms, or the unpaid rest of
+  their EMD share; no margin is earned;
+- paid **less** than the penalty: they **owe the difference** (undated);
+- paid **more**: the rest is **paid back** — paid − penalty − paybacks so far;
+- nothing is paid back while the penalty is **blank** (blank is not zero; enter
+  0 for none);
+- **Head Office records each payback** (`agent_paybacks`: amount, date,
+  optional reference), in parts if needed, **never more than is owed back**;
+  amount and date go to the history, never the reference;
+- cancelled bookings **now count on the agents pages** (reversing 2026-10-05),
+  showing what is owed or "to pay back".
 
 ## EMD vs ticket payment — keep these separate
 
@@ -153,12 +282,15 @@ The PNR is marked **"at risk — confirm with airline"**. The system never autom
 - After ticket payment is made, the company requests a refund of the EMD amount from the airline. This is recorded as `refund_amount` / `refund_date` on the relevant `emd_rounds` row.
 - **Do not attempt to reconcile or net EMD refunds against ticket payments in this system.** Record both as facts. Reconciliation is an accounting question, not a v1 feature — revisit only if explicitly asked.
 
-## EMD round status — two values only (owner ruling, 2026-09-21)
+## EMD round status (owner ruling, 2026-09-21; Phase 9 Step 3, 2026-10-28)
 
-`issued` and `refunded`. A round is **issued** — which is what secures the PNR —
-until it is **refunded**. There is no separate refund table; see data-model.md.
+`issued` → `refund_requested` → `refunded`. A round is **issued** — which is
+what secures the PNR — until a refund is requested or recorded. There is no
+separate refund table; see data-model.md. ~~Two values only.~~ *(Superseded by
+A1: `refund_requested` is back — see "To be refunded" above.)*
 
-`paid`, `refund_requested` and `expired` were removed. Payment is **not** a
+`paid` and `expired` were removed (`refund_requested` too, until Phase 9 Step 3
+brought it back). Payment is **not** a
 status: an EMD that has been paid is still `issued`, because the airline still
 holds it. Since 2026-09-22 payment is recorded on its own field,
 `emd_rounds.payment_date` — see "Paying IATA" below.
@@ -333,10 +465,52 @@ the bookings behind it. It answers "how much money do I need ready on the
 The card and the rows beneath it are filtered by the same function, so they can
 never disagree about which bookings a date or range covers (`matchesIssuanceRange`).
 
-## Parent/child PNR splits
-An agent may only want part of a PNR's total seats. When that happens, a child PNR record is created (`parent_pnr_id` set), and an `allocations` row records how many seats moved.
+## Splits (Phase 9 Step 6; A3/D1; owner, 2026-10-29)
 
-**`pnrs.seats` is the number of seats that PNR still holds** — the split decrements the parent at the moment it happens, so `seats` already excludes everything given to children. A parent's "seats remaining" therefore *is* its `seats`; the `allocations` rows are the record of what was split away, never a further deduction from it. Both numbers are written by the system, never typed by staff.
+~~An agent may only want part of a PNR's total seats. When that happens, a child PNR record is created (`parent_pnr_id` set), and an `allocations` row records how many seats moved.~~
+~~**`pnrs.seats` is the number of seats that PNR still holds** — the split decrements the parent at the moment it happens.~~
+*(Superseded 2026-10-29: a split is no longer a separate booking.)*
+
+A **split** is part of a booking's seats flying on other dates, kept **inside
+the booking** (`pnr_splits`), shown on the booking page like the agents' seats.
+It **creates no booking and no dashboard row**; the dashboard shows a note under
+the PNR ("Split: 15 seats · 9XYZ12 · out …"), and search finds the booking by a
+split's code.
+
+- **SV only.** Head Office on any booking, a **branch on its own**, including
+  after EMD-1 (A3). Only an active booking.
+- **Seats:** from **one holder** — one agent's seats, or the company's
+  unassigned seats, never both. An agent's split seats stay theirs on the same
+  terms, so their money is still **one deal** (one total, one set of payments).
+  The booking **keeps its full seat count** (a 30-seat booking with 15 split
+  still has 30). Seats in a split cannot be taken back, moved, or (the company's)
+  assigned to an agent until the split is removed; the booking's seats cannot be
+  reduced below what is split.
+- **What it records:** seats, an **optional new PNR code** (unique across
+  bookings and splits, ignoring case and spaces), its **outbound and inbound
+  dates** (dates only — same flights, times, fare and baggage), its own **ticket
+  issuance deadline** (SV pre-fills its outbound − 3; required; not after its
+  outbound) and its own **"All tickets issued?"** answer. A split with the
+  booking's own dates and no new code is refused (it records nothing).
+- **EMDs:** **one set for all seats.** The booking's rounds cover the split; no
+  round is recalculated or copied.
+- **Ticketing:** the booking's own answer covers its **seats not in a split**;
+  each split answers for its own.
+- **Refund timing:** the booking's paid EMDs go on "To be refunded" only once
+  **every part** is done — the day after the **latest** ticket deadline among the
+  booking and its splits, or once every part has all tickets issued.
+- **Unissued seats, penalties and the "no tickets issued" cancellation flag**
+  are judged for the **whole booking**: unissued = remaining on the booking +
+  on its splits, once every part's ticketing has closed and every part has a
+  count; SV's 10% is of all the seats; one penalty entry, opening once every part
+  has departed. The flag needs every part past its deadline with no tickets.
+- **Editing:** a split's dates, code, ticket deadline and ticket answer can be
+  edited; its seats and holder cannot. It can be **removed** (seats back on the
+  booking) until a ticket count is recorded on it. Every change is logged on
+  the booking's history.
+
+The old child-booking model's `pnrs.parent_pnr_id` and `allocations` are
+superseded and no longer read or written (both were empty).
 
 > Superseded wording: this rule previously read "the calculated total minus everything allocated to children", which described a model where the parent kept its original total. The project owner replaced that on 2026-09-01 (a 30-seat parent split by 10 shows 20 seats). Applying both at once double-counted every split — see `docs/decisions.md`, 2026-09-07.
 
@@ -350,7 +524,7 @@ The imported rows stay exactly as they are.
 | Rule | Was | Is |
 |---|---|---|
 | **PNR code** | duplicates allowed with a warning | **unique**, compared ignoring case and spacing. Entering an existing code is refused, including for a child PNR from a split |
-| **Segment** | free text with autocomplete | a fixed list: **Umrah, Employment, Tour** |
+| **Segment** | free text with autocomplete | a fixed list: **Umrah, One Way, Tour** (Employment was replaced by One Way, and its 275 bookings renamed, on 2026-10-20) |
 | **EMD deadline** | nullable, because 2,057 imported rounds had none | required on every round created or edited in the app |
 | **Refund amount** | any amount accepted | may **not exceed the round's own EMD amount** |
 | **Investor company** | typed on every booking | **not entered at all** — see below |
@@ -385,6 +559,36 @@ A booking entered before these rules is still editable: an unchanged segment
 outside the fixed list is left alone, and the duplicate check ignores the booking
 being edited. A rule tightened today must not make yesterday's record unopenable.
 
+### Flight times and the ticket deadline (Phase 9 Step 1, 2026-10-20)
+
+These apply to every booking **entered in the app**: the booking form, an AI
+draft or a spreadsheet upload confirmed through it, or a split. They apply on
+creation and on every later save (owner: "bookings made from UI"). Such a booking
+has a `created_by`; imported bookings have none and stay as they were. (The 1,599 imported bookings were deleted on 2026-10-23, so from then on every booking is entered in the app.)
+
+- **Every flight time is required:** departure and arrival on each flight, and
+  arrival and departure at each stop (A4). *Supersedes "flight times optional"
+  (2026-09-26) for these bookings; imported bookings keep optional times.*
+- **Every date is required:** the arrival date of each flight, and the arrival
+  and departure dates at each stop, **even when it is the departure day**
+  (owner, 2026-10-20). They are saved exactly as entered. A landing at an
+  earlier time than the moment before on the same date (JED 18:10 → ISB 01:10,
+  dated the 30th) is allowed, since it happens flying west, but the form warns
+  that after midnight it is the next day. On a typed booking the boxes start
+  empty; a draft or upload fills them.
+- **On every booking, imported ones included:** no date may be earlier than the
+  one before it, a stop cannot be left before it is reached on the same date,
+  and the return cannot depart before the outbound flight lands.
+- **A ticket issuance deadline is required** (A6), and it may **not be after the
+  outbound departure date** (owner, 2026-10-20). For SV the form fills in
+  outbound − 3 days, which staff may change. It cannot be cleared later under
+  Ticketing, and an edit cannot move the departure date before it.
+- **Uploads never read an arrival date from the sheet** (owner, 2026-10-20). The
+  export's dates were wrong on about 1 sector in 5. The upload works the date
+  out instead and always fills it: the next day when a flight lands at an
+  earlier time than it left (marked for the reviewer to check), otherwise the
+  departure day. With no times in the sheet it stays empty for the reviewer.
+
 
 ## Ticketing stage
 
@@ -396,43 +600,72 @@ been recorded, never an overdue one).
 
 ### Saudia (SV) ticket-issuance policy (owner rule, 2026-09-17)
 
-SV requires tickets to be issued **72 hours before departure**. Only the outbound
-*date* is stored — there is no departure time in the data model — so the
-suggestion is `outbound_date − 3 days`. A new SV booking is created with that
-deadline already recorded, and the ticketing form pre-fills it when the field is
-empty. **Staff can always overwrite it**, like every other policy default.
+SV requires tickets to be issued **72 hours before departure**, applied as
+`outbound_date − 3 days` (calendar days, not 72 hours from the departure time;
+reaffirmed A4, 2026-10-13). ~~A new SV booking is created with that deadline
+already recorded~~ *(superseded 2026-10-20: every new booking enters its ticket
+issuance deadline on the form, and for SV the form pre-fills this date).* The
+ticketing form pre-fills it when the field is empty. **Staff can always
+overwrite it**, like every other policy default.
 
 Airlines other than SV have no stored ticketing policy: staff enter both
 deadlines themselves, exactly as with EMD percentages.
 
-### Ticket counts (owner rule, 2026-09-19)
+### Who edits ticketing (Phase 9 Step 4; owner, 2026-10-28)
 
-Tickets issued and tickets still to be issued **are** the seats on the booking:
+Head Office on any booking, a **branch on its own bookings** — the whole form
+(deadlines, status, ticket count), **at any time**. The booking's EMD-1 edit lock
+does not apply here: every booking reaches ticketing after its EMDs. Penalties
+for unissued seats follow the same rule.
 
-- `tickets_issued` may never exceed `pnrs.seats`;
-- `balance_tickets` = `seats − tickets_issued`. It is **calculated by the system,
-  never typed** — the same treatment as `total_emd_value` and the seat-allocation
-  figures. The form shows it read-only and the server recomputes it on every
-  save, so the two counts cannot drift apart;
-- a booking's `seats` therefore cannot be edited below the tickets already
-  issued, and raising the seats recalculates the balance.
+### Ticket counts — "All tickets issued?" (A8, Phase 9 Step 4)
 
-### Unissued tickets after the deadline (owner rule, 2026-09-19)
+~~`balance_tickets` = `seats − tickets_issued`, calculated, never typed (owner
+rule, 2026-09-19).~~ *(Reversed by A8, 2026-10-13, built 2026-10-28.)*
 
-Once the **ticket issuance deadline has passed**, any seats still unissued are
-**considered cancelled**. The booking page says so; **nothing is stored**. There
-is no cancelled-ticket field, the figure is worked out from the deadline and the
-counts, and extending the deadline with the airline clears it by itself.
+Staff answer **"All tickets issued?"**:
+- **Yes** — nothing remains (`balance_tickets` = 0, `tickets_issued` = seats), and
+  the booking's paid EMDs go on **To be refunded** straight away;
+- **No** — staff type **how many tickets remain** (1 to the seats);
+  `tickets_issued` is worked out as `seats − balance_tickets`. "No" with 0
+  remaining is refused: answer Yes;
+- **not answered** — both blank. **Blank is never zero.**
 
-"Considered cancelled" is a reading of the facts, not a state the system enters:
-it never changes `pnrs.status`, and `cancelled` remains human-only (see the
-status rules). Cancelled-ticket *tracking*, ticket loss and penalty EMD remain
-selling-side work and are still out of scope.
+If the **seats change** after a count is recorded, **tickets issued stays
+fixed** and the remainder is recalculated (owner, 2026-10-28); seats cannot go
+below the tickets already issued.
 
-A booking with **no ticket count recorded at all** says nothing, whatever its
-deadline. Blank is not zero — every legacy row carries deadlines and no counts,
-so reading blank as "none issued" would declare those bookings wholly cancelled
-on data nobody entered.
+### Unissued seats after ticketing (A9, A10, Phase 9 Step 4)
+
+~~Once the ticket issuance deadline has passed, any seats still unissued are
+considered cancelled.~~ *(Superseded by A9/A10, built 2026-10-28.)*
+**Partial ticketing never cancels the booking.**
+
+Ticketing **closes** the day after the ticket issuance deadline (a booking with
+no deadline: the day after its outbound date — the reading given for such
+bookings on 2026-10-28). From then the booking page reports the unissued seats:
+
+- **SV (A9):** up to **10% of the seats, rounded down**, may go unissued without
+  a penalty (25 → 2, 30 → 3, 9 → 0). Beyond that the page says the limit has
+  been passed and the airline's penalty applies.
+- **Other airlines (A10):** every unissued seat is set for a **manual
+  penalty**.
+
+**Entering the penalty** (owner, 2026-10-28) opens once the **outbound date has
+passed and a penalty is called for** (SV beyond its 10%, or any unissued seat on
+another airline). Head Office on any booking, a branch on its own. Staff enter
+**amounts only** — whose seats went unissued is not recorded:
+- one amount for **each agent** on the booking (`agent_assignments.penalty_amount`),
+  **added to what that agent owes** but **never to margin** (it passes to the
+  airline, like tax). It sits in the agent's balance under the balance's usual
+  due date, so it shows as **overdue** until paid;
+- one amount for the **company's own seats** (`ticketing.company_penalty_amount`),
+  only while the company holds seats;
+- each with the **license its penalty EMD was issued against**, required
+  whenever an amount is entered (2026-10-14).
+
+Blank means no penalty; zero is accepted (a waived penalty). Every change is
+logged. The ledger (Phase 10) will post entry 3 from these.
 
 ---
 
@@ -467,9 +700,15 @@ The invariant, enforced server-side inside a row-locking transaction:
 Consequences:
 - **Unassigned seats are not for sale.** The bot offers only what has been
   assigned to it. A new PNR sells nothing until a staff member says so.
-- A split takes seats **from unassigned only**.
+- ~~A split takes seats **from unassigned only**.~~ A split takes seats from
+  **one holder** — one agent or the company's unassigned seats — and they stay
+  with that holder (Phase 9 Step 6).
 - Seats can be reclaimed from the bot only while they are neither sold nor held.
 - Head office can move seats from one agent to another; a branch cannot.
+- **Paid seats stay with the agent** (owner, 2026-10-23). Once any payment is
+  recorded against an agent's seats on a booking, none of that agent's seats
+  there can be taken back or moved to another agent. Deleting a payment
+  recorded by mistake (Head Office) frees them again.
 
 ### Reading the dashboard when one holder is filtered
 
@@ -536,7 +775,8 @@ Two obligations. **Only the second has a date.**
    paid. "Currently holding" is every `issued` round — the EMD is a guarantee
    the airline holds against the booking whoever has paid what for it — and a
    `refunded` one does not count, which is what stops an extension charging the
-   agent twice. So:
+   agent twice. A `refund_requested` round does not count either (Phase 9
+   Step 3, A1): the share drops when the round is requested. So:
    - a round the agent paid into that is later refunded and replaced by an
      extension leaves their payment standing as **credit** — they top up only the
      difference when a new round raises the required amount;
@@ -583,6 +823,19 @@ the figure beside it.
 The two are **not added together**: the EMD share is a milestone inside the
 agent's total, not an extra charge, and one payment counts against both.
 
+**Owed on bookings not yet in the system** (owner, 2026-10-29). Where an
+agent's balance in the Branch-Wise Client Ageing Report was larger than every
+booking the system holds for them, their bookings in the system were recorded
+as fully recovered and the excess is stored on the agent
+(`agents.unbooked_balance`), with the receivable it was measured against. It is
+**included in the agent's balance left** on the Agents pages and named
+separately ("incl. … on bookings not yet in the system"). As the missing
+bookings are added, their receivable **comes out of the excess**, so the
+balance stays the same until the excess is used up; after that new bookings add
+to the balance as normal. Measured across every branch, so a branch sees the
+same figure Head Office does. Worked out live (`unbookedRemaining`), never
+rewritten.
+
 **Recoveries** are the payments received from agents. Outstanding = total −
 recoveries, always calculated. A recovery is money that arrived, so it is
 positive and cannot be dated in the future; a payment recorded by mistake is
@@ -598,7 +851,7 @@ and re-issued.
 | Seat type | Segment | Meaning (owner) |
 |---|---|---|
 | **Umrah** | Umrah | return seats, Saudi Arabia only |
-| **One way** | Employment | no return; Saudi employment or any destination |
+| **One way** | One Way (Employment until 2026-10-20) | no return; Saudi employment or any destination |
 | **Tour** | Tour | return seats, any destination except Saudi Arabia |
 
 A segment outside the list shows as "Other", and only when present.
@@ -607,7 +860,7 @@ A segment outside the list shows as "Other", and only when present.
 - **Receivable** is the agent total above (seats × fare + charge − discount + ticked tax).
 - **Group seats recovery** is the payments received.
 - **Balance receivable** is the outstanding amount, summed booking by booking. An overpayment shows as credit and is not netted against another booking.
-- **Only active and completed bookings count.** An agent can still owe after travel. Cancelled bookings are left out.
+- **Only active and completed bookings count.** An agent can still owe after travel. Cancelled and released bookings are left out.
 
 **An agent's page** has two views, switched by buttons:
 - **All PNRs combined** (the default): seats and receivable per type, total receivable, recovered, balance.
@@ -683,6 +936,8 @@ Seats assigned to the bot are sold to individual and group customers.
 - The bot sends **no customer data** — seat counts only.
 
 ## Out of scope, still (do not build)
-Ticket loss tracking and penalty EMD calculations (the rule where >25% unsold
+~~Ticket loss tracking and penalty EMD calculations (the rule where >25% unsold
 seats after ticketing triggers a penalty, with no penalty under 10% cancelled).
-The selling side coming into scope does not bring these with it.
+The selling side coming into scope does not bring these with it.~~
+*(Superseded by A9/A10, 2026-10-13, built in Phase 9 Step 4: see "Unissued seats
+after ticketing". Penalties are entered by staff, never calculated.)*

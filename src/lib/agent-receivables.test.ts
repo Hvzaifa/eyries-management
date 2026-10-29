@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { seatTypeOf, summarizeReceivables, RECEIVABLE_PNR_STATUSES, type ReceivableLine } from './agent-receivables';
+import { seatTypeOf, summarizeReceivables, unbookedRemaining, RECEIVABLE_PNR_STATUSES, type ReceivableLine } from './agent-receivables';
 
 const line = (over: Partial<ReceivableLine> = {}): ReceivableLine => ({
   seatType: 'umrah',
@@ -13,9 +13,9 @@ const line = (over: Partial<ReceivableLine> = {}): ReceivableLine => ({
 });
 
 describe('seatTypeOf — by segment (owner, 2026-10-05)', () => {
-  it('Umrah → Umrah, Employment → One way, Tour → Tour', () => {
+  it('Umrah → Umrah, One Way → One way, Tour → Tour', () => {
     expect(seatTypeOf('Umrah')).toBe('umrah');
-    expect(seatTypeOf('Employment')).toBe('oneway');
+    expect(seatTypeOf('One Way')).toBe('oneway');
     expect(seatTypeOf('Tour')).toBe('tour');
   });
   it('ignores case and spacing, as the segment list does', () => {
@@ -28,8 +28,8 @@ describe('seatTypeOf — by segment (owner, 2026-10-05)', () => {
 });
 
 describe('RECEIVABLE_PNR_STATUSES', () => {
-  it('counts active and completed bookings, not cancelled', () => {
-    expect(RECEIVABLE_PNR_STATUSES).toEqual(['active', 'completed']);
+  it('counts active, completed and — since Phase 9 Step 5 — cancelled bookings; never released', () => {
+    expect(RECEIVABLE_PNR_STATUSES).toEqual(['active', 'completed', 'cancelled']);
   });
 });
 
@@ -73,5 +73,45 @@ describe('summarizeReceivables', () => {
     const s = summarizeReceivables([]);
     expect(s.totalReceivable).toBe(0);
     expect(s.totalSeats).toBe(0);
+  });
+});
+
+describe('unbookedRemaining — owed on bookings not yet in the system (owner, 2026-10-29)', () => {
+  // QFC (Rawalpindi): the sheet says 53,051,518.70 is owed, the system's
+  // bookings come to 5,774,000 and are recorded as fully recovered; the excess
+  // 47,277,518.70 is stored against that receivable.
+  const qfc = { unbookedBalance: 47_277_518.7, baseline: 5_774_000 };
+
+  it('shows the whole excess while nothing has been added', () => {
+    expect(unbookedRemaining({ ...qfc, receivableNow: 5_774_000 })).toBe(47_277_518.7);
+  });
+
+  it('a missing booking of 10,000,000 comes out of it, so the balance stays 47,277,518.70', () => {
+    const left = unbookedRemaining({ ...qfc, receivableNow: 15_774_000 });
+    expect(left).toBe(37_277_518.7);
+    // That booking's own 10,000,000 balance + what is left = the same total.
+    expect(Math.round((left + 10_000_000) * 100) / 100).toBe(47_277_518.7);
+  });
+
+  it('once used up, it is zero and new bookings add to the balance as normal', () => {
+    expect(unbookedRemaining({ ...qfc, receivableNow: 60_000_000 })).toBe(0);
+  });
+
+  it('a fall in the receivable (a booking cancelled) never raises it above what was stored', () => {
+    expect(unbookedRemaining({ ...qfc, receivableNow: 1_000_000 })).toBe(47_277_518.7);
+  });
+
+  it('an agent with no bookings: the sheet balance is the excess, from a receivable of 0', () => {
+    expect(unbookedRemaining({ unbookedBalance: 199_878, baseline: 0, receivableNow: 0 })).toBe(199_878);
+  });
+
+  it('nothing stored, nothing shown', () => {
+    expect(unbookedRemaining({ unbookedBalance: null, baseline: null, receivableNow: 5_000_000 })).toBe(0);
+  });
+
+  it('summarizeReceivables puts it in the balance and shows it separately', () => {
+    const s = summarizeReceivables([], 199_878);
+    expect(s.balance).toBe(199_878);
+    expect(s.notInSystem).toBe(199_878);
   });
 });

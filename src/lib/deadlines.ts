@@ -6,6 +6,7 @@ import { duesForAssignment } from './agent-dues';
 import { isAgentNoticeDue } from './agent-notices';
 import { diffInDays } from './urgency';
 import { FINAL_EMD_ROUND } from './issuance';
+import { lookupLabel } from '@/lib/lookups';
 
 /**
  * Step 7 — daily deadline alert.
@@ -89,7 +90,7 @@ export async function findDueRounds(todayIso: string): Promise<DeadlineAlert[]> 
       pnrCode: r.pnr.pnr,
       investorCompany: r.pnr.investorCompany,
       airlineCode: r.pnr.airline?.code ?? null,
-      branchName: r.pnr.branch?.name ?? null,
+      branchName: lookupLabel(r.pnr.branch),
       seats: r.pnr.seats,
       roundNumber: r.roundNumber,
       paymentPct: Number(r.paymentPct),
@@ -171,7 +172,7 @@ export async function findDueTicketingDeadlines(todayIso: string): Promise<Ticke
         pnrCode: row.pnr.pnr,
         investorCompany: row.pnr.investorCompany,
         airlineCode: row.pnr.airline?.code ?? null,
-        branchName: row.pnr.branch?.name ?? null,
+        branchName: lookupLabel(row.pnr.branch),
         seats: row.pnr.seats,
         kind,
         deadlineDate,
@@ -333,6 +334,7 @@ export async function findDueAgentNotices(todayIso: string): Promise<AgentDueAle
         deadlineDate: iso(r.deadlineDate),
       })),
       ticketIssuanceDeadline: iso(a.pnr.ticketing?.ticketIssuanceDeadline ?? null),
+      penaltyAmount: a.penaltyAmount === null ? null : Number(a.penaltyAmount),
     });
 
     if (!isAgentNoticeDue(dues.next, todayIso)) continue;

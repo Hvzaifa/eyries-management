@@ -156,7 +156,5 @@ export function canManageEmd(user: AuthUser): boolean {
   return isHeadOffice(user);
 }
 
-/** Only head office can split PNRs. */
-export function canSplitPnr(user: AuthUser): boolean {
-  return isHeadOffice(user);
-}
+// `canSplitPnr` (Head Office only) was removed in Phase 9 Step 6: a branch may
+// split its own SV bookings too (A3), checked with `canEditPnr(user, branch, false)`.

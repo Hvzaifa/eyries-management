@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   COMPANY_INVESTMENT,
   SEGMENTS,
+  enteredInApp,
   normalizeSegment,
   pnrCodeKey,
   validatePnrCode,
@@ -10,18 +11,20 @@ import {
 
 describe('segment is now a fixed list', () => {
   it('accepts the three travel purposes in any case', () => {
-    for (const s of ['Umrah', 'UMRAH', 'umrah', 'Employment', 'TOUR']) {
+    for (const s of ['Umrah', 'UMRAH', 'umrah', 'One Way', 'one way', 'TOUR']) {
       expect(validateSegment(s)).toBeNull();
     }
   });
 
   it('returns the canonical spelling whatever was typed', () => {
     expect(normalizeSegment('UMRAH')).toBe('Umrah');
-    expect(normalizeSegment('  employment ')).toBe('Employment');
+    expect(normalizeSegment('  ONE WAY ')).toBe('One Way');
   });
 
   it('rejects anything outside the list, and says what is allowed', () => {
-    expect(validateSegment('Hajj')?.error).toMatch(/Umrah, Employment, Tour/);
+    expect(validateSegment('Hajj')?.error).toMatch(/Umrah, One Way, Tour/);
+    // Employment was replaced, not aliased: it is no longer a segment.
+    expect(normalizeSegment('Employment')).toBeNull();
     expect(normalizeSegment('Hajj')).toBeNull();
   });
 
@@ -31,7 +34,7 @@ describe('segment is now a fixed list', () => {
   });
 
   it('lists exactly the three purposes the live data uses', () => {
-    expect([...SEGMENTS]).toEqual(['Umrah', 'Employment', 'Tour']);
+    expect([...SEGMENTS]).toEqual(['Umrah', 'One Way', 'Tour']);
   });
 });
 
@@ -61,5 +64,12 @@ describe('PNR codes', () => {
 describe('company investment', () => {
   it('is the value every new booking starts with', () => {
     expect(COMPANY_INVESTMENT).toBe('COMPANY INVESTMENT');
+  });
+});
+
+describe('enteredInApp', () => {
+  it('is a booking someone saved in the app; an imported one has no creator', () => {
+    expect(enteredInApp({ createdBy: 'a3f1c2d4-0000-4000-8000-000000000001' })).toBe(true);
+    expect(enteredInApp({ createdBy: null })).toBe(false);
   });
 });

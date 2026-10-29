@@ -10,6 +10,9 @@ export interface AgentValues {
   b2bCode: string | null;
   contactEmails: string[];
   contactPhone: string | null;
+  dtsCode: string | null;
+  address: string | null;
+  iataNumber: string | null;
   active: boolean;
 }
 
@@ -119,6 +122,37 @@ export default function AgentFormButton({ agent }: { agent?: AgentValues }) {
                     className={inputCls}
                   />
                 </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-stone-600 mb-1.5">DTS code</label>
+                  <input
+                    type="text"
+                    name="dts_code"
+                    defaultValue={agent?.dtsCode ?? ''}
+                    className={inputCls}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-stone-600 mb-1.5">IATA number</label>
+                  <input
+                    type="text"
+                    name="iata_number"
+                    defaultValue={agent?.iataNumber ?? ''}
+                    className={inputCls}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-stone-600 mb-1.5">Address</label>
+                <textarea
+                  name="address"
+                  rows={2}
+                  defaultValue={agent?.address ?? ''}
+                  className={inputCls}
+                />
               </div>
 
               <div>

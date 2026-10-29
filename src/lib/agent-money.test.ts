@@ -41,6 +41,31 @@ describe('agentTotal — the owner’s worked example (ruling 12)', () => {
   });
 });
 
+describe('agentTotal — a penalty for unissued seats (Phase 9 Step 4)', () => {
+  const base = { seats: 10, pricing: ownersPnr, terms: terms({ chargeType: 'pct', chargeValue: 5, chargeTax: true }) };
+
+  it('raises the agent’s total by exactly their penalty', () => {
+    const money = agentTotal({ ...base, penalty: 75_000 });
+    expect(money.penalty).toBe(75_000);
+    expect(money.total).toBe(1_325_000);
+  });
+
+  it('is never margin (owner, 2026-10-28)', () => {
+    expect(agentTotal({ ...base, penalty: 75_000 }).margin).toBe(50_000);
+  });
+
+  it('blank is no penalty; a recorded zero changes nothing', () => {
+    expect(agentTotal({ ...base, penalty: null }).total).toBe(1_250_000);
+    expect(agentTotal({ ...base, penalty: 0 }).total).toBe(1_250_000);
+  });
+
+  it('carries into the balance: a fully paid agent owes the penalty again', () => {
+    const money = agentBalance({ ...base, penalty: 75_000, recoveries: [1_250_000] });
+    expect(money.outstanding).toBe(75_000);
+    expect(money.credit).toBe(0);
+  });
+});
+
 describe('agentTotal', () => {
   it('is seats × fare when there are no terms at all', () => {
     expect(agentTotal({ seats: 30, pricing: ownersPnr, terms: NO_TERMS })).toMatchObject({

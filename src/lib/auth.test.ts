@@ -4,7 +4,6 @@ import {
   pnrBranchFilter,
   isHeadOffice,
   canManageEmd,
-  canSplitPnr,
   type AuthUser,
 } from './auth';
 
@@ -88,11 +87,10 @@ describe('canEditPnr', () => {
 });
 
 describe('head-office-only actions stay head-office-only', () => {
-  it('never grants EMD or split rights to a branch account', () => {
+  it('never grants EMD rights to a branch account', () => {
     for (const u of [rwp, rwpDup, orphan]) {
       expect(isHeadOffice(u)).toBe(false);
       expect(canManageEmd(u)).toBe(false);
-      expect(canSplitPnr(u)).toBe(false);
     }
   });
 });

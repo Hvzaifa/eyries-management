@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useState, useTransition } from 'react';
+import Link from 'next/link';
 import { Bot, ClipboardPaste, Loader2, RotateCcw, AlertTriangle, ImagePlus, X, FileSpreadsheet, CheckCircle2 } from 'lucide-react';
 import PnrForm from '@/components/pnr-form';
 import type { PnrFormValues } from '@/lib/pnr-form-values';
@@ -9,6 +10,7 @@ import type { PnrFormOptions } from '@/lib/pnrs';
 import type { ParsedBookingDraft, FieldConfidence } from '@/lib/ai/parse-booking';
 import { draftFlightValues } from '@/lib/ai/draft-flights';
 import { draftNotes } from '@/lib/ai/draft-checks';
+import { matchLookup } from '@/lib/lookups';
 
 type Phase = 'paste' | 'review';
 
@@ -27,14 +29,11 @@ function draftToFormValues(
   values: PnrFormValues;
   confidenceMap: Partial<Record<keyof PnrFormValues, FieldConfidence>>;
 } {
-  const airlineCode = draft.airlineCode.value?.toUpperCase() ?? '';
-  const matchedAirline = options.airlines.find((a) => a.code.toUpperCase() === airlineCode);
-
-  const licenseName = draft.licenseName.value?.toUpperCase() ?? '';
-  const matchedLicense = options.licenses.find((l) => l.name.toUpperCase() === licenseName);
-
-  const branchName = draft.branchName.value?.toUpperCase() ?? '';
-  const matchedBranch = options.branches.find((b) => b.name.toUpperCase() === branchName);
+  // Each may be written by its code or its name: "SV" or "Saudi Arabian
+  // Airlines", "TA-ISB-BSP" or "Travel Advisor Islamabad", "RWP" or "Rawalpindi".
+  const matchedAirline = matchLookup(options.airlines, draft.airlineCode.value);
+  const matchedLicense = matchLookup(options.licenses, draft.licenseName.value);
+  const matchedBranch = matchLookup(options.branches, draft.branchName.value);
 
   const flights = draftFlightValues(draft);
   const oneWay = flights.values.tripType === 'one_way';
@@ -56,6 +55,7 @@ function draftToFormValues(
     inboundDate: oneWay ? '' : draft.inboundDate.value ?? '',
     ...flights.values,
     pnrTlDate: draft.pnrTlDate.value ?? '',
+    ticketIssuanceDeadline: draft.ticketIssuanceDeadline.value ?? '',
     mealIncluded: draft.mealIncluded.value ? 'yes' : 'no',
     status: 'active',
     fare: draft.fare.value !== null ? String(draft.fare.value) : '',
@@ -77,6 +77,7 @@ function draftToFormValues(
     ...(oneWay ? {} : { inboundDate: draft.inboundDate.confidence }),
     ...flights.confidence,
     pnrTlDate: draft.pnrTlDate.confidence,
+    ...(draft.ticketIssuanceDeadline.value ? { ticketIssuanceDeadline: draft.ticketIssuanceDeadline.confidence } : {}),
     mealIncluded: draft.mealIncluded.confidence,
     fare: draft.fare.confidence,
     airlineTaxes: draft.airlineTaxes.confidence,
@@ -137,7 +138,7 @@ export default function AiIntakeForm({
   action,
 }: {
   options: PnrFormOptions;
-  action: (formData: FormData) => Promise<{ error: string } | undefined>;
+  action: (formData: FormData) => Promise<{ error: string } | { id: string; pnr: string }>;
 }) {
   const [phase, setPhase] = useState<Phase>('paste');
   const [rawText, setRawText] = useState('');
@@ -147,7 +148,9 @@ export default function AiIntakeForm({
   // Multi-PNR state
   const [drafts, setDrafts] = useState<ParsedBookingDraft[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [completedIndexes, setCompletedIndexes] = useState<Set<number>>(new Set());
+  // Saved drafts and the booking each became, so a saved one is never saved twice.
+  const [saved, setSaved] = useState<Map<number, { id: string; pnr: string }>>(new Map());
+  const completedIndexes = new Set(saved.keys());
   const [notice, setNotice] = useState<string | null>(null);
 
   // File upload state
@@ -246,7 +249,7 @@ export default function AiIntakeForm({
         setDrafts(parsedDrafts);
         setNotice(typeof data.notice === 'string' ? data.notice : null);
         setCurrentIndex(0);
-        setCompletedIndexes(new Set());
+        setSaved(new Map());
         setPhase('review');
       } catch (err) {
         setError(err instanceof Error ? err.message : 'An unexpected error occurred.');
@@ -258,32 +261,32 @@ export default function AiIntakeForm({
     setPhase('paste');
     setDrafts([]);
     setCurrentIndex(0);
-    setCompletedIndexes(new Set());
+    setSaved(new Map());
     setNotice(null);
     setError(null);
     removeFile();
   };
 
-  const markCurrentCompleteAndNext = () => {
-    setCompletedIndexes((prev) => {
-      const next = new Set(prev);
-      next.add(currentIndex);
-      return next;
-    });
-    // Auto-advance to next incomplete if possible
-    let nextIdx = currentIndex + 1;
-    while (nextIdx < drafts.length && completedIndexes.has(nextIdx)) {
-      nextIdx++;
+  /** The next unsaved draft after `from`, wrapping round to any skipped earlier; null when all are saved. */
+  const nextUnsaved = (from: number, done: Set<number>): number | null => {
+    for (let step = 1; step < drafts.length; step++) {
+      const i = (from + step) % drafts.length;
+      if (!done.has(i)) return i;
     }
-    if (nextIdx < drafts.length) {
-      setCurrentIndex(nextIdx);
-    }
+    return null;
+  };
+
+  const markCurrentCompleteAndNext = (result?: { id: string; pnr: string }) => {
+    if (!result) return;
+    const next = new Map(saved).set(currentIndex, result);
+    setSaved(next);
+    const nextIdx = nextUnsaved(currentIndex, new Set(next.keys()));
+    if (nextIdx !== null) setCurrentIndex(nextIdx);
   };
 
   const skipCurrent = () => {
-    if (currentIndex < drafts.length - 1) {
-      setCurrentIndex(currentIndex + 1);
-    }
+    const nextIdx = nextUnsaved(currentIndex, completedIndexes);
+    if (nextIdx !== null) setCurrentIndex(nextIdx);
   };
 
   if (phase === 'paste') {
@@ -529,18 +532,49 @@ export default function AiIntakeForm({
             </div>
           </div>
           
-          <PnrForm
-            key={currentIndex} // Force remount on change so form state resets
-            mode="create"
-            options={options}
-            initial={values}
-            action={action}
-            confidenceMap={confidenceMap}
-            rawAirlineText={currentDraft.rawPastedText}
-            submitLabel={currentIndex < drafts.length - 1 ? 'Save & Next' : 'Save & Finish'}
-            onSkip={currentIndex < drafts.length - 1 ? skipCurrent : undefined}
-            onSuccess={markCurrentCompleteAndNext}
-          />
+          {saved.size === drafts.length && (
+            <div className="mb-4 flex items-center justify-between gap-3 flex-wrap p-4 rounded-2xl border border-emerald-200 bg-emerald-50 text-emerald-800 text-sm">
+              <span className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4" />
+                All {drafts.length} booking{drafts.length === 1 ? '' : 's'} saved.
+              </span>
+              <span className="flex items-center gap-2">
+                {drafts.length === 1 && (
+                  <Link href={`/pnrs/${saved.get(0)!.id}`} className="text-xs font-semibold underline">Open booking</Link>
+                )}
+                <Link href="/" className="text-xs font-semibold px-3 py-1.5 rounded-xl text-white bg-emerald-600 hover:bg-emerald-700">
+                  Go to dashboard
+                </Link>
+              </span>
+            </div>
+          )}
+          {saved.has(currentIndex) ? (
+            // Saved already: shown, never offered for saving again.
+            <div className="p-5 rounded-2xl border border-stone-200 bg-white text-sm text-stone-700 flex items-center justify-between gap-3 flex-wrap">
+              <span className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                <span>
+                  Saved as <span className="font-mono font-semibold">{saved.get(currentIndex)!.pnr}</span>.
+                </span>
+              </span>
+              <Link href={`/pnrs/${saved.get(currentIndex)!.id}`} className="text-xs font-semibold text-brand-dark hover:underline">
+                Open booking →
+              </Link>
+            </div>
+          ) : (
+            <PnrForm
+              key={currentIndex} // Force remount on change so form state resets
+              mode="create"
+              options={options}
+              initial={values}
+              action={action}
+              confidenceMap={confidenceMap}
+              rawAirlineText={currentDraft.rawPastedText}
+              submitLabel={nextUnsaved(currentIndex, completedIndexes) !== null ? 'Save & Next' : 'Save & Finish'}
+              onSkip={nextUnsaved(currentIndex, completedIndexes) !== null ? skipCurrent : undefined}
+              onSuccess={markCurrentCompleteAndNext}
+            />
+          )}
         </div>
       </div>
     </div>

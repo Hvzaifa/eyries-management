@@ -23,7 +23,7 @@ access · Supabase Auth · TanStack Table · Resend · Vercel hosting.
 3. `npx prisma generate` — generate the Prisma client.
 4. `npm run db:apply` — apply `db/schema.sql`, including row level security
    (idempotent; safe to re-run).
-5. `npm run db:seed` — seed lookup tables (licenses, branches, airlines).
+5. `npm run db:seed -- --commit` — seed lookup tables (licenses, branches, airlines). Without `--commit` it only prints what it would change.
 6. Create the logins in the Supabase dashboard and set each one's account type
    — **head office** or **branch** — as described in
    [`docs/operations.md`](docs/operations.md), "Login accounts".

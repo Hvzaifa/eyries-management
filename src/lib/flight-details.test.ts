@@ -10,6 +10,7 @@ import {
   normalizeFlightCode,
   readFlightDetails,
   timeFromDb,
+  walkTimeline,
 } from './flight-details';
 
 function reader(fields: Record<string, string>) {
@@ -147,6 +148,7 @@ describe('citiesFromSector', () => {
 describe('flight codes', () => {
   it('normalises spacing and case', () => {
     expect(normalizeFlightCode(' sv 727 ')).toBe('SV727');
+    expect(normalizeFlightCode('PK-731')).toBe('PK731');
   });
 
   it.each(['SV727', 'PK303', '9P842', 'G9123', 'SVA727', 'PA2', 'ER1234', 'SV727A'])('accepts %s', (c) => {
@@ -177,6 +179,7 @@ describe('readFlightDetails', () => {
           arrivalCity: 'JED',
           departureTime: '08:30',
           arrivalTime: '11:45',
+          arrivalDate: null,
           flightCode: 'SV727',
           baggagePieces: null,
           baggageKg: null,
@@ -197,6 +200,7 @@ describe('readFlightDetails', () => {
       arrivalCity: 'ISB',
       departureTime: '14:00',
       arrivalTime: null,
+      arrivalDate: null,
       flightCode: 'SV726',
       baggagePieces: null,
       baggageKg: null,
@@ -320,8 +324,12 @@ describe('stops on a connecting flight', () => {
       inbound_stop_0_city: 'DXB',
     });
     if (!('details' in r)) throw new Error(r.error);
-    expect(r.details.outbound.stops).toEqual([{ city: 'DXB', flightCode: 'EK612', arrivalTime: '10:05', departureTime: '13:40' }]);
-    expect(r.details.inbound!.stops).toEqual([{ city: 'DXB', flightCode: null, arrivalTime: null, departureTime: null }]);
+    expect(r.details.outbound.stops).toEqual([
+      { city: 'DXB', flightCode: 'EK612', arrivalTime: '10:05', departureTime: '13:40', arrivalDate: null, departureDate: null },
+    ]);
+    expect(r.details.inbound!.stops).toEqual([
+      { city: 'DXB', flightCode: null, arrivalTime: null, departureTime: null, arrivalDate: null, departureDate: null },
+    ]);
   });
 
   it('stops are part of the sector', () => {
@@ -362,5 +370,141 @@ describe('stops on a connecting flight', () => {
     expect(describeStops([{ city: 'DXB', flightCode: 'EK612', arrivalTime: '10:05', departureTime: '13:40' }, { city: 'RUH', flightCode: null, arrivalTime: null, departureTime: null }])).toBe(
       'DXB 10:05–13:40 (EK612), RUH'
     );
+  });
+});
+
+
+// Phase 9 Step 1 (A4; owner, 2026-10-20): a booking entered in the app needs
+// every flight time and every date — the arrival date, and each stop's
+// arrival and departure dates — even on the departure day, saved as entered.
+// An older booking is held only to dates that make sense, so it still saves.
+describe('flight times and dates (Phase 9 Step 1)', () => {
+  const SAME_DAY = { outbound_arrival_date: '2026-11-15' };
+  const oneWay = (extra: Record<string, string>) => reader({ ...OUTBOUND, trip_type: 'one_way', ...extra });
+  const strict = (extra: Record<string, string>) => readFlightDetails(oneWay({ ...SAME_DAY, ...extra }), { requireTimes: true });
+  const legacy = (extra: Record<string, string>) => readFlightDetails(oneWay(extra));
+  const STOP = {
+    outbound_stop_count: '1',
+    outbound_stop_0_city: 'DXB',
+    outbound_stop_0_arrival_time: '09:30',
+    outbound_stop_0_arrival_date: '2026-11-15',
+    outbound_stop_0_departure_time: '10:00',
+    outbound_stop_0_departure_date: '2026-11-15',
+  };
+
+  it('a new booking needs both times on every flight', () => {
+    expect(strict({ outbound_departure_time: '' })).toEqual({ error: 'Flight details: departure time is required.' });
+    expect(strict({ outbound_arrival_time: '' })).toEqual({ error: 'Flight details: arrival time is required.' });
+    const r = readFlightDetails(reader({ ...OUTBOUND, ...SAME_DAY, ...INBOUND, trip_type: 'round_trip' }), { requireTimes: true });
+    expect(r).toEqual({ error: 'Inbound: arrival time is required.' });
+  });
+
+  it('and the arrival date, even when it lands the same day', () => {
+    expect(strict({ outbound_arrival_date: '' })).toEqual({ error: 'Flight details: arrival date is required.' });
+  });
+
+  it('a same-day arrival date is saved as entered, not left empty', () => {
+    const r = strict({});
+    if (!('details' in r)) throw new Error(r.error);
+    expect(r.details.outbound.arrivalDate).toBe('2026-11-15');
+    expect(flightColumns(r.details).outboundArrivalDate).toEqual(new Date('2026-11-15T00:00:00.000Z'));
+  });
+
+  it('every stop needs both times and both dates', () => {
+    const without = (key: string) => strict({ ...STOP, [key]: '' });
+    expect(without('outbound_stop_0_arrival_time')).toEqual({ error: 'Flight details: stop 1 arrival time is required.' });
+    expect(without('outbound_stop_0_arrival_date')).toEqual({ error: 'Flight details: stop 1 arrival date is required.' });
+    expect(without('outbound_stop_0_departure_time')).toEqual({ error: 'Flight details: stop 1 departure time is required.' });
+    expect(without('outbound_stop_0_departure_date')).toEqual({ error: 'Flight details: stop 1 departure date is required.' });
+  });
+
+  it('stop dates are saved as entered', () => {
+    const r = strict(STOP);
+    if (!('details' in r)) throw new Error(r.error);
+    expect(r.details.outbound.stops[0]).toMatchObject({ arrivalDate: '2026-11-15', departureDate: '2026-11-15' });
+    expect(flightStopRows(r.details)[0]).toMatchObject({
+      arrivalDate: new Date('2026-11-15T00:00:00.000Z'),
+      departureDate: new Date('2026-11-15T00:00:00.000Z'),
+    });
+  });
+
+  it('an old booking without times or dates still saves, and stores no date', () => {
+    const r = legacy({ outbound_departure_time: '', outbound_arrival_time: '', outbound_stop_count: '1', outbound_stop_0_city: 'DXB' });
+    if (!('details' in r)) throw new Error(r.error);
+    expect(r.details.outbound.arrivalDate).toBeNull();
+    expect(r.details.outbound.stops[0]).toMatchObject({ arrivalDate: null, departureDate: null });
+  });
+
+  it('an arrival date earlier than the departure is refused, on any booking', () => {
+    const error = { error: 'Flight details: the arrival date is before the departure date.' };
+    expect(strict({ outbound_arrival_date: '2026-11-14' })).toEqual(error);
+    expect(legacy({ outbound_arrival_date: '2026-11-14' })).toEqual(error);
+    expect(legacy({ outbound_arrival_date: '2026-11-31' })).toEqual({ error: 'Flight details: arrival date is not a valid date.' });
+  });
+
+  it('an overnight flight is saved with the next day', () => {
+    const r = strict({ outbound_departure_time: '18:10', outbound_arrival_time: '01:10', outbound_arrival_date: '2026-11-16' });
+    if (!('details' in r)) throw new Error(r.error);
+    expect(r.details.outbound.arrivalDate).toBe('2026-11-16');
+  });
+
+  it('a same-day arrival at an earlier clock time is allowed (flying west)', () => {
+    const r = strict({ outbound_departure_time: '09:00', outbound_arrival_time: '08:30' });
+    expect('details' in r).toBe(true);
+  });
+
+  it('a stop cannot be left before it is reached on the same day', () => {
+    expect(strict({ ...STOP, outbound_stop_0_departure_time: '09:00' })).toEqual({
+      error: 'Flight details: stop 1 departure time is before its arrival time.',
+    });
+  });
+
+  it('a stop date cannot go before the one before it', () => {
+    expect(strict({ ...STOP, outbound_stop_0_arrival_date: '2026-11-16' })).toEqual({
+      error: 'Flight details: the stop 1 departure date is before the stop 1 arrival date.',
+    });
+  });
+
+  it('the return cannot leave before the outbound flight lands', () => {
+    const r = readFlightDetails(
+      reader({
+        ...OUTBOUND,
+        ...INBOUND,
+        trip_type: 'round_trip',
+        outbound_arrival_date: '2026-11-16',
+        inbound_date: '2026-11-15',
+      })
+    );
+    expect(r).toEqual({ error: 'Inbound: departure date cannot be before the outbound flight lands (2026-11-16).' });
+  });
+
+  it('the change history shows each stop with its dates', () => {
+    expect(
+      describeStops([{ city: 'DXB', flightCode: null, arrivalTime: '01:00', departureTime: '03:00', arrivalDate: '2026-11-16', departureDate: '2026-11-16' }])
+    ).toBe('DXB 2026-11-16 01:00–2026-11-16 03:00');
+  });
+});
+
+describe('walkTimeline', () => {
+  it('warns of a landing at an earlier time on the same date — usually an overnight flight', () => {
+    expect(walkTimeline({ date: '2026-06-30', time: '18:10' }, [{ date: '2026-06-30', time: '01:10' }])[0]).toEqual({
+      date: '2026-06-30',
+      backwards: false,
+      sameDayEarlier: true,
+      leavesBeforeArriving: false,
+    });
+    expect(walkTimeline({ date: '2026-06-30', time: '18:10' }, [{ date: '2026-07-01', time: '01:10' }])[0]).toMatchObject({
+      date: '2026-07-01',
+      sameDayEarlier: false,
+    });
+  });
+
+  it('flags a date earlier than the moment before', () => {
+    expect(walkTimeline({ date: '2026-06-30', time: null }, [{ date: '2026-06-29', time: null }])[0].backwards).toBe(true);
+  });
+
+  it('compares nothing across a missing time', () => {
+    const steps = walkTimeline({ date: '2026-06-30', time: null }, [{ date: null, time: '01:10' }, { date: null, time: '00:30' }]);
+    expect(steps.map((x) => x.sameDayEarlier)).toEqual([false, true]);
   });
 });

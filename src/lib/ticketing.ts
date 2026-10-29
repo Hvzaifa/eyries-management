@@ -10,15 +10,17 @@
  * Saudia's ticket-issuance policy: tickets must be issued **72 hours before
  * departure** (owner ruling, 2026-09-17).
  *
- * Only the outbound DATE is stored — there is no departure time anywhere in the
- * data model — so 72 hours is applied as three calendar days before the outbound
- * date. Anything finer would be a false precision: with no departure time, a
- * "72 hours" instant cannot be derived.
+ * Applied as three calendar days before the outbound date, not 72 hours from
+ * the departure time. When this was written no departure time was stored; the
+ * owner kept the calendar-day rule once flight times became required (A4,
+ * 2026-10-13: "outbound date − 3 days, not exactly 72 hours").
  *
  * Returns null for any other airline and whenever the outbound date is unknown.
  * Like every other policy rule in this system, this is a **suggestion staff can
  * overwrite**, never a value that is enforced (business-rules.md).
  */
+import type { TicketPart } from './splits';
+
 export const SV_TICKET_ISSUANCE_DAYS_BEFORE_DEPARTURE = 3;
 
 export function svTicketIssuanceDeadline(
@@ -126,14 +128,31 @@ export function isRealIsoDate(value: string): boolean {
 }
 
 /**
- * Tickets still to be issued = seats − tickets issued.
+ * The ticket issuance deadline of a booking entered in the app: required (A6,
+ * 2026-10-13: every new PNR has one when it is created), and no later than the
+ * outbound departure date (owner, 2026-10-20). Older bookings are not held to
+ * either, so they stay editable. Returns the problem, or null.
+ */
+export function ticketDeadlineError(deadlineIso: string | null, outboundDateIso: string | null): string | null {
+  if (!deadlineIso) {
+    return 'The ticket issuance deadline is required. For SV it is filled in as 3 days before departure; for other airlines enter the airline\u2019s deadline.';
+  }
+  if (!isRealIsoDate(deadlineIso)) return 'The ticket issuance deadline is not a valid date.';
+  if (outboundDateIso && deadlineIso > outboundDateIso) {
+    return `The ticket issuance deadline (${deadlineIso}) cannot be after the outbound departure date (${outboundDateIso}).`;
+  }
+  return null;
+}
+
+/**
+ * Tickets still to be issued, once tickets issued is known: seats − issued.
  *
- * **Calculated, never typed** (owner rule, 2026-09-19: issued and balance
- * together are the seats on the booking). This is the same principle as
- * `total_emd_value` and the seat-allocation figures — a number the system owns,
- * so the two counts cannot drift apart through a typo.
+ * Since Phase 9 Step 4 (A8) the remaining count is what staff **type**, and
+ * tickets issued is worked out from it (`ticketCountsFromAnswer`). This is used
+ * only when the **seats change** after a count was recorded: the tickets already
+ * issued stay issued, and the remainder is recalculated (owner, 2026-10-28).
  *
- * Null while nothing has been issued, which keeps an untouched form empty rather
+ * Null while nothing is recorded, which keeps an untouched form empty rather
  * than asserting that every seat is unticketed.
  */
 export function balanceTicketsFor(seats: number, ticketsIssued: number | null): number | null {
@@ -141,41 +160,161 @@ export function balanceTicketsFor(seats: number, ticketsIssued: number | null): 
   return Math.max(0, seats - ticketsIssued);
 }
 
+/** The answer to "All tickets issued?" (A8). Blank is "not answered", never zero. */
+export type AllTicketsAnswer = '' | 'yes' | 'no';
+
 /**
- * Seats that were never ticketed by the issuance deadline — **considered
- * cancelled** (owner rule, 2026-09-19).
+ * The two ticket counts stored for an answer to "All tickets issued?" (Phase 9
+ * Step 4, A8, reversing the 2026-09-19 direction):
  *
- * Worked out from the deadline and the counts, and deliberately **not stored**:
- * no `cancelled_tickets` column exists in `data-model.md` (rule 3), and a stored
- * count would go stale the moment the airline extended the deadline. Extend the
- * deadline and this simply reports nothing again.
- *
- * Returns null — meaning "say nothing" rather than "zero" — whenever the answer
- * is not actually known:
- *  - no issuance deadline recorded;
- *  - the deadline has not passed yet;
- *  - **no ticket count recorded at all.** Blank is not the same as zero: all
- *    1,483 legacy ticketing rows carry dates and no counts, so reading blank as
- *    "none issued" would declare every old booking wholly cancelled on the
- *    strength of data nobody ever entered (owner ruling, same day);
- *  - the booking is no longer active, where the PNR's own status is the fact.
+ * - **not answered** — both null. Never read as zero;
+ * - **Yes** — nothing remains (balance 0) and every seat is issued;
+ * - **No** — staff type how many tickets remain, from 1 to the seats; tickets
+ *   issued is seats − remaining. "No" with 0 remaining would contradict itself,
+ *   so it is refused rather than read as Yes.
  */
-export function cancelledTickets(input: {
-  todayIso: string;
-  ticketIssuanceDeadline: string | null;
-  ticketsIssued: number | null;
+export function ticketCountsFromAnswer(
+  seats: number,
+  answer: string | null,
+  remaining: number | null
+): { ticketsIssued: number | null; balanceTickets: number | null } | { error: string } {
+  if (!answer) return { ticketsIssued: null, balanceTickets: null };
+  if (answer === 'yes') return { ticketsIssued: seats, balanceTickets: 0 };
+  if (answer !== 'no') return { error: 'Answer "All tickets issued?" with Yes or No, or leave it unanswered.' };
+  if (remaining === null) return { error: 'Enter how many tickets remain to be issued.' };
+  if (!Number.isFinite(remaining) || !Number.isInteger(remaining)) {
+    return { error: 'Tickets remaining must be a whole number.' };
+  }
+  if (remaining < 1) return { error: 'If no tickets remain, answer Yes — all tickets are issued.' };
+  if (remaining > seats) {
+    return { error: `Tickets remaining (${remaining}) cannot be more than the ${seats} seats on this booking.` };
+  }
+  return { ticketsIssued: seats - remaining, balanceTickets: remaining };
+}
+
+/** The answer a stored remaining count represents, for pre-filling the form. */
+export function allTicketsAnswerOf(balanceTickets: number | null): AllTicketsAnswer {
+  if (balanceTickets === null) return '';
+  return balanceTickets === 0 ? 'yes' : 'no';
+}
+
+/**
+ * SV's allowance for unissued seats after the ticketing deadline: 10% of the
+ * seats, **rounded down** (A9: 25 seats allow 2). Integer arithmetic, so no
+ * floating-point 10% can round 30 down to 2.
+ */
+export function svUnissuedAllowance(seats: number): number {
+  if (!Number.isInteger(seats) || seats <= 0) return 0;
+  return Math.floor(seats / 10);
+}
+
+export interface UnissuedSeats {
+  /** Tickets never issued: the recorded remaining count. */
+  unissued: number;
+  /** How many may go unissued without a penalty: SV 10% rounded down, others 0. */
+  allowance: number;
+  /** Unissued beyond the allowance. */
+  overLimit: number;
+  /** True when the airline's penalty applies (A9 beyond the allowance; A10 any). */
+  penaltyCalledFor: boolean;
+  isSv: boolean;
+}
+
+/**
+ * Seats left unissued once ticketing has closed (Phase 9 Step 4, A9/A10 —
+ * replaces 2026-09-19's "considered cancelled"). **Partial ticketing never
+ * cancels the booking**; this only reports, so staff can enter a penalty.
+ *
+ * Ticketing has closed once the ticket issuance deadline has passed (the day
+ * itself still counts as open). A booking with no deadline closes when its
+ * outbound date has passed, the reading the owner gave for such bookings on
+ * 2026-10-28.
+ *
+ * Null — "nothing to say", not zero — when the booking is not active, ticketing
+ * has not closed, no count is recorded (blank is never zero), or nothing
+ * remains.
+ */
+export function unissuedSeats(input: {
+  airlineCode: string | null;
+  seats: number;
   balanceTickets: number | null;
+  ticketIssuanceDeadline: string | null;
+  outboundDate: string | null;
+  todayIso: string;
   pnrStatus: string;
-}): number | null {
-  const { todayIso, ticketIssuanceDeadline, ticketsIssued, balanceTickets, pnrStatus } = input;
+}): UnissuedSeats | null {
+  return unissuedAcross({
+    airlineCode: input.airlineCode,
+    seats: input.seats,
+    parts: [{ seats: input.seats, ticketsIssued: null, balanceTickets: input.balanceTickets, ticketIssuanceDeadline: input.ticketIssuanceDeadline, outboundDate: input.outboundDate }],
+    todayIso: input.todayIso,
+    pnrStatus: input.pnrStatus,
+  });
+}
 
-  if (pnrStatus !== 'active') return null;
-  if (!ticketIssuanceDeadline) return null;
-  if (ticketsIssued === null) return null;
-  // ISO dates compare correctly as plain strings; the deadline day itself is
-  // still a working day, so only a date strictly in the past counts.
-  if (ticketIssuanceDeadline >= todayIso) return null;
+/**
+ * Unissued seats for the **whole booking**, its own seats and its splits
+ * together (Phase 9 Step 6; owner, 2026-10-29): reported once **every** part's
+ * ticketing has closed (each its own deadline, or with none its outbound date)
+ * and **every** part has a count recorded — one blank part means the total is
+ * not known. Unissued is the sum of the parts' remaining tickets, and SV's 10%
+ * is of all the booking's seats.
+ */
+export function unissuedAcross(input: {
+  airlineCode: string | null;
+  /** All the booking's seats, split or not. */
+  seats: number;
+  parts: TicketPart[];
+  todayIso: string;
+  pnrStatus: string;
+}): UnissuedSeats | null {
+  const { airlineCode, seats, parts, todayIso, pnrStatus } = input;
+  if (pnrStatus !== 'active' || parts.length === 0) return null;
+  for (const p of parts) {
+    const closesOn = p.ticketIssuanceDeadline ?? p.outboundDate;
+    if (!closesOn || closesOn >= todayIso) return null;
+    if (p.balanceTickets === null) return null;
+  }
+  const remaining = parts.reduce((n, p) => n + (p.balanceTickets ?? 0), 0);
+  if (remaining <= 0) return null;
 
-  const outstanding = balanceTickets ?? 0;
-  return outstanding > 0 ? outstanding : null;
+  const isSv = (airlineCode ?? '').trim().toUpperCase() === 'SV';
+  const allowance = isSv ? svUnissuedAllowance(seats) : 0;
+  const overLimit = Math.max(0, remaining - allowance);
+  return { unissued: remaining, allowance, overLimit, penaltyCalledFor: overLimit > 0, isSv };
+}
+
+/**
+ * Whether penalties may be entered (owner, 2026-10-28): the outbound date has
+ * passed **and** a penalty is called for — beyond SV's 10%, or any unissued seat
+ * on another airline. A 30-seat SV booking with 3 unissued never gets one.
+ */
+export function penaltyEntryOpen(input: {
+  outboundDate: string | null;
+  todayIso: string;
+  unissued: UnissuedSeats | null;
+}): boolean {
+  if (!input.outboundDate || input.outboundDate >= input.todayIso) return false;
+  return !!input.unissued?.penaltyCalledFor;
+}
+
+/**
+ * One penalty amount and its license, as staff entered them. Blank amount =
+ * no penalty (and no license). An amount needs the license its penalty EMD was
+ * issued against (2026-10-14). Zero is accepted — an airline that waived it
+ * charged nothing, and that is a fact to record.
+ */
+export function validatePenalty(
+  label: string,
+  amount: number | null,
+  licenseId: string | null
+): { amount: number | null; licenseId: string | null } | { error: string } {
+  if (amount === null) return { amount: null, licenseId: null };
+  if (!Number.isFinite(amount)) return { error: `${label}: the penalty must be a number.` };
+  if (amount < 0) return { error: `${label}: the penalty cannot be negative.` };
+  if (Math.abs(amount * 100 - Math.round(amount * 100)) > 1e-6) {
+    return { error: `${label}: the penalty can have at most two decimal places.` };
+  }
+  if (!licenseId) return { error: `${label}: choose the license the penalty EMD was issued against.` };
+  return { amount, licenseId };
 }

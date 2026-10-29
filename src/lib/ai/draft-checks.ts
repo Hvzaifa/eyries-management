@@ -5,12 +5,13 @@ import type { ParsedBookingDraft } from './parse-booking';
  * limits. Request and EMD issuance dates are naturally in the past and are not
  * checked.
  */
-const FORWARD_DATES = ['outboundDate', 'inboundDate', 'pnrTlDate', 'roundDeadlineDate'] as const;
+const FORWARD_DATES = ['outboundDate', 'inboundDate', 'pnrTlDate', 'ticketIssuanceDeadline', 'roundDeadlineDate'] as const;
 
 const LABELS: Record<(typeof FORWARD_DATES)[number], string> = {
   outboundDate: 'Outbound date',
   inboundDate: 'Inbound date',
   pnrTlDate: 'PNR time limit',
+  ticketIssuanceDeadline: 'Ticket issuance deadline',
   roundDeadlineDate: 'EMD deadline',
 };
 

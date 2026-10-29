@@ -74,7 +74,12 @@ export interface AgentMoney {
   discount: number;
   /** Seats × airline tax, or 0 when the tick is off or no tax is recorded. */
   tax: number;
-  /** base + charge − discount + tax. What the agent owes in total. */
+  /**
+   * The airline's penalty for this agent's unissued seats, as staff entered it
+   * (Phase 9 Step 4, A9/A10), or 0. Never margin: it passes to the airline.
+   */
+  penalty: number;
+  /** base + charge − discount + tax + penalty. What the agent owes in total. */
   total: number;
   /** charge − discount. Excludes tax, always (ruling 15). */
   margin: number;
@@ -122,6 +127,8 @@ export function agentTotal(input: {
   seats: number;
   pricing: PnrPricing;
   terms: AgentTerms;
+  /** `agent_assignments.penalty_amount` (Phase 9 Step 4). Blank is no penalty. */
+  penalty?: number | null;
 }): AgentMoney {
   const { seats, pricing, terms } = input;
   const safeSeats = Number.isFinite(seats) && seats > 0 ? Math.trunc(seats) : 0;
@@ -137,13 +144,17 @@ export function agentTotal(input: {
     terms.chargeTax && isAmount(pricing.airlineTaxes)
       ? toPaisa(pricing.airlineTaxes) * safeSeats
       : 0;
+  // Added to what the agent owes and kept out of margin, like the tax (owner,
+  // 2026-10-28): it is the airline's money, passed on.
+  const penaltyPaisa = isAmount(input.penalty) ? toPaisa(input.penalty) : 0;
 
   return {
     base: fromPaisa(basePaisa),
     charge: fromPaisa(chargePaisa),
     discount: fromPaisa(discountPaisa),
     tax: fromPaisa(taxPaisa),
-    total: fromPaisa(basePaisa + chargePaisa - discountPaisa + taxPaisa),
+    penalty: fromPaisa(penaltyPaisa),
+    total: fromPaisa(basePaisa + chargePaisa - discountPaisa + taxPaisa + penaltyPaisa),
     margin: fromPaisa(chargePaisa - discountPaisa),
   };
 }
@@ -272,6 +283,7 @@ export function agentBalance(input: {
   seats: number;
   pricing: PnrPricing;
   terms: AgentTerms;
+  penalty?: number | null;
   /** Amounts of every recovery recorded against this assignment. */
   recoveries: number[];
 }): AgentBalance {

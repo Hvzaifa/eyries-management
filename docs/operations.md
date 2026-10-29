@@ -14,7 +14,7 @@ database holding real bookings — read the warning on a command before running 
 | `npm test` | no | Unit tests (vitest) |
 | `npm run lint` / `npm run typecheck` | no | ESLint / TypeScript |
 | `npm run db:apply` | **yes** | Applies `db/schema.sql`, row level security included. Idempotent |
-| `npm run db:seed` | **yes** | Lookup tables only (licenses, branches, airlines) |
+| `npm run db:seed` | **yes** with `-- --commit` | Lookup tables only (licenses, branches, airlines). Dry-runs by default; `--commit` backs up branches and airlines to `backups/` first. Never deletes a row |
 | `npm run job:deadline-check` | **yes** (backfill) | Dry-runs the daily alert; `-- --send` delivers it |
 | `npm run ai:check` | no | Probes each configured AI provider once (no booking data sent) |
 
@@ -220,8 +220,11 @@ What staff see, and what it means:
 | "No PNR column could be found…" (422) | A spreadsheet with no recognisable PNR column, to the AI or the dictionary | Check that the sheet has a header row with a PNR column |
 
 **Spreadsheets** (`parse-excel.ts`, `excel-mapping.ts`):
-- One AI request maps the columns from the top 8 rows. Code then copies every value.
-- With no AI available, a fixed dictionary maps the columns instead.
+- One AI request maps the columns, whatever the layout. It is shown each column's header, how often it is filled and three example values; what every field means; and the licenses, branches, airlines and segments the system knows. Code then copies every value; the AI never types one.
+- Flights written sector by sector (`flight_code_sector_1` … `_4`) are mapped as sectors and assembled by code: the return starts at the first sector departing two or more days after the one before; a same-day or next-day sector is a connection (a stop).
+- The map is checked against the values: a "flight number" column that holds only airline codes is dropped.
+- With no AI available, a fixed dictionary maps the columns instead, including numbered sector columns.
+- Checked on the owner's two exports (2026-10-20): every field filled on both.
 - The form loads at most **100** rows per upload; staff are told to upload the rest as a separate sheet.
 
 **When Google retires a model** (404 "no longer available"), list what the key can use:
@@ -259,6 +262,11 @@ There is no automated backup beyond Supabase's own. **Before any destructive
 operation, dump the data first** — every table to timestamped JSON under
 `backups/` (gitignored; it holds live business data). The full re-import on
 2026-09-07 did this and the procedure is recorded in `decisions.md`.
+
+**Every local backup up to 2026-10-29 was deleted at the owner's request**
+(folder cleanup, 2026-10-29). The backup paths named in `decisions.md` no
+longer exist; Supabase's own backups are the only copy of that state. The rule
+above still applies to every write from here on.
 
 Restoring means re-inserting from those JSON files in FK-safe order:
 `pnrs` → `emd_rounds` / `ticketing` / `allocations` → `activity_log`.

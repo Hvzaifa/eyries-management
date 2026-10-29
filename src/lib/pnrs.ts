@@ -1,16 +1,22 @@
 import { prisma } from '@/lib/prisma';
 import type { Prisma } from '@prisma/client';
 import { pnrBranchFilter, type AuthUser } from '@/lib/auth';
-import { seatsGivenToChildren, unallocatedSeats } from '@/lib/seats';
 import { holderFilterKeys, holderLabel, seatLedger } from '@/lib/inventory';
 import { isTermType, type AgentTerms, type TermType } from '@/lib/agent-money';
 import { HELD_EMD_STATUS, nextEmdSuggestion } from '@/lib/emd';
 import { iataPaymentDeadline } from '@/lib/iata-calendar';
 import { iataPaymentState, refundCounts } from '@/lib/iata-payments';
 import { todayIsoInPkt } from '@/lib/urgency';
+import { REFUNDABLE_STATUSES } from '@/lib/refunds';
+import { cancellationFlag, type CancellationFlag } from '@/lib/cancellation';
+import { ticketParts, type SplitRecord } from '@/lib/splits';
+import { partsRefundTiming } from '@/lib/refunds';
 import { timeFromDb } from '@/lib/flight-details';
 import { nextStep } from '@/lib/issuance';
-import { agentVisibilityFilter } from '@/lib/agents';
+import { agentNameKey, agentVisibilityFilter } from '@/lib/agents';
+import { lookupLabel } from '@/lib/lookups';
+import type { KnownValues } from '@/lib/ai/excel-mapping';
+import { COMPANY_INVESTMENT, SEGMENTS } from '@/lib/booking-entry';
 
 /**
  * A stored `charge_type` / `discount_type` as the typed union.
@@ -46,7 +52,7 @@ export interface PnrListRow {
   status: string;
   /**
    * EMD the airline is **currently holding** on this booking: every round that
-   * is issued and not yet refunded.
+   * is issued and neither requested back nor refunded (Phase 9 Step 3, A1).
    *
    * This replaced "total paid" on 2026-09-21, when the statuses were reduced to
    * issued/refunded. There is no longer a `paid` status to sum — when an EMD is
@@ -102,6 +108,26 @@ export interface PnrListRow {
   /** True when something is owed to IATA but the calendar cannot date it. */
   iataUndated: boolean;
   /**
+   * An EMD on this booking is paid to IATA and still held, but its refund is not
+   * due yet (`refundTiming`), so the booking stays on the dashboard until it is
+   * (Phase 9 Step 3, A6: "a paid EMD stays on the main dashboard until the
+   * ticket issuance deadline").
+   */
+  paidAwaitingRefund: boolean;
+  /**
+   * Of those: the booking has no ticket issuance deadline and its outbound date
+   * has not passed, so nothing will ever move it to "To be refunded" until a
+   * deadline is entered (owner, 2026-10-28). Flagged on the dashboard.
+   */
+  refundNeedsTicketDeadline: boolean;
+  /**
+   * The EMD-2 or ticketing deadline was missed: staff decide whether to cancel
+   * (Phase 9 Step 5; owner, 2026-10-28 — never automatic). Null otherwise.
+   */
+  cancellationFlag: CancellationFlag | null;
+  /** `pnrs.penalty_paid` — set only once the booking is cancelled. */
+  penaltyPaid: boolean | null;
+  /**
    * Who holds the seats (phase 6). `holder` is the sentence shown in the column
    * — "QFC Group", or "QFC Group (20) + Company (30)". `holderKeys` is what the
    * filter matches on: the plain things a person picks (an agent, the company,
@@ -125,13 +151,45 @@ export interface PnrListRow {
    * is indistinguishable from a booking that is simply that size.
    */
   holderView?: { holder: string; bookingSeats: number };
+  /**
+   * Splits kept inside this booking (Phase 9 Step 6): no row of their own on
+   * the dashboard — a note under the PNR, and search finds the booking by a
+   * split's PNR code.
+   */
+  splits: { seats: number; pnrCode: string | null; outboundDate: string; inboundDate: string | null }[];
+}
+
+/** A `pnr_splits` row as the rules read it. */
+function splitRecordOf(x: {
+  id: string;
+  assignmentId: string | null;
+  seats: number;
+  pnrCode: string | null;
+  outboundDate: Date;
+  inboundDate: Date | null;
+  ticketIssuanceDeadline: Date | null;
+  ticketsIssued: number | null;
+  balanceTickets: number | null;
+}): SplitRecord {
+  return {
+    id: x.id,
+    assignmentId: x.assignmentId,
+    seats: x.seats,
+    pnrCode: x.pnrCode,
+    outboundDate: x.outboundDate.toISOString().slice(0, 10),
+    inboundDate: isoOrNull(x.inboundDate),
+    ticketIssuanceDeadline: isoOrNull(x.ticketIssuanceDeadline),
+    ticketsIssued: x.ticketsIssued,
+    balanceTickets: x.balanceTickets,
+  };
 }
 
 /**
  * Round statuses whose EMD the airline still holds.
  *
- * One status now (2026-09-21): `issued`. A refunded round has come back and is
- * reported separately, never netted against this.
+ * One status (2026-09-21): `issued`. A refunded round has come back and is
+ * reported separately, never netted against this. A `refund_requested` round
+ * is not held either (Phase 9 Step 3, A1), so it leaves EMD Issued.
  */
 const HELD_ROUND_STATUSES: string[] = [HELD_EMD_STATUS];
 
@@ -162,7 +220,8 @@ export async function listPnrs(user?: AuthUser): Promise<PnrListRow[]> {
         license: true,
         branch: true,
         airline: true,
-        ticketing: { select: { ticketIssuanceDeadline: true } },
+        ticketing: { select: { ticketIssuanceDeadline: true, ticketsIssued: true, balanceTickets: true } },
+        splits: { orderBy: { createdAt: 'asc' } },
         // Every round, not just the next issued one: the same pass also totals
         // what was paid and refunded per PNR, so the dashboard cards can
         // re-total the rows a filter leaves visible without a second round-trip.
@@ -172,6 +231,7 @@ export async function listPnrs(user?: AuthUser): Promise<PnrListRow[]> {
             status: true,
             deadlineDate: true,
             emdAmount: true,
+            paymentPct: true,
             refundAmount: true,
             // The IATA payment deadline is derived from when the EMD was
             // issued, so the issuance date has to come back with the row.
@@ -236,6 +296,27 @@ export async function listPnrs(user?: AuthUser): Promise<PnrListRow[]> {
       unpaid.reduce((sum, e) => sum + Math.round(Number(e.emdAmount) * 100), 0) / 100;
     const iataUndated = unpaid.length > iataDays.length;
 
+    // A held round paid to IATA waits on the dashboard until its refund is due,
+    // then moves to "To be refunded" (Phase 9 Step 3, A6).
+    // Every part of the booking — its own seats and each split (Step 6).
+    const splits = r.splits.map(splitRecordOf);
+    const timing = partsRefundTiming(
+      ticketParts(
+        {
+          seats: r.seats,
+          ticketsIssued: r.ticketing?.ticketsIssued ?? null,
+          balanceTickets: r.ticketing?.balanceTickets ?? null,
+          ticketIssuanceDeadline: isoOrNull(r.ticketing?.ticketIssuanceDeadline ?? null),
+          outboundDate: isoOrNull(r.outboundDate),
+        },
+        splits
+      ),
+      today
+    );
+    const paidHeld = iata.some(({ round, state }) => HELD_ROUND_STATUSES.includes(round.status) && state.status === 'paid');
+    const paidAwaitingRefund = paidHeld && !timing.due;
+    const refundNeedsTicketDeadline = paidHeld && !timing.due && timing.missingTicketDeadline;
+
     // What has to be issued next on this booking, and what it is worth. The
     // same `nextEmdSuggestion` the Add Round modal and the bulk screen use, so
     // a figure on the dashboard cannot differ from the one on the form that
@@ -262,8 +343,8 @@ export async function listPnrs(user?: AuthUser): Promise<PnrListRow[]> {
       srNo: r.srNo,
       requestDate: iso(r.requestDate)!,
       investorCompany: r.investorCompany,
-      licenseName: r.license?.name ?? null,
-      branchName: r.branch?.name ?? null,
+      licenseName: lookupLabel(r.license),
+      branchName: lookupLabel(r.branch),
       licenseId: r.licenseId,
       branchId: r.branchId,
       pnr: r.pnr,
@@ -285,6 +366,28 @@ export async function listPnrs(user?: AuthUser): Promise<PnrListRow[]> {
       nextIataPayment,
       iataUnpaidAmount,
       iataUndated,
+      paidAwaitingRefund,
+      refundNeedsTicketDeadline,
+      cancellationFlag: cancellationFlag({
+        status: r.status,
+        createdOnIso: todayIsoInPkt(r.createdAt),
+        seats: r.seats,
+        rounds: r.emdRounds.map((e) => ({
+          roundNumber: e.roundNumber,
+          status: e.status,
+          paymentPct: Number(e.paymentPct),
+          deadlineDate: isoOrNull(e.deadlineDate),
+          issuanceDate: isoOrNull(e.issuanceDate),
+          paymentDate: isoOrNull(e.paymentDate),
+          refundDate: isoOrNull(e.refundDate),
+        })),
+        ticketIssuanceDeadline: isoOrNull(r.ticketing?.ticketIssuanceDeadline ?? null),
+        balanceTickets: r.ticketing?.balanceTickets ?? null,
+        todayIso: today,
+        splits,
+      }),
+      penaltyPaid: r.penaltyPaid,
+      splits: splits.map((x) => ({ seats: x.seats, pnrCode: x.pnrCode, outboundDate: x.outboundDate, inboundDate: x.inboundDate })),
       roundsIssued: r.emdRounds.length,
       nextIssuanceDeadline,
       emdsComplete: step.kind === 'tickets',
@@ -352,6 +455,9 @@ export interface DetailStop {
   flightCode: string | null;
   arrivalTime: string | null;
   departureTime: string | null;
+  /** The days the stop is reached and left (Phase 9 Step 1). */
+  arrivalDate: string | null;
+  departureDate: string | null;
 }
 
 export interface PnrDetail {
@@ -359,6 +465,13 @@ export interface PnrDetail {
   srNo: number;
   requestDate: string;
   investorCompany: string;
+  /**
+   * When the investor company is an agent (an agent of that name exists), its
+   * B2B code — shown beside the investor in Booking details (owner,
+   * 2026-10-20). `investorIsAgent` false = company investment or no such agent.
+   */
+  investorIsAgent: boolean;
+  investorB2bCode: string | null;
   licenseName: string | null;
   branchName: string | null;
   licenseId: string | null;
@@ -383,6 +496,8 @@ export interface PnrDetail {
   /** HH:MM */
   outboundDepartureTime: string | null;
   outboundArrivalTime: string | null;
+  /** The day it lands (Phase 9 Step 1); null on an older booking. */
+  outboundArrivalDate: string | null;
   outboundFlightCode: string | null;
   /** Per passenger: bags, and kg per bag. */
   outboundBaggagePieces: number | null;
@@ -391,6 +506,7 @@ export interface PnrDetail {
   inboundArrivalCity: string | null;
   inboundDepartureTime: string | null;
   inboundArrivalTime: string | null;
+  inboundArrivalDate: string | null;
   inboundFlightCode: string | null;
   inboundBaggagePieces: number | null;
   inboundBaggageKg: number | null;
@@ -403,6 +519,8 @@ export interface PnrDetail {
   fare: number;
   totalEmdValue: number | null;
   status: string;
+  /** `pnrs.penalty_paid` — set only on a cancelled booking (Phase 9 Step 5). */
+  penaltyPaid: boolean | null;
   createdAt: string;
   createdBy: string | null;
   rounds: EmdRoundView[];
@@ -410,20 +528,22 @@ export interface PnrDetail {
     nameUpdateDeadline: string | null;
     ticketIssuanceDeadline: string | null;
     status: string | null;
+    /** Worked out: seats − balance (Phase 9 Step 4). */
     ticketsIssued: number | null;
+    /** Typed: tickets remaining; 0 = all issued, null = not answered. */
     balanceTickets: number | null;
+    /** Penalty on the company's own unissued seats, with its penalty EMD's license. */
+    companyPenaltyAmount: number | null;
+    penaltyLicenseId: string | null;
+    penaltyLicenseName: string | null;
   } | null;
-  parentPnr: { id: string; pnr: string } | null;
-  childAllocations: { childPnrId: string; childPnrCode: string; seatsAllocated: number; childInvestorCompany: string }[];
   /**
-   * Seats this PNR still holds and may still split away. Identical to `seats`:
-   * a split decrements the parent, so `seats` already excludes everything given
-   * to children (docs/decisions.md, 2026-09-01). Kept as its own field because
-   * that equivalence is a business rule, not a coincidence.
+   * Splits kept inside this booking (Phase 9 Step 6; owner, 2026-10-29), each
+   * with the holder its seats came from. The booking's `seats` includes them.
+   * The old child-booking model (`parent_pnr_id`, `allocations`) is superseded
+   * and no longer read.
    */
-  unallocatedSeats: number;
-  /** Seats this PNR has given to its children — history, not a deduction. */
-  allocatedToChildren: number;
+  splits: (SplitRecord & { holderName: string })[];
   /**
    * Seat ledger (phase 6): who holds this booking's seats. `unassignedSeats` is
    * what a split or a new assignment may draw on — the split form must offer
@@ -436,6 +556,7 @@ export interface PnrDetail {
     id: string;
     agentId: string;
     agentName: string;
+    b2bCode: string | null;
     seats: number;
     assignedAt: string;
     /**
@@ -445,6 +566,10 @@ export interface PnrDetail {
      * `agentTotal()` — there is no stored amount.
      */
     terms: AgentTerms;
+    /** The airline's penalty for this agent's unissued seats (Phase 9 Step 4). */
+    penaltyAmount: number | null;
+    penaltyLicenseId: string | null;
+    penaltyLicenseName: string | null;
     /** Payments received from this agent against this booking (step 2). */
     recoveries: {
       id: string;
@@ -454,21 +579,37 @@ export interface PnrDetail {
       /** Shown to staff; never written to a log line (rule 8). */
       reference: string | null;
     }[];
+    /** Money paid back after a cancellation (Phase 9 Step 5). */
+    paybacks: { id: string; amount: number; paidOn: string; reference: string | null }[];
   }[];
-  /** For a child PNR: how many seats its parent allocated to it. */
-  parentAllocationsTotal: number | null;
   hasIssuedEmd: boolean;
   activityLog: ActivityLogView[];
 }
 
 function stopsOf(
-  rows: { leg: string; position: number; city: string; flightCode: string | null; arrivalTime: Date | null; departureTime: Date | null }[],
+  rows: {
+    leg: string;
+    position: number;
+    city: string;
+    flightCode: string | null;
+    arrivalTime: Date | null;
+    departureTime: Date | null;
+    arrivalDate: Date | null;
+    departureDate: Date | null;
+  }[],
   leg: 'outbound' | 'inbound'
 ): DetailStop[] {
   return rows
     .filter((s) => s.leg === leg)
     .sort((a, b) => a.position - b.position)
-    .map((s) => ({ city: s.city, flightCode: s.flightCode, arrivalTime: timeFromDb(s.arrivalTime), departureTime: timeFromDb(s.departureTime) }));
+    .map((s) => ({
+      city: s.city,
+      flightCode: s.flightCode,
+      arrivalTime: timeFromDb(s.arrivalTime),
+      departureTime: timeFromDb(s.departureTime),
+      arrivalDate: isoOrNull(s.arrivalDate),
+      departureDate: isoOrNull(s.departureDate),
+    }));
 }
 
 function isoOrNull(d: Date | null): string | null {
@@ -492,24 +633,22 @@ export async function getPnrDetail(id: string, user?: AuthUser): Promise<PnrDeta
         orderBy: { roundNumber: 'asc' },
         include: { license: true }
       },
-      ticketing: true,
+      ticketing: { include: { penaltyLicense: { select: { name: true, code: true } } } },
       flightStops: { orderBy: [{ leg: 'asc' }, { position: 'asc' }] },
-      parentPnr: { select: { id: true, pnr: true } },
-      childAllocations: true,
-      parentAllocations: {
-        include: { childPnr: { select: { id: true, pnr: true, investorCompany: true } } },
-      },
+      splits: { orderBy: { createdAt: 'asc' }, include: { assignment: { select: { agent: { select: { name: true } } } } } },
       // Live assignments only — released rows are history and must not count
       // against the ledger.
       agentAssignments: {
         where: { releasedAt: null },
         orderBy: { assignedAt: 'asc' },
         include: {
-          agent: { select: { id: true, name: true } },
+          agent: { select: { id: true, name: true, b2bCode: true } },
+          penaltyLicense: { select: { name: true, code: true } },
           // Payments received against this assignment (phase 7 step 2). What is
           // outstanding is these subtracted from the calculated total — never
           // a stored balance.
           recoveries: { orderBy: { receivedDate: 'desc' } },
+          paybacks: { orderBy: { paidOn: 'desc' } },
         },
       },
     },
@@ -526,13 +665,19 @@ export async function getPnrDetail(id: string, user?: AuthUser): Promise<PnrDeta
     if (!r.branchId || !user.branchIds.includes(r.branchId)) return null;
   }
 
+  // Started here, awaited with the history below: one round trip, not two.
+  const investorAgentQuery =
+    agentNameKey(r.investorCompany) === agentNameKey(COMPANY_INVESTMENT)
+      ? Promise.resolve(null)
+      : prisma.agent.findUnique({ where: { nameKey: agentNameKey(r.investorCompany) }, select: { b2bCode: true } });
+
   const roundIds = r.emdRounds.map((x) => x.id);
   // ALL assignments, including released ones: the include above deliberately
   // fetches only live rows for the ledger, but "seats returned by X" is exactly
   // the history a reader wants, and it lives on the released row.
   const assignmentIds = allAssignments.map((a) => a.id);
 
-  const log = await prisma.activityLog.findMany({
+  const [log, investorAgent] = await Promise.all([prisma.activityLog.findMany({
     where: {
       OR: [
         { tableName: 'pnrs', recordId: r.id },
@@ -551,18 +696,15 @@ export async function getPnrDetail(id: string, user?: AuthUser): Promise<PnrDeta
         // the phase-5 lesson was that writing the entry is only half of it
         // (docs/decisions.md, 2026-09-19 ticketing entry).
         { tableName: 'agent_recoveries', recordId: { in: assignmentIds } },
+        // Paybacks after a cancellation (Phase 9 Step 5), keyed the same way.
+        { tableName: 'agent_paybacks', recordId: { in: assignmentIds } },
+        // Splits (Phase 9 Step 6) are logged against the booking itself.
+        { tableName: 'pnr_splits', recordId: r.id },
       ],
     },
     orderBy: { changedAt: 'desc' },
     take: 100,
-  });
-
-  // r.childAllocations = rows where THIS PNR is the child (seats it received).
-  // r.parentAllocations = rows where THIS PNR is the parent (seats it gave away).
-  // The two are easy to mix up; the previous code subtracted the received-as-child
-  // total from this PNR's own seats to get "unallocated", which is unrelated.
-  const seatsReceivedAsChild = r.childAllocations.reduce((sum, a) => sum + a.seatsAllocated, 0);
-  const givenToChildren = seatsGivenToChildren(r.parentAllocations);
+  }), investorAgentQuery]);
 
   // Seat ledger: `seats` is what this PNR holds; agents hold part of it, and
   // what is left is what a split or a new assignment may draw on.
@@ -573,8 +715,10 @@ export async function getPnrDetail(id: string, user?: AuthUser): Promise<PnrDeta
     srNo: r.srNo,
     requestDate: isoOrNull(r.requestDate)!,
     investorCompany: r.investorCompany,
-    licenseName: r.license?.name ?? null,
-    branchName: r.branch?.name ?? null,
+    investorIsAgent: investorAgent !== null,
+    investorB2bCode: investorAgent?.b2bCode ?? null,
+    licenseName: lookupLabel(r.license),
+    branchName: lookupLabel(r.branch),
     licenseId: r.licenseId,
     branchId: r.branchId,
     parentPnrId: r.parentPnrId,
@@ -595,6 +739,7 @@ export async function getPnrDetail(id: string, user?: AuthUser): Promise<PnrDeta
     outboundArrivalCity: r.outboundArrivalCity,
     outboundDepartureTime: timeFromDb(r.outboundDepartureTime),
     outboundArrivalTime: timeFromDb(r.outboundArrivalTime),
+    outboundArrivalDate: isoOrNull(r.outboundArrivalDate),
     outboundFlightCode: r.outboundFlightCode,
     outboundBaggagePieces: r.outboundBaggagePieces,
     outboundBaggageKg: r.outboundBaggageKg,
@@ -602,6 +747,7 @@ export async function getPnrDetail(id: string, user?: AuthUser): Promise<PnrDeta
     inboundArrivalCity: r.inboundArrivalCity,
     inboundDepartureTime: timeFromDb(r.inboundDepartureTime),
     inboundArrivalTime: timeFromDb(r.inboundArrivalTime),
+    inboundArrivalDate: isoOrNull(r.inboundArrivalDate),
     inboundFlightCode: r.inboundFlightCode,
     inboundBaggagePieces: r.inboundBaggagePieces,
     inboundBaggageKg: r.inboundBaggageKg,
@@ -613,6 +759,7 @@ export async function getPnrDetail(id: string, user?: AuthUser): Promise<PnrDeta
     fare: Number(r.fare),
     totalEmdValue: r.totalEmdValue === null ? null : Number(r.totalEmdValue),
     status: r.status,
+    penaltyPaid: r.penaltyPaid,
     createdAt: r.createdAt.toISOString(),
     createdBy: r.createdBy,
     rounds: r.emdRounds.map((x) => ({
@@ -631,7 +778,7 @@ export async function getPnrDetail(id: string, user?: AuthUser): Promise<PnrDeta
       paymentDate: isoOrNull(x.paymentDate),
       iataPaymentDeadline: iataPaymentDeadline(isoOrNull(x.issuanceDate)),
       licenseId: x.licenseId,
-      licenseName: x.license?.name ?? null,
+      licenseName: lookupLabel(x.license),
     })),
     ticketing: r.ticketing
       ? {
@@ -640,24 +787,19 @@ export async function getPnrDetail(id: string, user?: AuthUser): Promise<PnrDeta
           status: r.ticketing.status,
           ticketsIssued: r.ticketing.ticketsIssued,
           balanceTickets: r.ticketing.balanceTickets,
+          companyPenaltyAmount: r.ticketing.companyPenaltyAmount === null ? null : Number(r.ticketing.companyPenaltyAmount),
+          penaltyLicenseId: r.ticketing.penaltyLicenseId,
+          penaltyLicenseName: lookupLabel(r.ticketing.penaltyLicense),
         }
       : null,
-    parentPnr: r.parentPnr ? { id: r.parentPnr.id, pnr: r.parentPnr.pnr } : null,
-    childAllocations: r.parentAllocations.map((a) => ({
-      childPnrId: a.childPnr.id,
-      childPnrCode: a.childPnr.pnr,
-      seatsAllocated: a.seatsAllocated,
-      childInvestorCompany: a.childPnr.investorCompany,
-    })),
-    // `seats` already excludes everything split away — see the field's docs.
-    unallocatedSeats: unallocatedSeats(r),
-    allocatedToChildren: givenToChildren,
+    splits: r.splits.map((x) => ({ ...splitRecordOf(x), holderName: x.assignment?.agent.name ?? 'Company' })),
     agentSeats: ledger.agentSeats,
     unassignedSeats: ledger.unassigned,
     agentAssignments: r.agentAssignments.map((a) => ({
       id: a.id,
       agentId: a.agentId,
       agentName: a.agent.name,
+      b2bCode: a.agent.b2bCode,
       seats: a.seats,
       assignedAt: a.assignedAt.toISOString(),
       terms: {
@@ -667,6 +809,15 @@ export async function getPnrDetail(id: string, user?: AuthUser): Promise<PnrDeta
         discountValue: a.discountValue === null ? null : Number(a.discountValue),
         chargeTax: a.chargeTax,
       },
+      penaltyAmount: a.penaltyAmount === null ? null : Number(a.penaltyAmount),
+      penaltyLicenseId: a.penaltyLicenseId,
+      penaltyLicenseName: lookupLabel(a.penaltyLicense),
+      paybacks: a.paybacks.map((b) => ({
+        id: b.id,
+        amount: Number(b.amount),
+        paidOn: b.paidOn.toISOString().slice(0, 10),
+        reference: b.reference,
+      })),
       recoveries: a.recoveries.map((rec) => ({
         id: rec.id,
         amount: Number(rec.amount),
@@ -675,7 +826,6 @@ export async function getPnrDetail(id: string, user?: AuthUser): Promise<PnrDeta
         reference: rec.reference,
       })),
     })),
-    parentAllocationsTotal: r.parentPnrId ? seatsReceivedAsChild : null,
     hasIssuedEmd: r.emdRounds.length > 0,
     activityLog: log.map((e) => ({
       id: e.id,
@@ -689,8 +839,8 @@ export async function getPnrDetail(id: string, user?: AuthUser): Promise<PnrDeta
 }
 
 export interface PnrFormOptions {
-  licenses: { id: string; name: string }[];
-  branches: { id: string; name: string }[];
+  licenses: { id: string; name: string; code: string | null }[];
+  branches: { id: string; name: string; code: string | null }[];
   airlines: { id: string; code: string; name: string; contactEmails: string[] }[];
   segmentSuggestions: string[];
   existingPnrCodes: string[];
@@ -710,8 +860,8 @@ export async function getPnrFormOptions(user?: AuthUser): Promise<PnrFormOptions
   const codeScope = pnrBranchFilter(user);
 
   const [licenses, branches, airlines, segments, codes] = await Promise.all([
-    prisma.license.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true } }),
-    prisma.branch.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+    prisma.license.findMany({ orderBy: [{ code: 'asc' }, { name: 'asc' }], select: { id: true, name: true, code: true } }),
+    prisma.branch.findMany({ orderBy: [{ code: 'asc' }, { name: 'asc' }], select: { id: true, name: true, code: true } }),
     prisma.airline.findMany({ orderBy: { code: 'asc' }, select: { id: true, code: true, name: true, contactEmails: true } }),
     prisma.pnr.findMany({
       where: { segment: { not: null } },
@@ -732,6 +882,20 @@ export async function getPnrFormOptions(user?: AuthUser): Promise<PnrFormOptions
     segmentSuggestions: segments.map((s) => s.segment!).filter(Boolean),
     existingPnrCodes: codes.map((c) => c.pnr),
   };
+}
+
+/**
+ * The licenses, branches and airlines the system knows, with the segment list:
+ * what the spreadsheet upload shows the AI so it can tell which column holds
+ * which (2026-10-20). Lookup tables only — no booking data.
+ */
+export async function getKnownLookups(): Promise<KnownValues> {
+  const [licenses, branches, airlines] = await Promise.all([
+    prisma.license.findMany({ orderBy: { code: 'asc' }, select: { code: true, name: true } }),
+    prisma.branch.findMany({ orderBy: { code: 'asc' }, select: { code: true, name: true } }),
+    prisma.airline.findMany({ orderBy: { code: 'asc' }, select: { code: true, name: true } }),
+  ]);
+  return { licenses, branches, airlines, segments: SEGMENTS };
 }
 
 export interface RefundedEmdRoundRow {
@@ -761,6 +925,7 @@ export interface RefundedEmdRoundRow {
   outbound_date: Date | null;
   airline_code: string | null;
   branch_name: string | null;
+  branch_code: string | null;
 }
 
 /**
@@ -819,21 +984,41 @@ export interface RoundToRefund {
   seats: number;
   sector: string | null;
   outboundDate: string | null;
+  /** The booking's ticket issuance deadline; its passing is what lists the round. */
+  ticketIssuanceDeadline: string | null;
   roundNumber: number;
   emdNumber: string | null;
   emdAmount: number;
   issuanceDate: string;
-  paidToIataOn: string;
+  /** Null only on a requested round whose payment record was since cleared. */
+  paidToIataOn: string | null;
   /** True when no payment is recorded and the passed remittance day is read as paid. */
   paidAssumed: boolean;
+  /** Marked refund requested; Head Office has not recorded the refund yet. */
+  requested: boolean;
+  /** Forfeited on a cancelled booking whose penalty is paid (Phase 9 Step 5). */
+  forfeited: boolean;
 }
 
 /**
- * EMD rounds waiting on their refund: issued, paid to IATA, and not yet
- * refunded (owner's definition, 2026-09-28). The Refunds page's second list.
- * "Paid" includes a passed remittance day with no payment recorded, which is
- * read as paid on that day (owner, 2026-10-03). That is worked out from the
- * calendar, not stored, so the filter runs here rather than in the query.
+ * EMD rounds waiting on their refund — the Refunds page's second list.
+ *
+ * Phase 9 Step 3 (A6) narrows the 2026-09-28 definition: a round is listed when
+ * it is **paid to IATA** and its booking's refund is **due** (`refundTiming`:
+ * every ticket issued, the ticket issuance deadline passed at least a day ago,
+ * or — with no deadline — the outbound date passed). Before that it stays on the
+ * dashboard. Rounds not paid to IATA are never listed. "Paid" includes a passed
+ * remittance day with no payment recorded (owner, 2026-10-03), worked out from
+ * the calendar, so the filter runs here rather than in the query.
+ *
+ * A **forfeited** round (cancelled booking, Phase 9 Step 5) is listed once the
+ * booking's penalty is marked paid, and only if it was paid to IATA (owner,
+ * 2026-10-28). Head Office records its refund directly; it is not requested.
+ *
+ * A round **marked refund requested** stays listed, labelled, until Head Office
+ * records the refund (owner, 2026-10-28). It was due when it was marked, and
+ * dropping it on a later edit would leave a requested refund on no list at all.
+ *
  * Oldest issuance first — the longest-waiting refund is the one to chase.
  * Branch-scoped like every other read.
  */
@@ -841,11 +1026,12 @@ export async function listRoundsToRefund(user: AuthUser): Promise<RoundToRefund[
   const scope = pnrBranchFilter(user);
   if (scope === null) return [];
   const rounds = await prisma.emdRound.findMany({
-    where: { status: 'issued', pnr: scope },
+    where: { status: { in: REFUNDABLE_STATUSES }, pnr: scope },
     orderBy: [{ issuanceDate: 'asc' }, { roundNumber: 'asc' }],
     select: {
       id: true,
       roundNumber: true,
+      status: true,
       emdNumber: true,
       emdAmount: true,
       issuanceDate: true,
@@ -855,11 +1041,14 @@ export async function listRoundsToRefund(user: AuthUser): Promise<RoundToRefund[
           id: true,
           pnr: true,
           status: true,
+          penaltyPaid: true,
           seats: true,
           sector: true,
           outboundDate: true,
-          branch: { select: { name: true } },
+          branch: { select: { name: true, code: true } },
           airline: { select: { code: true } },
+          ticketing: { select: { ticketIssuanceDeadline: true, ticketsIssued: true, balanceTickets: true } },
+          splits: true,
         },
       },
     },
@@ -870,26 +1059,51 @@ export async function listRoundsToRefund(user: AuthUser): Promise<RoundToRefund[
       issuanceDate: isoOrNull(r.issuanceDate),
       paymentDate: isoOrNull(r.paymentDate),
       refundDate: null,
-      roundStatus: 'issued',
+      roundStatus: r.status,
       todayIso: today,
     });
-    if (state.status !== 'paid' || !state.paidOn) return [];
+    const ticketIssuanceDeadline = isoOrNull(r.pnr.ticketing?.ticketIssuanceDeadline ?? null);
+    const requested = r.status === 'refund_requested';
+    const forfeited = r.status === 'forfeited';
+    if (forfeited) {
+      if (r.pnr.penaltyPaid !== true || state.status !== 'paid') return [];
+    } else if (!requested) {
+      if (state.status !== 'paid') return [];
+      // The booking's EMDs cover every seat: due once every part is (Step 6).
+      const timing = partsRefundTiming(
+        ticketParts(
+          {
+            seats: r.pnr.seats,
+            ticketsIssued: r.pnr.ticketing?.ticketsIssued ?? null,
+            balanceTickets: r.pnr.ticketing?.balanceTickets ?? null,
+            ticketIssuanceDeadline,
+            outboundDate: isoOrNull(r.pnr.outboundDate),
+          },
+          r.pnr.splits.map(splitRecordOf)
+        ),
+        today
+      );
+      if (!timing.due) return [];
+    }
     return [{
       roundId: r.id,
       pnrId: r.pnr.id,
       pnr: r.pnr.pnr,
       pnrStatus: r.pnr.status,
-      branchName: r.pnr.branch?.name ?? null,
+      branchName: lookupLabel(r.pnr.branch),
       airlineCode: r.pnr.airline?.code ?? null,
       seats: r.pnr.seats,
       sector: r.pnr.sector,
       outboundDate: isoOrNull(r.pnr.outboundDate),
+      ticketIssuanceDeadline,
       roundNumber: r.roundNumber,
       emdNumber: r.emdNumber,
       emdAmount: Number(r.emdAmount),
       issuanceDate: isoOrNull(r.issuanceDate)!,
-      paidToIataOn: state.paidOn,
-      paidAssumed: state.assumed,
+      paidToIataOn: state.status === 'paid' ? state.paidOn : null,
+      paidAssumed: state.status === 'paid' && state.assumed,
+      requested,
+      forfeited,
     }];
   });
 }

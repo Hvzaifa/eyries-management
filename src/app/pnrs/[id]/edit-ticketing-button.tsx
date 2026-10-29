@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react';
 import { Pencil, X, AlertTriangle, Sparkles } from 'lucide-react';
 import { saveTicketing } from '../actions/ticketing';
+import { allTicketsAnswerOf, type AllTicketsAnswer } from '@/lib/ticketing';
 
 export interface TicketingValues {
   nameUpdateDeadline: string | null;
@@ -17,20 +18,26 @@ export default function EditTicketingButton({
   seats,
   ticketing,
   suggestedIssuanceDeadline,
+  issuanceDeadlineRequired,
+  outboundDate,
 }: {
   pnrId: string;
   seats: number;
   ticketing: TicketingValues | null;
   /** SV's 72-hour policy date (outbound − 3 days), or null for other airlines. */
   suggestedIssuanceDeadline: string | null;
+  /** A booking entered in the app must keep its ticket issuance deadline (Phase 9 Step 1). */
+  issuanceDeadlineRequired: boolean;
+  /** The latest the deadline may be on such a booking: the outbound departure date. */
+  outboundDate: string | null;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [issued, setIssued] = useState<string>(
-    ticketing?.ticketsIssued === null || ticketing?.ticketsIssued === undefined
-      ? ''
-      : String(ticketing.ticketsIssued)
+  // "All tickets issued?" (Phase 9 Step 4, A8): Yes, or No and how many remain.
+  const [answer, setAnswer] = useState<AllTicketsAnswer>(allTicketsAnswerOf(ticketing?.balanceTickets ?? null));
+  const [remaining, setRemaining] = useState<string>(
+    ticketing?.balanceTickets ? String(ticketing.balanceTickets) : ''
   );
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
@@ -58,13 +65,13 @@ export default function EditTicketingButton({
   const issuanceDefault = ticketing?.ticketIssuanceDeadline ?? suggestedIssuanceDeadline ?? '';
   const usingSuggestion = !ticketing?.ticketIssuanceDeadline && !!suggestedIssuanceDeadline;
 
-  // Seats not yet ticketed. Calculated, never typed: issued + balance are the
-  // seats on the booking (owner rule, 2026-09-19). The server computes this too
-  // — what the browser shows is a preview, not the source.
-  const issuedNum = Number(issued);
-  const issuedIsUsable = issued.trim() !== '' && Number.isInteger(issuedNum) && issuedNum >= 0;
-  const derivedBalance = issuedIsUsable ? Math.max(0, seats - issuedNum) : null;
-  const overSeats = issuedIsUsable && issuedNum > seats;
+  // Tickets issued is worked out from what remains (A8, reversing 2026-09-19).
+  // A preview only — the server works it out again.
+  const remainingNum = Number(remaining);
+  const remainingUsable = remaining.trim() !== '' && Number.isInteger(remainingNum) && remainingNum >= 1;
+  const overSeats = remainingUsable && remainingNum > seats;
+  const derivedIssued =
+    answer === 'yes' ? seats : answer === 'no' && remainingUsable && !overSeats ? seats - remainingNum : null;
 
   return (
     <>
@@ -112,10 +119,13 @@ export default function EditTicketingButton({
                 <div>
                   <label className="block text-xs font-medium text-stone-600 mb-1.5">
                     Ticket issuance deadline
+                    {issuanceDeadlineRequired && <span className="text-red-500"> *</span>}
                   </label>
                   <input
                     type="date"
                     name="ticket_issuance_deadline"
+                    required={issuanceDeadlineRequired}
+                    max={issuanceDeadlineRequired && outboundDate ? outboundDate : undefined}
                     defaultValue={issuanceDefault}
                     className={inputCls}
                   />
@@ -139,52 +149,73 @@ export default function EditTicketingButton({
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-medium text-stone-600 mb-1.5">
-                    Tickets issued
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    max={seats}
-                    step="1"
-                    name="tickets_issued"
-                    value={issued}
-                    onChange={(e) => setIssued(e.target.value)}
-                    className={`${inputCls} ${overSeats ? 'border-red-400 focus:ring-red-400/50' : ''}`}
-                  />
-                  <p className={`mt-1 text-[11px] ${overSeats ? 'text-red-600 font-medium' : 'text-stone-400'}`}>
-                    {overSeats
-                      ? `Only ${seats} seats on this booking`
-                      : `${seats} seats on this booking`}
-                  </p>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-stone-600 mb-1.5">
-                    Balance tickets
-                  </label>
-                  {/* Calculated, not typed: issued + balance are the seats
-                      (owner rule, 2026-09-19). Read-only here and recomputed
-                      server-side, so the two counts cannot disagree. */}
-                  <input
-                    type="number"
-                    readOnly
-                    disabled
-                    value={
-                      derivedBalance !== null
-                        ? String(derivedBalance)
-                        : ticketing?.balanceTickets === null || ticketing?.balanceTickets === undefined
-                          ? ''
-                          : String(ticketing.balanceTickets)
-                    }
-                    className={`${inputCls} bg-stone-100 text-stone-500 cursor-not-allowed`}
-                  />
-                  <p className="mt-1 text-[11px] text-stone-400">
-                    Seats − tickets issued, calculated
-                  </p>
+              <div>
+                <span className="block text-xs font-medium text-stone-600 mb-1.5">All tickets issued?</span>
+                <div className="flex gap-2">
+                  {([
+                    ['', 'Not answered'],
+                    ['yes', 'Yes'],
+                    ['no', 'No'],
+                  ] as const).map(([value, label]) => (
+                    <label
+                      key={value}
+                      className={`flex-1 text-center px-3 py-2 rounded-xl border text-xs font-medium cursor-pointer ${
+                        answer === value ? 'bg-brand text-white border-brand' : 'bg-stone-50 border-stone-300 text-stone-600 hover:bg-stone-100'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="all_tickets_issued"
+                        value={value}
+                        checked={answer === value}
+                        onChange={() => setAnswer(value)}
+                        className="sr-only"
+                      />
+                      {label}
+                    </label>
+                  ))}
                 </div>
               </div>
+
+              {answer === 'no' && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-stone-600 mb-1.5">
+                      Tickets remaining<span className="text-red-500"> *</span>
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max={seats}
+                      step="1"
+                      required
+                      name="tickets_remaining"
+                      value={remaining}
+                      onChange={(e) => setRemaining(e.target.value)}
+                      className={`${inputCls} ${overSeats ? 'border-red-400 focus:ring-red-400/50' : ''}`}
+                    />
+                    <p className={`mt-1 text-[11px] ${overSeats ? 'text-red-600 font-medium' : 'text-stone-400'}`}>
+                      {overSeats ? `Only ${seats} seats on this booking` : `${seats} seats on this booking`}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-stone-600 mb-1.5">Tickets issued</label>
+                    <input
+                      type="number"
+                      readOnly
+                      disabled
+                      value={derivedIssued === null ? '' : String(derivedIssued)}
+                      className={`${inputCls} bg-stone-100 text-stone-500 cursor-not-allowed`}
+                    />
+                    <p className="mt-1 text-[11px] text-stone-400">Seats − remaining, worked out</p>
+                  </div>
+                </div>
+              )}
+              {answer === 'yes' && (
+                <p className="text-[11px] text-stone-500">
+                  All {seats} tickets issued. The booking’s paid EMDs go on “To be refunded” straight away.
+                </p>
+              )}
 
               <div className="pt-2 flex justify-end gap-2">
                 <button

@@ -67,7 +67,7 @@ describe('suggestEmdPlan scoping', () => {
   });
 
   it('does not apply to SV bookings that are not Umrah (no hajj/tour policy)', () => {
-    for (const segment of ['EMPLOYMENT', 'TOUR', 'Hajj', null]) {
+    for (const segment of ['ONE WAY', 'TOUR', 'Hajj', null]) {
       const s = suggestEmdPlan({ ...svUmrah, segment, outboundDateIso: '2026-10-22' });
       expect(s).toMatchObject({ applicable: false, reason: 'non-umrah-segment' });
     }
@@ -269,8 +269,8 @@ describe('emdAmountFor — the EMD amount staff verify', () => {
 });
 
 describe('EMD statuses', () => {
-  it('has exactly two (owner ruling, 2026-09-21)', () => {
-    expect(EMD_STATUSES).toEqual(['issued', 'refunded']);
+  it('issued, refund requested, forfeited, refunded (Phase 9 Steps 3 and 5)', () => {
+    expect(EMD_STATUSES).toEqual(['issued', 'refund_requested', 'forfeited', 'refunded']);
   });
 
   it('treats an issued round as the EMD the airline holds', () => {

@@ -9,6 +9,9 @@
  * Used by `recordEmdRefund` and `processBulkRefunds` so the two cannot drift.
  */
 
+import { EMD_STATUSES } from './emd';
+import type { TicketPart } from './splits';
+
 /** Most rounds one bulk batch may refund at once, so the transaction can finish. */
 export const MAX_BULK_REFUNDS = 500;
 
@@ -36,7 +39,9 @@ export function validateRefund(
   amount: number | null,
   dateIso: string | null,
   currentStatus: string,
-  emdAmount?: number
+  emdAmount?: number,
+  /** `pnrs.penalty_paid` — a forfeited round is refundable only once it is true. */
+  penaltyPaid?: boolean | null
 ): RefundCheck {
   if (amount === null || typeof amount !== 'number' || !Number.isFinite(amount)) {
     return { error: 'Refund amount must be a number.' };
@@ -66,5 +71,123 @@ export function validateRefund(
       error: 'This round is already refunded. Edit the round instead of refunding it again.',
     };
   }
+  if (!REFUNDABLE_STATUSES.includes(currentStatus)) {
+    return { error: `A round that is ${currentStatus.replace('_', ' ')} cannot be refunded.` };
+  }
+  // A forfeited EMD comes back only after the airline's penalty is paid (B3).
+  if (currentStatus === 'forfeited' && penaltyPaid !== true) {
+    return { error: 'This EMD was forfeited when the booking was cancelled. Mark the penalty paid before recording its refund.' };
+  }
   return { date };
+}
+
+/**
+ * The statuses Head Office records a refund from (Phase 9 Step 3, A1): an
+ * issued round, or one already requested. Requesting first is not required —
+ * a refund inside the billing window that rolls the bill is recorded straight
+ * from `issued`, as before.
+ */
+export const REFUNDABLE_STATUSES: string[] = ['issued', 'refund_requested', 'forfeited'];
+
+/**
+ * Whether a booking's paid EMDs belong on "To be refunded" yet (Phase 9 Step 3,
+ * A6, reversing 2026-09-28's "paid means listed").
+ *
+ * Due when:
+ * - every ticket is issued (tickets issued ≥ seats; owner, 2026-10-28: use the
+ *   count staff type today, until Step 4's "All tickets issued?" replaces it), or
+ * - the ticket issuance deadline passed at least a day ago (deadline < today), or
+ * - with **no ticket deadline recorded**, the outbound date has passed (owner,
+ *   2026-10-28). Before that it is not due and is flagged for a deadline to be
+ *   entered; no date is guessed.
+ *
+ * A blank ticket count is "not answered", never zero, and never all issued.
+ */
+export type RefundTiming =
+  | { due: true; why: 'tickets-issued' | 'ticket-deadline' | 'outbound-passed' }
+  | { due: false; missingTicketDeadline: boolean };
+
+export function refundTiming(input: {
+  seats: number;
+  ticketsIssued: number | null;
+  ticketIssuanceDeadline: string | null;
+  outboundDate: string | null;
+  todayIso: string;
+}): RefundTiming {
+  const { seats, ticketsIssued, ticketIssuanceDeadline, outboundDate, todayIso } = input;
+  if (seats > 0 && ticketsIssued !== null && ticketsIssued >= seats) return { due: true, why: 'tickets-issued' };
+  if (ticketIssuanceDeadline) {
+    return ticketIssuanceDeadline < todayIso
+      ? { due: true, why: 'ticket-deadline' }
+      : { due: false, missingTicketDeadline: false };
+  }
+  if (outboundDate && outboundDate < todayIso) return { due: true, why: 'outbound-passed' };
+  return { due: false, missingTicketDeadline: true };
+}
+
+/**
+ * Refund timing over every part of a booking — its own seats and each split
+ * (Phase 9 Step 6; owner, 2026-10-29). The booking's EMDs cover every seat, so
+ * they are due only once **every** part is: all tickets issued, or its own
+ * ticket deadline (or, with none, its outbound date) passed. Nothing is refunded
+ * while a split still flies on the EMD. If not due, `missingTicketDeadline` says
+ * whether some part is waiting with no deadline recorded.
+ */
+export function partsRefundTiming(parts: TicketPart[], todayIso: string): RefundTiming {
+  const timings = parts.map((p) => refundTiming({ ...p, todayIso }));
+  if (timings.length === 0) return { due: false, missingTicketDeadline: false };
+  const waiting = timings.filter((t): t is Extract<RefundTiming, { due: false }> => !t.due);
+  if (waiting.length > 0) return { due: false, missingTicketDeadline: waiting.some((t) => t.missingTicketDeadline) };
+  const whys = timings.map((t) => (t as Extract<RefundTiming, { due: true }>).why);
+  return { due: true, why: whys.every((w) => w === 'tickets-issued') ? 'tickets-issued' : whys.includes('outbound-passed') ? 'outbound-passed' : 'ticket-deadline' };
+}
+
+/**
+ * Why a round cannot be marked refund requested, or null when it can.
+ *
+ * Only a round on "To be refunded" may be marked (owner, 2026-10-28): issued,
+ * paid to IATA (recorded or assumed), on a booking whose refund is due. The
+ * system only flags; a person marks it. Who may mark it — a branch on its own
+ * bookings, Head Office on any — is checked by the caller.
+ */
+export function refundRequestBlocker(input: {
+  roundStatus: string;
+  paidToIata: boolean;
+  timing: RefundTiming;
+}): string | null {
+  if (input.roundStatus === 'refund_requested') return 'A refund has already been requested for this round.';
+  if (input.roundStatus !== 'issued') return `A round that is ${input.roundStatus.replace('_', ' ')} cannot have a refund requested.`;
+  if (!input.paidToIata) return 'This EMD is not paid to IATA yet, so its refund cannot be requested.';
+  if (!input.timing.due) {
+    return input.timing.missingTicketDeadline
+      ? 'This booking has no ticket issuance deadline. Enter one under Ticketing, or wait until the outbound date has passed.'
+      : 'The ticket issuance deadline has not passed yet, so this refund cannot be requested.';
+  }
+  return null;
+}
+
+/**
+ * What the Edit round form may do to a round's status.
+ *
+ * A requested round never goes back to `issued` (A1). Requesting is not done
+ * here either: it has its own action, which checks the round is on "To be
+ * refunded" and is open to branches. Moving between `issued` and `refunded`
+ * stays as it was.
+ */
+export function roundStatusEdit(from: string, to: string): { status: string } | { error: string } {
+  if (from === to) return { status: to };
+  // Forfeiture comes only from cancelling the booking, and a forfeited round
+  // leaves it only through a recorded refund once the penalty is paid (Step 5).
+  if (from === 'forfeited') {
+    return { error: 'A forfeited round changes only when its refund is recorded, after the penalty is paid.' };
+  }
+  if (to === 'forfeited') return { error: 'A round is forfeited only by cancelling the booking.' };
+  if (!(EMD_STATUSES as readonly string[]).includes(to)) return { error: `"${to}" is not an EMD round status.` };
+  if (from === 'refund_requested' && to === 'issued') {
+    return { error: 'A round whose refund has been requested cannot go back to issued.' };
+  }
+  if (to === 'refund_requested') {
+    return { error: 'Use Request refund on the round, or on the To be refunded list, to request its refund.' };
+  }
+  return { status: to };
 }

@@ -18,9 +18,12 @@ export interface StopFormValues {
   flightCode: string;
   arrivalTime: string;
   departureTime: string;
+  /** Blank = the same day as the moment before it on the flight. */
+  arrivalDate: string;
+  departureDate: string;
 }
 
-export const EMPTY_STOP: StopFormValues = { city: '', flightCode: '', arrivalTime: '', departureTime: '' };
+export const EMPTY_STOP: StopFormValues = { city: '', flightCode: '', arrivalTime: '', departureTime: '', arrivalDate: '', departureDate: '' };
 
 export interface PnrFormValues {
   id?: string;
@@ -34,6 +37,8 @@ export interface PnrFormValues {
   airlineId: string;
   seats: string;
   pnrTlDate: string;
+  /** Entered on a new booking only; afterwards it is edited under Ticketing. */
+  ticketIssuanceDeadline: string;
   status: string;
   /** 'one_way' | 'round_trip' — see src/lib/flight-details.ts */
   tripType: string;
@@ -43,6 +48,8 @@ export interface PnrFormValues {
   outboundArrivalCity: string;
   outboundDepartureTime: string;
   outboundArrivalTime: string;
+  /** The day it lands; blank = the same day as the moment before it. */
+  outboundArrivalDate: string;
   outboundFlightCode: string;
   /** Bags per passenger, and the kg limit per bag. */
   outboundBaggagePieces: string;
@@ -54,6 +61,7 @@ export interface PnrFormValues {
   inboundArrivalCity: string;
   inboundDepartureTime: string;
   inboundArrivalTime: string;
+  inboundArrivalDate: string;
   inboundFlightCode: string;
   inboundBaggagePieces: string;
   inboundBaggageKg: string;
@@ -76,6 +84,7 @@ export const EMPTY_PNR: PnrFormValues = {
   airlineId: '',
   seats: '',
   pnrTlDate: '',
+  ticketIssuanceDeadline: '',
   status: 'active',
   tripType: 'round_trip',
   outboundDate: '',
@@ -83,6 +92,7 @@ export const EMPTY_PNR: PnrFormValues = {
   outboundArrivalCity: '',
   outboundDepartureTime: '',
   outboundArrivalTime: '',
+  outboundArrivalDate: '',
   outboundFlightCode: '',
   outboundBaggagePieces: '',
   outboundBaggageKg: '',
@@ -92,6 +102,7 @@ export const EMPTY_PNR: PnrFormValues = {
   inboundArrivalCity: '',
   inboundDepartureTime: '',
   inboundArrivalTime: '',
+  inboundArrivalDate: '',
   inboundFlightCode: '',
   inboundBaggagePieces: '',
   inboundBaggageKg: '',

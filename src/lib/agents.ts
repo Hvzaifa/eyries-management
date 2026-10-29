@@ -33,6 +33,10 @@ export interface AgentInput {
   b2bCode: string | null;
   contactEmails: string[];
   contactPhone: string | null;
+  /** Registration details (owner, 2026-10-19). All optional. */
+  dtsCode: string | null;
+  address: string | null;
+  iataNumber: string | null;
 }
 
 /**
@@ -69,6 +73,15 @@ export function validateAgent(input: AgentInput): { error: string } | null {
 
   if (input.b2bCode !== null && input.b2bCode.trim().length > 50) {
     return { error: 'B2B code is too long (50 characters maximum).' };
+  }
+  if (input.dtsCode !== null && input.dtsCode.trim().length > 50) {
+    return { error: 'DTS code is too long (50 characters maximum).' };
+  }
+  if (input.iataNumber !== null && input.iataNumber.trim().length > 50) {
+    return { error: 'IATA number is too long (50 characters maximum).' };
+  }
+  if (input.address !== null && input.address.trim().length > 500) {
+    return { error: 'Address is too long (500 characters maximum).' };
   }
 
   for (const email of input.contactEmails) {

@@ -107,6 +107,17 @@ export function validateRelease(assignmentSeats: number, requested: number): str
 }
 
 /**
+ * Seats an agent has paid for stay with that agent (owner, 2026-10-23): once
+ * any payment is recorded against an agent's seats on a booking, none of them
+ * can be taken back or moved to another agent. Removing a payment recorded by
+ * mistake (Head Office) frees them again. Null when nothing is paid.
+ */
+export function paidSeatsLock(agentName: string, paymentCount: number): string | null {
+  if (paymentCount <= 0) return null;
+  return `${agentName} has paid on these seats, so they cannot be taken back or moved.`;
+}
+
+/**
  * May this many seats move from one agent to another?
  *
  * A move is a release and an assign in one step, so it needs no unassigned seats

@@ -8,6 +8,7 @@ import { issueEmdRounds } from '../actions/bulk-emd';
 import type { BulkEmdCandidate } from '@/lib/bulk-emd';
 import { emdAmountFor } from '@/lib/emd';
 import { formatEmdNumberInput, formatPkr } from '@/lib/format';
+import { lookupOptionText } from '@/lib/lookups';
 
 const inputCls =
   'w-full bg-stone-50 border border-stone-300 rounded-lg px-2.5 py-1.5 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-brand-light/50 focus:border-brand-light transition-colors';
@@ -40,7 +41,7 @@ export default function BulkEmdForm({
   max,
 }: {
   candidates: BulkEmdCandidate[];
-  licenses: { id: string; name: string }[];
+  licenses: { id: string; name: string; code: string | null }[];
   today: string;
   max: number;
 }) {
@@ -258,7 +259,7 @@ export default function BulkEmdForm({
                       <option value="">{c.licenseName ?? '— booking’s license —'}</option>
                       {licenses.map((l) => (
                         <option key={l.id} value={l.id}>
-                          {l.name}
+                          {lookupOptionText(l)}
                         </option>
                       ))}
                     </select>

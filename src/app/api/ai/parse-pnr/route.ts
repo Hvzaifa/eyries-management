@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { parseAirlineMessage, AiConfigError, AiBusyError } from '@/lib/ai/parse-booking';
 import { parseExcelFile, ExcelMappingError } from '@/lib/ai/parse-excel';
 import { createRateLimiter } from '@/lib/rate-limit';
+import { getKnownLookups } from '@/lib/pnrs';
 
 /**
  * The AI chain's own budget is 55 s (`callAi`); without this the platform
@@ -71,7 +72,8 @@ export async function POST(request: Request) {
       const buffer = Buffer.from(body.excelBase64, 'base64');
       const { drafts, notice } = await parseExcelFile(
         buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer,
-        body.excelFileName || 'upload.xlsx'
+        body.excelFileName || 'upload.xlsx',
+        await getKnownLookups()
       );
       return NextResponse.json({ ok: true, drafts, notice });
     }

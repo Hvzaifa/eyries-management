@@ -1360,7 +1360,7 @@ Result: booking page data **3,740 ms → 212 ms**, dashboard **2,067 ms → 117 
 
 **Deal % and Issued status removed entirely (owner instruction).** Beyond the screens (earlier entry), the columns go too: `alter table pnrs drop column if exists deal_pct / issued_status` in `db/schema.sql`, fields removed from Prisma. Nothing was lost — no booking held a deal %, and `issued_status` was a label nothing read; the five rows' values are backed up in `backups/2026-09-26-deal-issued/`. **Order matters:** the build currently deployed selects both columns on every booking query, so the drop is applied only *after* the new code is live.
 
-**Flight times optional (owner).** No departure or arrival time is required on any leg; date, both cities and the flight code remain required.
+**Flight times optional (owner).** No departure or arrival time is required on any leg; date, both cities and the flight code remain required. **Superseded 2026-10-20 (Phase 9 Step 1) for bookings entered in the app; imported bookings keep optional times.**
 
 ### 2026-09-26 — "EMDs to issue on" is Head Office only
 
@@ -2018,6 +2018,425 @@ The code was already clean: no unused files, imports, variables or parameters. T
 **Not committed** (owner, 2026-10-16: the owner commits). The importer files had uncommitted changes from the 2026-10-05 run that git couldn't restore. A copy is in `backups/retired-2026-10-16/` (gitignored) as `*.ts.bak`, an extension that no build tool reads.
 
 **Verified:** 29 test files and 648 tests pass, lint is clean, the strict unused check is clean, and `next build` compiles all 18 routes.
+
+### 2026-10-19 — Branch codes, the supplier sheet's airlines, agent registration details, B2B beside the PNR
+
+**Question:** Before Phase 9, the owner asked for four changes:
+- branches shown by their codes;
+- airlines matching `suppliers.xlsx`, plus four new ones;
+- three more fields on an agent;
+- the agent's B2B code beside the PNR.
+
+How were they done?
+**Answer (owner, 2026-10-19):**
+- **Branch codes.** The 21 branches and codes are the owner's list, recorded in `prisma/seed.ts`.
+  - New column `branches.code`. The code is shown wherever a branch is shown: the dashboard, its filter, the booking page, the refund log, `/iata`, the bulk EMD screen, the agent pages and the alert email.
+  - `name` stays the full name, because a **branch login is matched on the name** (ignoring case). Replacing names with codes would have locked the four branch logins out.
+  - The 12 existing rows were renamed to the list's spelling (e.g. `RAWALPINDI` → `Rawalpindi`) and given codes. `B2C` and `CSD` had been created under their codes and became `B2C Branch` and `Central Sales Desk`. The 9 missing branches were added.
+  - Verified after the write: all four branch logins resolve to the same rows and booking counts as before, and no booking lost its branch.
+- **Airlines.** Only the airlines already in the system were brought in line with the sheet. Names are **exactly as written**, suffix included (owner's choice): `Emirates-(EK)`, `Saudi Arabian Airlines`, `Air Lanka-(UL)`.
+  - **PIA's code changed from `PIA` to `PK`**, its IATA code (owner's choice). Its 65 bookings follow, and the AI intake, which already wrote `PK`, now matches it.
+  - Added: flynas (`XY`, "FLY NAS - (XY)"), Riyadh Air (`RX`), SalamAir (`OV`, "Salam Air-(OV)") and flyadeal (`F3`, "Flydeal").
+  - Contact emails are untouched. The seed now writes emails only when it creates a row; it used to overwrite them on every run.
+- **Typeable dropdowns.** Branch and airline on the booking form (new and edit) are now type-to-search fields (`src/components/search-select.tsx`). The suggestions match code or name, best match first.
+  - The form still posts the chosen id, so the server actions are unchanged.
+  - Typed text that matches nothing is never saved.
+- **Agent registration details.** New optional fields `dts_code`, `address` and `iata_number`, on the agent form and the agent page. They are optional because the 73 existing agents have none.
+  - Length limits: 50 characters for the codes and 500 for the address, the same treatment as the B2B code.
+- **B2B code beside the PNR.** On the dashboard's PNR column and the booking page's title, each agent holding seats contributes its code, once. Agents without a code add nothing.
+
+**How it was applied:**
+- `npm run db:apply` (additive columns, and `branch_code` added to the refund view).
+- `npm run db:seed -- --commit`, made a dry run by default for this change. Before writing, it backs up both tables (here `backups/2026-10-19T11-06-12-739Z-lookups/`). 33 changes, in one transaction.
+
+**Left as it was:** the header badge and the agent pages' wording show a branch user's full branch name ("Rawalpindi"), which is the account's own name rather than booking data.
+
+### 2026-10-20 — Licenses renamed to the supplier sheet; the portal export uploads in full; no PSF on new bookings
+
+**Question:** The owner asked for four things:
+- licenses (the sheet's "suppliers") matching `suppliers.xlsx` word for word;
+- the portal export `umrahfile.xlsx` uploading license, segment, flight codes and baggage, which came out empty;
+- PSF removed from new bookings;
+- the B2B code shown beside each agent in Seat ownership.
+
+**Answer (owner, 2026-10-20):**
+- **Licenses.** The licenses are the sheet's suppliers: the portal's export calls the column `supplier_name`. The system held no `TU-BSP`; the owner confirmed renaming `TA-BSP` and asked for `HD-BSP` to be added.
+  - **Renamed:** `TA-BSP` → `TA-ISB-BSP` (67 bookings), `TRV UET` → `TA-UET-BSP` (9), `TU PIA` → `TU-PIA (PSA)` (58) and `TIME 2 FLY` → `Time 2 Fly` (566). `TA-LHE-BSP` already matched.
+  - **Added:** `HD-BSP`.
+  - **Removed:**
+    - `TRV ADV` had no match in the sheet. Its **787 bookings moved to `TA-ISB-BSP`**, each move written to that booking's history, and then the license was deleted.
+    - `GLOBAL TRV` had no bookings and was deleted.
+  - **Kept as is:** `SIX SIGMA` (7 bookings), at the owner's instruction, although it is not in the sheet.
+  - Applied with `npm run db:seed -- --commit`, after a dry run. Before writing, it backed up the licenses and every booking's license (`backups/2026-10-19T18-13-53-745Z-lookups/`). Verified afterwards: no booking left without a license.
+- **The portal export.** The portal writes each flight across numbered sector columns: `flight_code_sector_1`, `from_sector_code_sector_1`, `luggage_sector_1`, and so on up to 4. A one-column-to-one-field map cannot place those columns, so the format was the cause.
+  - The export is now **recognised by its headers and read directly**, without the AI (`src/lib/ai/portal-export.ts`).
+  - **Flights:** the outbound flight runs from the first sector until one lands at `grp_destination_code`, and later sectors are the return. A connection becomes a stop.
+  - **Baggage:** read from text such as `1 PC 30KG - 7 KG` as 1 piece of 30 kg. What follows the dash is the hand carry, and is not recorded.
+  - **Other columns:**
+
+    | Field | Column |
+    |---|---|
+    | License | `supplier_name` |
+    | Segment | `grp_type` |
+    | Seats | `total_qty` |
+    | Fare | `base_fare_amount` |
+    | Taxes | `tax_amount` |
+
+  - **Matching:**
+    - A license is now matched ignoring spacing, punctuation and a bracketed note, so `TU -PIA` finds `TU-PIA (PSA)`. If two licenses match equally, none is chosen.
+    - Flight codes drop a dash, so `PK-731` is read as `PK731`.
+  - Checked against the owner's real file: every one of these fields fills.
+  - **Not read from the export:**
+    - `customer_name`: seats are assigned to agents on the booking page, not at entry.
+    - `airline_initial_deposit_percentage`: the EMD-1 percentage comes from the airline's policy.
+- **PSF.**
+  - **A new booking stores no PSF.** It is bought on company investment, and PSF is charged only to agents, through their charge or discount.
+  - The field is gone from the new-booking form. It still shows on the edit form, but only for a booking that already carries a PSF, and an edit never clears that stored value.
+  - The agent-terms popup is now headed **"PSF — <agent>"**. Charge and discount keep their names.
+- **B2B code** is shown beside each agent's name in the booking page's Seat ownership section.
+
+### 2026-10-20 (later) — Uploads mapped by AI for any layout; One Way replaces Employment; licenses gain codes; B2B beside an agent investor
+
+**Question:** A second export, `GRP_Inventory.xlsx`, still left airline, license, segment and branch empty. The owner said a reader fixed to one layout is useless, because layouts change, and asked for the AI to map any layout.
+
+The owner also gave new rules on where B2B codes appear.
+
+**Answer (owner, 2026-10-20):**
+
+**Uploads**
+- **The fixed reader is gone** (`portal-export.ts`, added earlier the same day).
+  - Its headers matched the new file, so it read it, and missed every field the file named differently:
+    - license: `name`, not `supplier_name`;
+    - airline: `al_name`, a full name;
+    - branch: `branch_code`.
+- **The AI maps every layout.** It is now shown each column's header, how often it is filled and three example values. It is also given what each field means, and the licenses, branches, airlines and segments the system knows.
+- **Flights per sector.** Sheets that write flights sector by sector are mapped as numbered sectors, and code builds the flights.
+  - **The return starts at a gap of two or more days between sector departures.** A same-day or next-day sector is a connection.
+  - The export's destination column was rejected for this: on ~1,300 rows it names the home city.
+  - When a sheet gives flights by sector, the sectors decide every flight field. A lone date column beside them (`grp_arrival_date`) is dropped from the map; it read 11 Jun on a booking departing 29 Jun.
+- **Checks on the AI's map.** A column mapped as flight numbers that holds only airline codes is dropped. A model did map `al_code_sector_N` ("SV") there over `flight_code_sector_N` ("SV-725").
+  - A per-sector airline field gives such columns somewhere to go. It is read, but not used.
+- **Matching.** Airline, license and branch are matched by code or name, ignoring case, spacing, punctuation and a bracketed note. So "Saudi Arabian Airlines", "SV", "TU -PIA" and "RWP" all find their row.
+- **Reading cells.**
+  - "NULL" cells count as empty.
+  - Times stored as whole numbers read as HHMM (`45` = 00:45).
+  - A date with a time of day keeps its day. Rounding had moved every afternoon timestamp to the next day.
+- **Verified** on both real files, and on a random 100-row slice of the second. Every field filled where the file has it, and the map came back the same on four runs per file.
+
+**Rulings**
+- **Request date.** When a sheet has no request date column, its **transaction date is the request date** (owner).
+- **Deposit %.** The sheet's `airline_initial_deposit_percentage` is **not used for now**. The owner's rule is that the policy wins for SV and the sheet is used for other airlines, but nothing stores the % between upload and issuing EMD-1, and the owner said sheet data will be updated later.
+- **Segments.** **One Way replaces Employment.** The 275 Employment bookings were renamed One Way, each logged, with a backup in `backups/2026-10-19T19-01-50-990Z-segment-employment/`.
+  - "Packages" is not added: a Packages row uploads with no segment.
+  - An upload saying "Employment" is not read as One Way; it is left blank for staff, rather than guessed.
+- **Licenses have a code and a full name, like branches.** They are shown by code.
+
+  | Code | Name |
+  |---|---|
+  | TA-ISB-BSP | Travel Advisor Islamabad |
+  | TA-LHE-BSP | Travel Advisor Lahore |
+  | TA-UET-BSP | Travel Advisor Quetta |
+  | TF-BSP | Time 2 Fly |
+  | HD-BSP | High Dreams Travel |
+  | TU-PIA (PSA) | TU-PIA (PSA) |
+  | SIX SIGMA | SIX SIGMA |
+
+  The last two have no full name (owner). Backup: `backups/2026-10-19T19-01-29-660Z-lookups/`.
+- **B2B codes.**
+  - **Not on the dashboard**, and not in the booking page's title.
+  - When the **investor company is an agent** (an agent of that name exists), its B2B code shows as a separate "B2B code" field beside Investor company in Booking details.
+  - On a company-investment booking, each agent holding seats shows its B2B code in Seat ownership, as before.
+
+### 2026-10-20 — Phase 9 Step 1: flight times, overnight dates and the ticket deadline
+
+**Question:** Phase 9 Step 1 (A4, A6) requires flight times, overnight arrival dates and a ticket issuance deadline on new PNRs. Several points were left open: what a later edit requires, how "overnight" is recognised, what an upload fills, and whether the deadline is checked.
+
+**Answer (owner, 2026-10-20):** The owner signed off Phase 9 by asking for Step 1 to begin.
+- **Which bookings.** These are "bookings made from UI": the booking form, AI drafts and uploads saved through it, and splits. They are held to the rules on creation **and on every edit**. A booking made in the app has a `created_by`; all 1,599 live bookings were imported and have none, so none of them is affected.
+- **Overnight.** Each flight and stop has a date box; blank means the same day as the moment before. **If a time is earlier than the time before it, the date must be entered.** Entering an equal date confirms a same-day arrival flying west.
+- **Uploads.** The sheet's arrival date is **never used**. The upload fills the next day when the arrival time is earlier than the departure time, leaves the box blank otherwise, and marks it for the reviewer to check.
+  - Why: in `GRP_Inventory.xlsx`, 1,808 of 9,207 sectors dated an overnight arrival the same day (JED 18:10 → ISB 01:10 "on 30 Jun"), and 142 more were weeks away from the flight, or before it. Only 43 carried a next-day date.
+- **The ticket issuance deadline may not be after the outbound departure date.** It is required on creation and cannot be cleared later. An edit that would move the departure before it is refused until the deadline is moved under Ticketing.
+
+**Decided while building (stated so they can be challenged):**
+- ~~A date stored on a flight or stop is null whenever it is the flight's departure date.~~ *Reversed the same day by the owner; see the follow-up below.*
+- On every booking, imported ones included: no date may be earlier than the one before it, a stop cannot be left before it is reached on the same date, and the return cannot depart before the outbound flight lands. These are impossible itineraries, not business rules.
+- A split moves the child's arrival and stop dates by the same number of days as its new departure date. Copied unchanged, they would land before the child departs.
+- An upload's map is **completed per sector.** If the AI maps `flight_code_sector_1`, the same column for sectors 2–4 is added. In one of three runs on `GRP_Inventory.xlsx` the AI mapped only sector 1, losing 9 return flights and their times, which are now required.
+- The AI text intake now also drafts the ticket issuance deadline and arrival dates, but only when the message states them.
+  - The parser reads dates loosely: a model's "+1" became 2000-12-31. A drafted arrival or stop date earlier than its flight's departure is therefore dropped.
+  - A past ticketing deadline is flagged like the other time limits.
+
+**Not covered here:** a split child does not inherit the parent's ticket deadline (`splitPnr` never copied `ticketing`). Phase 9 Step 6 sets the child's deadlines.
+
+**Follow-up (owner, 2026-10-20): "The arrival date shouldn't be empty even if it lands on the same day."**
+- **Every date is required** on a booking entered in the app: each flight's arrival date and **both dates at each stop** (owner chose both), even on the departure day. This replaces "asked only when a time is earlier than the one before".
+- **Saved as entered.** The owner: "the arrival date should be whatever the form has". Nothing is blanked for matching the departure day. Read as: on a typed booking the boxes start empty (not pre-filled), and a draft or upload's date is kept as filled.
+- **Uploads always fill it:** the departure day, or the next day (amber) when the flight lands at an earlier time than it left. Only a flight with no times in the sheet is left empty. On the 100-row sample, 180 of 191 flights are filled (135 same day, 45 next day); the 11 empty ones have no time in the file.
+- **Same date, earlier time** is still allowed (flying west), but the form now warns that after midnight it is the next day. Before, the blank box forced the date to be entered.
+
+### 2026-10-20 — Phase 9 Step 2: release replaces cancelled before EMD-1
+
+**Question:** Step 2 left two things open. What happens to the edit form's "cancelled" option once Release exists? And does a payment on seats later taken back from an agent block a release?
+
+**Answer (owner, 2026-10-20):**
+- **"Cancelled" comes off the booking form now.** The form sets only active or completed. Before EMD-1 a booking ends by Release; after it, cancellation becomes automatic in Step 5. No booking was cancelled, so nothing was lost. A booking recorded as cancelled keeps that status when saved unchanged.
+- **Any payment ever recorded on the booking blocks release**, including on seats since taken back.
+
+**Built as the phase document says:**
+- A branch can release its own bookings, Head Office any.
+- Release is refused once any EMD round exists, for Head Office too.
+- A reason is required, logged as `releaseReason` beside the status change in one transaction. Live seat assignments end with it, each logged.
+- It can't be undone.
+- "At risk — confirm with airline" is shown, never acted on.
+
+**Existing data:** the dry run found **0** cancelled bookings, so no rows needed converting. Live there are 662 active and 937 completed bookings. Only the status check constraint was widened (`npm run db:apply`).
+
+**Decided while building (stated so they can be challenged):**
+- Only an **active** booking can be released.
+- **No EMD can be issued and no seats assigned** on a released booking. Bulk issuance already refused anything not active.
+- A released booking's other fields stay editable; only its status is fixed.
+- The release runs under a row lock, so an EMD or payment recorded at the same moment can't slip past the checks.
+- **Where "at risk" shows:** the dashboard's Next Deadline column ("At risk — confirm with airline", "1st EMD was due …") replaces "Overdue since …" for a booking with no EMD. The booking page shows a red banner. It starts the day **after** the deadline.
+
+### 2026-10-23 — Paid seats can't be taken back or moved
+
+**Question:** Seats could be taken back from an agent, or moved to another agent (both Head Office only), whatever the agent had paid.
+**Answer (owner, 2026-10-23):** "If seats are paid for by the agent they can't be taken back."
+- **Any payment locks all of that agent's seats on that booking.** It doesn't matter whether they're fully paid or how many seats the money would cover.
+- **Moving them to another agent is blocked too.** Paid seats stay with the agent who paid.
+
+**Built:** `paidSeatsLock` in `inventory.ts`. Both actions count the agent's payments inside the booking row lock, so a payment recorded at the same moment counts. Seat ownership shows "Paid — kept" in place of the move and take-back buttons. Deleting a payment recorded by mistake (Head Office) frees the seats again; that was left as it is.
+
+**Effect on Step 2:** release is still refused when any agent has paid. A payment on seats since taken back can now only exist from before this rule. The live data has none: no agent payment is recorded yet.
+
+### 2026-10-23 — Bookings and agents emptied for fresh entry
+
+**Request (owner, 2026-10-23):** "Empty the database with PNR bookings. Remove every PNR record and their associated receivables… Don't remove branches, licenses and airlines and other relevant data. Remove every agent as well."
+**Answers before running:** the change history goes too, and SR numbers restart at SR#1.
+
+**Deleted, in one transaction:**
+
+| Table | Rows |
+|---|---|
+| `pnrs` | 1,599 |
+| `emd_rounds` | 3,030 |
+| `ticketing` | 1,580 |
+| `allocations` | 54 |
+| `agent_assignments` | 430 |
+| `agents` | 73 |
+| `activity_log` | 3,569 |
+| `agent_recoveries`, `flight_stops` | 0 (empty already) |
+
+The `pnrs` SR# sequence was reset, so the next booking is SR#1.
+
+**Kept:** branches (21), licenses (7), airlines (13), and every login (Supabase Auth, not touched).
+
+**Backup** of every table, lookups included, taken first and read back complete: `backups/2026-10-23T13-55-09-843Z-before-wipe/`. To restore, re-insert in foreign-key order: lookups → `agents` → `pnrs` (parents before children) → `emd_rounds` / `ticketing` / `allocations` / `flight_stops` → `agent_assignments` → `agent_recoveries` → `activity_log`.
+
+**Found:** the `backups/` folders from earlier writes (2026-10-19 lookups, licenses, segment rename) are no longer on disk. Only this backup exists in `backups/` now.
+
+**Consequence:** every booking from now on is entered in the app, so Phase 9 Step 1's rules (every time and date, a ticket deadline) apply to all of them. The 2026-10-05 import and the per-booking rulings behind it now describe history only.
+
+### 2026-10-27 — GRP_Inventory_New.xlsx imported: PK/SV Umrah and One Way, clubbed per PNR with their agents
+
+**Request (owner, 2026-10-24):** feed `GRP_Inventory_New.xlsx`, tab **Sheet2** only, into the empty database. Scope: PK and SV, Umrah and One Way; Packages left out. A PNR's rows (Company Investment and Customer Investment) become **one booking under company investment**. The agents, created from `customer_name`, hold the seats their rows show (`total_qty`). The company keeps its `offer_qty`. Discrepancies are flagged for staff, not imported. Ask rather than assume.
+
+**Owner rulings (2026-10-24 to 27):**
+- **EMD details decide the booking.** A PNR with no EMD details on any row is **flagged** (1,110 PNRs). When the EMD details are on an agent row and there is no company row, the agents are clubbed under a new company-investment booking. Its seats are the agents' seats added up.
+- **Flagged:** two or more Company Investment rows; seats that don't add up (company `total_qty` ≠ its `offer_qty` + linked agents' `total_qty`); and a PNR that also has SV Packages rows.
+- **Imported as the total:** agent rows that point to a company row not in the file. Their seats are added to the company row's (e.g. 7W9IHB: 20 KJ TRAVELS + 79 company = 99).
+- **Transferred bookings** (company row FSD, all seats with a RYK agent: 9RHBLS, 9RRJRE): "created by FSD and transferred to RYK". By ruling B4 they belong to **RYK**, and the move is in their history.
+- **Fare:** the greater fare when rows differ (20 PNRs, at most 1.08% apart). Taxes come from the same row.
+- **Request date:** the earliest transaction date of the PNR's rows. It becomes the **1st EMD's issuance date** when that is earlier (owner: "change the transaction date … to match the date when 1st EMD was issued"); this applied to 228 PNRs.
+- **Status:** a departed booking with any EMD still to be refunded stays **active**. A future refund date doesn't count as refunded (none in this file). Every imported booking still had an EMD out, so all 399 are active.
+- **Agents:** the name without the branch and code ("UP SKY UMRAH & HAJJ", B2B1853). Each belongs to the branch in its name. "CASH SALE" appears under four codes, so each became its own agent named with its branch ("CASH SALE-MUX", …).
+- **PSF:** `sale_deal` holds the PSF. An amount means sale_deal − `pnr_actual_price`; "500 PSF" is per seat; "x%" is a percentage; "$" means no PSF; "NET NET" means no PSF. On the imported agent rows `sale_deal` was blank (502) or NET NET (4), so **no agent PSF was set**. The amount and percentage readings were not needed here and are not built.
+
+**Followed from earlier rules (not asked again):** created with no `created_by`, as imported bookings. SV bookings got their ticketing deadline as outbound − 3 days. EMD rounds carry the row's license. Rounds have no issuance deadline or IATA payment date: the sheet has neither, and a passed remittance day reads as paid. Flights are built from the sectors; arrival dates are worked out from the times, never read from the sheet. Meal is from the `meal` column. Agent rows' `offer_qty` (their own unsold seats) was ignored.
+
+**Result:** of 2,995 in-scope rows in 1,543 PNRs:
+- **399 bookings** (SR#1–399, in sheet order). 294 SV Umrah and 13 SV One Way have a company row; 50 SV Umrah, 38 SV One Way and 4 PK Umrah are clubbed under a new company row.
+- **691 EMD rounds**, 395 SV ticketing deadlines, and 1 flight stop.
+- **75 agents** on **414 seat assignments**, every agent with a branch.
+- **1,144 PNRs flagged** (2,274 rows): no EMD details 1,110; two or more company rows 17; seats don't add up 13; Packages rows on the same PNR 7. Some PNRs hit more than one rule.
+
+The check sheet is `GRP_Inventory_New — Rows to Check (2026-10-27).xlsx` in the project root. Its "Rows to check" tab lists every row of every flagged PNR, with the reason first. Its "Imported with adjustments" tab lists 249 imported bookings where a fare, request date or seat total was adjusted under these rulings.
+
+**Verified:**
+- The plan, and again the database after writing, were checked against an independent openpyxl read of the sheet: **6,784 values, 0 mismatches**. The checks covered seats, unassigned seats, each agent's seats, fare, license, airline, and each round's amount, number and refund.
+- Through the app's own loaders: the dashboard lists all 399; all 399 booking pages load; the Agents page shows 75 agents with 414 lines.
+- No booking has more seats assigned than it holds.
+
+**Backup:** `backups/2026-10-27T18-11-20-137Z-before-grp-import/` holds the lookups (the database had no bookings or agents) and the full plan.
+
+### 2026-10-28 — An uploaded batch stopped after the first "Save & Next"
+
+**Report (owner):** after uploading a sheet of PNRs, "Save & Next" on one booking saved it and left the page, so the rest couldn't be reviewed or saved.
+**Cause:** the upload review used `createPnr`, the new-booking form's action, which ends by redirecting to the saved booking. The redirect fired before the review could move to the next draft.
+**Fix:**
+- `createPnr` and the new `createPnrAndContinue` share one save, `saveNewPnr`. The new-booking form still opens the booking it saved. The upload review stays on the page and moves to the next **unsaved** draft, wrapping round to any that were skipped.
+- A saved draft shows "Saved as … / Open booking" instead of the form, so it can't be saved twice.
+- When every draft is saved, a panel says so, with a link to the dashboard (and to the booking when there was only one).
+
+### 2026-10-28 — Phase 9 Step 3: refund requested and the new "To be refunded"
+
+**Question:** Step 3 (A1, A6) left four things open. What happens to a paid EMD on a booking with no ticket issuance deadline? Does "all tickets confirmed issued" apply before Step 4? Which rounds can be marked refund requested, and from where? Where does a requested round show before Head Office records the refund?
+
+**Answer (owner, 2026-10-28):**
+- **No ticket deadline:** "If they are past the outbound date then move to 'to be refunded' else leave them in dashboard as flagged." Read as: due once the outbound date is earlier than today, the same way a passed ticket deadline is read. Live: 4 bookings have no deadline (all PK, imported). 3 are past their outbound date and list 4 rounds. 9GH3LY departs today and is flagged.
+- **All tickets issued:** use the count typed under Ticketing now (tickets issued ≥ seats). Step 4 changes how it is entered. No booking qualifies today.
+- **Which rounds:** only rounds on "To be refunded", marked from that list (several bookings at once) or from the round on the booking page.
+- **Requested rounds** stay on "To be refunded", labelled "Requested", with a filter (All / To request / Requested). Head Office records the refund from there as before.
+
+**Built as the phase document says:**
+- `emd_rounds.status` gains `refund_requested` (check constraint widened live; no rows changed). A branch marks its own bookings' rounds, Head Office any. It never goes back to `issued`.
+- Head Office records the refund (single and bulk) from `issued` or `refund_requested`.
+- A requested round is no longer held: it leaves EMD Issued and the agents' EMD shares. Tested on QFC 10 of 30: 1,000,000 required → 850,000 once round 1 (450,000) is requested, the same as once it is refunded.
+- "To be refunded" lists paid rounds whose refund is due. Until then the booking stays on the dashboard.
+
+**Decided while building (stated so they can be challenged):**
+- **The schema's healing step mapped `refund_requested` to `issued`** (left from 2026-09-21). Every `npm run db:apply` would have turned requested rounds back into issued ones. It now maps only `paid` and `expired`.
+- **A requested round stays listed until refunded**, even if the ticket deadline is later moved forward or the payment date cleared. Otherwise a requested refund could end up on no list at all.
+- **The Edit round form** cannot set `refund_requested` (requesting has its own checks and is open to branches), and a requested round's form offers only "Refund requested" or "Refunded". Moving `refunded` back to `issued` there is unchanged.
+- **For IATA a request changes nothing:** it is not a refund, so it neither rolls a bill nor settles a payment. Only a recorded refund date does.
+- **The agent page's "next EMD to collect"** counts requested rounds as issued. Otherwise requesting round 1's refund would bring "Round 1 to collect" back. Refunded rounds still don't count (rounds 3–4 re-issue refunded 1–2).
+- Requesting is **all-or-nothing** per batch and changes a round only while it is still `issued`. A round refunded or requested by someone else at the same moment fails the batch.
+- `validateRefund` now refuses any status other than `issued` or `refund_requested`. The database had allowed nothing else since 2026-09-21, but the check let `paid` and `expired` through.
+
+**Live, 2026-10-28:**
+- "To be refunded" went from 436 paid rounds to **83 rounds on 55 bookings** (79 past their ticket deadline, plus 4 on no-deadline bookings past outbound). The latest ticket deadline listed is 27 Oct.
+- **165 bookings return to the dashboard** because a paid EMD is waiting on its ticket deadline. The dashboard lists 488 of 529.
+- No booking is both waiting and listed.
+
+### 2026-10-28 — Phase 9 Step 4: ticket tracking and unissued seats
+
+**Question:** Step 4 (A8–A10) left open who edits ticketing and penalties, when a penalty may be entered, how a penalty sits in the agent's money, whose seats a penalty is for, and what happens to the counts when the seats change.
+
+**Answer (owner, 2026-10-28):**
+- **Ticketing form:** a branch gets **the whole form** (deadlines, status, ticket count) on its own bookings, **at any time** — the booking's EMD-1 edit lock does not apply. Head Office on any booking.
+- **Penalties:** Head Office, and a branch on its own bookings.
+- **When:** once the **outbound date has passed AND a penalty is called for** (SV beyond its 10%, any unissued seat on another airline). A 30-seat SV booking with 3 unissued never gets penalty fields.
+- **Agent money:** the penalty is **added to the total and outstanding, not to margin**. It falls under the balance's existing due date, so it reads as overdue until paid.
+- **Whose seats:** **amounts only** — one per agent and one for the company, each with its penalty EMD's license. No per-holder unissued count (no new field).
+- **Seats changed later:** **tickets issued stays fixed**; the remainder is recalculated (what `updatePnr` already did).
+
+**Built as the phase document says:** "All tickets issued?" Yes / No + remaining; `balance_tickets` typed, `tickets_issued` = seats − remaining; blank never zero; Yes sends the paid EMDs to "To be refunded" at once (through Step 3's `refundTiming`, which reads tickets issued ≥ seats). SV allowance `floor(seats / 10)` in integer arithmetic. "Considered cancelled" is gone; partial ticketing never cancels. Fields `agent_assignments.penalty_amount`, `ticketing.company_penalty_amount` and a `penalty_license_id` beside each, with database checks that an amount has its license and is not negative. Applied live; no rows changed.
+
+**Decided while building (stated so they can be challenged):**
+- **When ticketing "closes"** for the unissued report: the day after the ticket issuance deadline, as the spec says. A booking with **no deadline** closes the day after its **outbound date**, the same reading the owner gave for such bookings in Step 3.
+- **"No" with 0 remaining is refused** ("answer Yes"), rather than silently read as Yes.
+- **Zero is accepted as a penalty** (a waived penalty is a fact), as zero refunds are. Blank means none and clears the license.
+- **The company field** appears only while the company holds seats (or already has a penalty); setting one when every seat is an agent's is refused, clearing it is always allowed.
+- **Penalties already entered stay** if the ticket count is later changed so that none is called for; they are shown and editable only while entry is open.
+- **Every penalty change is logged** per assignment (`penaltyAmount`, `penaltyLicense` by code) and on the ticketing row (`companyPenaltyAmount`, `penaltyLicense`).
+
+**Live, 2026-10-28:** none of the 525 ticketing rows has a count yet, so nothing is reported as unissued until staff answer. 52 bookings (all SV, all with agents) are past their ticket deadline and are the first that can be answered. 778/778 tests, tsc, lint and build clean.
+
+### 2026-10-28 — Phase 9 Step 5: cancellation flagged, not automatic; forfeiture and paybacks
+
+**Instruction (owner, 2026-10-28):** "The daily job shouldn't cancel PNRs automatically if EMD-2 hasn't been issued before deadline or tickets haven't been issued before deadline. These kinds of PNRs should be flagged and staff should manually select whether these PNRs are cancelled or not, and then the rest of the process follows." **This reverses the 2026-10-14 automatic cancellation** and its "no manual cancellation"; the triggers, forfeiture, penalty paid and paybacks stand.
+
+**Answers (owner, 2026-10-28):**
+- **Who cancels:** as release — a branch on its own bookings, Head Office on any.
+- **Reason required; can't be undone.**
+- **Which bookings:** only bookings **created from 29 Oct 2026** (Pakistan time). Today's 130 KHI bookings and the 399 imported ones are never flagged.
+- **Kept active:** the flag stays until its cause goes away; no dismiss button, no new field.
+- **Agent paid less than the penalty:** owes the difference.
+- **Penalty paid and paybacks:** Head Office only.
+- **To be refunded after penalty paid:** only forfeited rounds paid to IATA.
+- **Penalties on a cancelled booking:** the Step 4 dialog and fields, from cancellation, Head Office or a branch on its own.
+- **Forfeited:** "the whole PNR is forfeited" — every held round (issued or refund requested).
+- **Rolled rounds:** "Those rounds rolled to next for IATA shouldn't be considered as separate… if round 1 was 15% and refunded to be rolled… and round 2 was issued with the same percentage, they should be considered as one but shown differently in the system." So the flags count a rolled round and its re-issue as one EMD; the rolled round keeps its refund as a record and its re-issue is forfeited. Asked whether the dashboard's count should change too: "The system should still show all the EMDs issued" — it doesn't.
+- **100% EMD-1:** the ticketing trigger applies.
+- **Agents pages:** cancelled bookings now show there (reversing 2026-10-05), with their new figures.
+- **Flags shown:** dashboard and booking page; the daily email is unchanged.
+- **Paybacks capped** at what is owed back; part paybacks allowed.
+
+**Decided while building (stated so they can be challenged):**
+- **The cut-off is the booking's `created_at` day in Pakistan time**, compared with `2026-10-29` (`CANCELLATION_FLAGS_FROM`).
+- **A rolled round** is one `iataPaymentState` calls `rolled` (refunded on or before its billing-to date). A refund after the window is a real refund and still counts as an issued EMD. When the re-issued EMD-1 has no deadline, the rolled round's deadline at the same percentage is used.
+- **Nothing is paid back while an agent's penalty is blank**; enter 0 for none. Blank is never zero.
+- **On a cancelled booking** no seat can be assigned, moved, taken back or re-priced (the agents' money is then penalty and payback). Payments from agents can still be recorded, since an agent may owe the rest of a penalty.
+- **The penalty-paid switch can go back to No** until a forfeited round has been refunded.
+- **Forfeited rounds** stay owed to IATA on the calendar like any round (forfeiting is not a refund), cannot be requested, and change in the Edit round form only through a recorded refund. They are listed under their own "Forfeited" filter on "To be refunded".
+- **A cancelled booking's agent owes no date**, so it never reaches the daily alert; margin is 0.
+- **The edit form can no longer move a booking out of `cancelled`** (it could before).
+- No delete for a payback recorded by mistake (not specified); ask if wanted.
+
+**Live, 2026-10-28:** schema applied (`emd_rounds` check widened to include `forfeited`; `pnrs.penalty_paid`; new `agent_paybacks` with row level security). No rows changed. **0 of 529 bookings are flagged**, the dry run the phase document asked for. 813/813 tests, tsc, lint and build clean.
+
+### 2026-10-29 — Phase 9 Step 6: splits live inside the booking
+
+**Instruction (owner, 2026-10-29):** "The split should show the PNR inside the parent PNR, like it currently shows when we assign certain seats to agents. Splitting should not create a new entry in the dashboard. A new PNR number is not a required/mandatory field for splitting." **This reverses 2026-09-01** (a child booking with its own airline-issued code, the parent's seats reduced, rounds recalculated) and the phase document's child-booking design (child edit-locked, its own next EMD, deadlines copied to it). The A3/D1 rules on SV-only, branches splitting, one holder per split and collective agent money stand.
+
+**Answers (owner, 2026-10-29):**
+- **Seat count:** the booking keeps its total (30 with 15 split), shown inside like agents.
+- **What differs:** dates only — seats, optional code, outbound and inbound dates.
+- **EMDs:** one set for all seats; no rounds on the split.
+- **Ticketing:** the split has its own ticket deadline and "All tickets issued?" count; the booking's own count covers the seats not in a split.
+- **Refund timing:** the booking's paid EMDs wait for every part (latest deadline, or all parts all-issued).
+- **Unissued seats, penalties, cancellation flag:** whole booking.
+- **Agents:** one holder per split; the split records whose seats.
+- **Edits:** dates and code editable; removable until a ticket count is recorded on it. Split seats can't be taken back or moved until then.
+- **Code:** unique across bookings and splits.
+- **Old fields** (`pnrs.parent_pnr_id`, `allocations`, both empty): left in place, unused, marked superseded.
+- **Dashboard:** a note under the PNR; search finds a split's code.
+
+**Decided while building (stated so they can be challenged):**
+- **Who splits:** Head Office on any SV booking, a branch on its own (A3), as the phase document said. Edits and removal follow the same rule.
+- **A split identical to its booking** (same dates, no code) is refused.
+- **The split's ticket deadline is required** and not after its outbound, matching Step 1's rule for new bookings.
+- **The ticket answer is on the split's Edit** (not on creation, when nothing can have been ticketed).
+- **Seats and holder are fixed** once a split is made; remove it and split again to change them.
+- **The company's seats in a split** can't be assigned to an agent until it is removed; the booking's seats can't be reduced below seats in splits (plus agents' seats, plus tickets issued on its own part).
+- **Penalties open once every part has departed** (the latest outbound date), extending Step 4's "after the outbound date".
+- **Booking codes** are now also refused when a split already uses them.
+- **Removed as dead code:** `splitPnr`, the old split button and child/parent panels, `canSplitPnr` (Head Office only), and `src/lib/seats.ts` with its tests.
+
+**Mistake while building, corrected:** removing `splitPnr` also deleted `releasePnr`, which sat just before it. It was restored word for word from the Step 2 edit in the session log, and the restored file typechecks with every caller. A stray `git rm --cached` on the old button was undone at once; nothing is staged.
+
+**Live, 2026-10-29:** `pnr_splits` created with row level security; no rows changed (0 splits, 529 bookings). Checked in rolled-back writes: zero seats, a return before the outbound, a remaining count above the seats and a repeated code are all refused. 830/830 tests, tsc, lint and build clean.
+
+### 2026-10-29 — Agents' recoveries from the Branch-Wise Client Ageing Report
+
+**Request (owner):** from `Branch_Wise_Client_Ageing_Report - 2026-10-20T100137.128.xlsx`, take the **Group Seats** and **Group Sales** rows, match the clients in the system, and set recovered = receivable − the client's balance, spread over their bookings. Then: "add the inconsistent ones as well, as there are many PNRs that have not yet been added in the system… you have to show balance left for each agent in the system."
+
+**Answers (owner, 2026-10-29):**
+- Clients are matched by **B2B code** (the sheet's `Id`): 72 of the system's 75 agents are in it.
+- A client's **Group Sales and Group Seats rows are netted**; the **size** of the net is what the client **still owes** (UP SKY: +5,097,977.53 and −47,771,198 → owes 42,673,220.47; receivable 158,098,860 → recovered 115,425,639.53). Sign ignored, positive nets included (QAZI owes 845,064.91).
+- **Net 0: record nothing.**
+- Spread **earliest outbound first**, each booking filled to what it owes.
+- Payments dated **29 Oct 2026**, method **"Ageing report"**, no reference.
+- **Balance above every booking in the system** (bookings not yet entered): the system's bookings are **fully recovered** and the **excess is the balance shown**. As the missing bookings are added, they **come out of the excess**, so the balance stays the same (QFC: 47,277,518.70 stays 47,277,518.70 when a 10,000,000 booking is added). Agents with **no bookings** get their whole sheet balance as the excess.
+
+**Written (backups in `backups/2026-10-29T09-39-31-641Z-before-ageing-recoveries-commit/` and `…T10-01-44-649Z-before-ageing-excess/`):**
+- **48 agents**: 289 payments, PKR 880,367,359.99. Their balance left now equals the sheet exactly.
+- **6 agents** with too few bookings in the system (QFC GROUP (PVT) LTD, SIDDIQUE IBRAHIM, MAQBOOL TRAVELS, RAHIMIA TRAVEL GROUP, Royal Abid Travels WZR, AMEER WARRAICH): 9 payments, PKR 21,868,980 (their bookings fully recovered), and the excess stored.
+- **13 agents with no bookings**: their sheet balance stored as the excess.
+- Total excess stored: PKR 87,986,528.93. Each payment and each stored excess is in the change history (null user, as imports are).
+- New fields `agents.unbooked_balance` and `agents.unbooked_baseline` (approved in the answer), applied live.
+
+**Read this way, so it can be challenged:** for the 6 the balance shown is the **excess** (owed − system receivable), as the owner chose, not the sheet's full figure: QFC shows 47,277,518.70 against the sheet's 53,051,518.70.
+
+**Not touched:** 3 agents with bookings whose sheet net is 0 still show their full receivable as balance (22 OCT GROUP 5,197,950; Al Qari Tours 2,079,000; ANSAR-E-MADINA 29,288,630). 2 agents with no bookings and net 0. 3 agents not in the sheet's group rows (DIYAR E HABIB, TRAVEL CHRONICLES, WAQAS AIR SERVICES).
+
+**Side effect:** a payment on an agent's seats locks them (no take-back, no move, 2026-10-23) and stops the booking being released (Step 2). That now applies to every booking that received one.
+
+### 2026-10-29 — Folder cleanup: temporary data and caches removed
+
+**Request (owner):** "Clean up the folder structure. Remove any file that is unnecessary, not needed in production, used just for temporary data feeding, or anything else temporary."
+
+**Checked first:** the code itself had nothing to remove — the TypeScript compiler finds no unused variable or parameter, and every file under `src/` is imported by something (the 2026-10-16 cleanup and Step 6's removals had already cleared dead code). `scripts/ai-check.ts`, `scripts/deadline-check.ts`, `db/apply-schema.ts` and `prisma/seed.ts` are all run by `package.json` scripts and stay.
+
+**Deleted (owner's choice on each, asked):**
+- **`backups/`** — all five snapshots (23 Oct wipe, 27 Oct GRP import, three from today's ageing import). **Not recoverable**: the backup paths named in earlier entries no longer exist, and today's ageing payments can now only be undone by hand (each one is in `activity_log` with method "Ageing report").
+- The source sheet `Branch_Wise_Client_Ageing_Report - 2026-10-20T100137.128.xlsx` and its Excel lock file, and the two review sheets made from it ("Recoveries Recorded", "Left Out, to Check").
+- Build caches `.next/` (477 MB) and `tsconfig.tsbuildinfo`, and `.DS_Store` files. They rebuild on the next dev start or build.
+
+**Kept:** everything tracked, `.env` (secrets, needed to run), `node_modules`, `next-env.d.ts` (Next.js regenerates and needs it). `.gitignore` still ignores `backups/` and `*.xlsx` for future use.
+
+**Left to the owner:** Claude's own temporary working folders under `/private/tmp/claude-502/` hold copies of the sheet data and payment plans; a safety check blocked deleting them in bulk.
 
 ## Template for new entries
 

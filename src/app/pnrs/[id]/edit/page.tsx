@@ -5,6 +5,7 @@ import { getPnrDetail, getPnrFormOptions, type DetailStop } from '@/lib/pnrs';
 import PnrForm from '@/components/pnr-form';
 import type { PnrFormValues } from '@/lib/pnr-form-values';
 import { citiesFromSector, isTripType } from '@/lib/flight-details';
+import { enteredInApp } from '@/lib/booking-entry';
 import AppHeader from '@/components/app-header';
 import { updatePnr } from '../../actions/pnr';
 
@@ -13,6 +14,8 @@ const stopToForm = (s: DetailStop) => ({
   flightCode: s.flightCode ?? '',
   arrivalTime: s.arrivalTime ?? '',
   departureTime: s.departureTime ?? '',
+  arrivalDate: s.arrivalDate ?? '',
+  departureDate: s.departureDate ?? '',
 });
 
 export default async function EditPnrPage({
@@ -45,6 +48,8 @@ export default async function EditPnrPage({
     airlineId: detail.airlineId ?? '',
     seats: String(detail.seats),
     pnrTlDate: detail.pnrTlDate ?? '',
+    // Edited under Ticketing on the booking page, not on this form.
+    ticketIssuanceDeadline: detail.ticketing?.ticketIssuanceDeadline ?? '',
     status: detail.status,
     // A booking saved before flight details existed has no trip type or cities.
     // Its trip type follows from whether it has a return date, and its cities
@@ -56,6 +61,7 @@ export default async function EditPnrPage({
     outboundArrivalCity: detail.outboundArrivalCity ?? fromSector?.outboundArrivalCity ?? '',
     outboundDepartureTime: detail.outboundDepartureTime ?? '',
     outboundArrivalTime: detail.outboundArrivalTime ?? '',
+    outboundArrivalDate: detail.outboundArrivalDate ?? '',
     outboundFlightCode: detail.outboundFlightCode ?? '',
     outboundBaggagePieces: detail.outboundBaggagePieces?.toString() ?? '',
     outboundBaggageKg: detail.outboundBaggageKg?.toString() ?? '',
@@ -64,6 +70,7 @@ export default async function EditPnrPage({
     inboundArrivalCity: detail.inboundArrivalCity ?? fromSector?.inboundArrivalCity ?? '',
     inboundDepartureTime: detail.inboundDepartureTime ?? '',
     inboundArrivalTime: detail.inboundArrivalTime ?? '',
+    inboundArrivalDate: detail.inboundArrivalDate ?? '',
     inboundFlightCode: detail.inboundFlightCode ?? '',
     inboundBaggagePieces: detail.inboundBaggagePieces?.toString() ?? '',
     inboundBaggageKg: detail.inboundBaggageKg?.toString() ?? '',
@@ -99,7 +106,13 @@ export default async function EditPnrPage({
           </p>
         </div>
 
-        <PnrForm mode="edit" options={filteredOptions} initial={initial} action={updatePnr} />
+        <PnrForm
+          mode="edit"
+          options={filteredOptions}
+          initial={initial}
+          action={updatePnr}
+          requireTimes={enteredInApp(detail)}
+        />
       </main>
     </div>
   );

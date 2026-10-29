@@ -11,20 +11,30 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/prisma';
-import { isHeadOffice } from '@/lib/auth';
-import { balanceTicketsFor, svTicketIssuanceDeadline } from '@/lib/ticketing';
-import { unallocatedSeats, validateSplit } from '@/lib/seats';
-import { liveAgentSeats, seatLedger, validateSeatsChange } from '@/lib/inventory';
+import { canEditPnr, isHeadOffice } from '@/lib/auth';
+import { formStatusChange, releaseBlocker } from '@/lib/release';
+import { balanceTicketsFor, ticketDeadlineError } from '@/lib/ticketing';
+import { liveAgentSeats, validateSeatsChange } from '@/lib/inventory';
 import {
   COMPANY_INVESTMENT,
+  enteredInApp,
   normalizeSegment,
   pnrCodeKey,
   validatePnrCode,
   validateSegment,
 } from '@/lib/booking-entry';
 import { str, dateVal, numVal } from '@/lib/form';
-import { FLIGHT_TIME_COLUMNS, describeStops, flightColumns, flightStopRows, readFlightDetails, timeFromDb } from '@/lib/flight-details';
-import { requireUser, requireHeadOffice, requirePnrEditor, TX_TIMEOUT_MS } from '@/lib/server/guards';
+import { splitSeats } from '@/lib/splits';
+import {
+  FLIGHT_TIME_COLUMNS,
+  dateFromDb,
+  describeStops,
+  flightColumns,
+  flightStopRows,
+  readFlightDetails,
+  timeFromDb,
+} from '@/lib/flight-details';
+import { requireUser, requirePnrEditor, TX_TIMEOUT_MS } from '@/lib/server/guards';
 
 /**
  * Finds a booking with this PNR code, ignoring case and spacing.
@@ -46,7 +56,41 @@ async function findPnrByCode(code: string, exceptId?: string) {
   return candidates.find((c) => c.id !== exceptId && pnrCodeKey(c.pnr) === key) ?? null;
 }
 
+/**
+ * A code already used by a split inside another booking (Phase 9 Step 6;
+ * owner, 2026-10-29: split codes are unique across bookings and splits). A
+ * booking's own split may not reuse the booking's code either.
+ */
+async function findSplitByCode(code: string, exceptPnrId?: string): Promise<string | null> {
+  const split = await prisma.pnrSplit.findFirst({
+    where: { pnrCode: pnrCodeKey(code) },
+    select: { pnrId: true, pnr: { select: { pnr: true } } },
+  });
+  if (!split) return null;
+  return split.pnrId === exceptPnrId
+    ? `PNR ${pnrCodeKey(code)} is a split of this booking; a booking cannot take its own split's code.`
+    : `PNR ${pnrCodeKey(code)} is already a split of ${split.pnr.pnr}. A booking cannot be entered twice.`;
+}
+
+/** The new-booking form: saves, then opens the booking. */
 export async function createPnr(formData: FormData) {
+  const saved = await saveNewPnr(formData);
+  if ('error' in saved) return saved;
+  // redirect() throws internally, so it must stay OUTSIDE the transaction —
+  // inside, it would abort and roll back the booking that was just created.
+  redirect(`/pnrs/${saved.id}`);
+}
+
+/**
+ * The upload review (AI text, screenshot or spreadsheet): saves and stays, so
+ * staff go on to the next draft. Using `createPnr` there redirected after the
+ * first save and lost the rest of the batch (owner report, 2026-10-28).
+ */
+export async function createPnrAndContinue(formData: FormData): Promise<{ error: string } | { id: string; pnr: string }> {
+  return saveNewPnr(formData);
+}
+
+async function saveNewPnr(formData: FormData): Promise<{ error: string } | { id: string; pnr: string }> {
   const user = await requireUser();
 
   // ---------------------------------------------------------------------
@@ -79,6 +123,8 @@ export async function createPnr(formData: FormData) {
   // not (owner ruling, 2026-09-20). Case- and space-insensitive, because an
   // airline reference is a code, not a phrase.
   const duplicate = await findPnrByCode(pnrCode);
+  const splitDuplicate = await findSplitByCode(pnrCode);
+  if (splitDuplicate) return { error: splitDuplicate };
   if (duplicate) {
     return {
       error: `PNR ${duplicate.pnr} already exists (SR#${duplicate.srNo}). A booking cannot be entered twice.`,
@@ -90,11 +136,18 @@ export async function createPnr(formData: FormData) {
   if (segmentError) return { error: segmentError.error };
   const segment = normalizeSegment(segmentInput);
 
-  // Trip type and flights (owner request, 2026-09-26). The outbound departure
-  // date is `outbound_date`, which the EMD policy below reads.
-  const flights = readFlightDetails((key) => str(formData, key));
+  // Trip type and flights (owner request, 2026-09-26). A new booking needs
+  // every flight time, stops included, and the date of an overnight flight
+  // (Phase 9 Step 1, A4).
+  const flights = readFlightDetails((key) => str(formData, key), { requireTimes: true });
   if ('error' in flights) return { error: flights.error };
   const flight = flightColumns(flights.details);
+
+  // And a ticket issuance deadline, no later than departure (A6; owner,
+  // 2026-10-20). The form pre-fills SV's policy date; staff may change it.
+  const ticketIssuanceDeadline = str(formData, 'ticket_issuance_deadline');
+  const ticketError = ticketDeadlineError(ticketIssuanceDeadline, flights.details.outbound.date);
+  if (ticketError) return { error: ticketError };
 
   // Branch users: force branchId to their own branch. An unresolved branch must
   // block creation — writing an unscoped PNR would leave a record no branch user
@@ -118,28 +171,16 @@ export async function createPnr(formData: FormData) {
     };
   }
 
-  // ---------------------------------------------------------------------
-  // 2. Read-only lookups for the auto EMD-2 policy (outside the transaction).
-  // ---------------------------------------------------------------------
-  const outboundDate = flight.outboundDate;
+  // Active or completed only: released needs the Release action and a reason,
+  // and cancelled is no longer set by hand (owner, 2026-10-20).
+  const statusChange = formStatusChange(null, str(formData, 'status'));
+  if ('error' in statusChange) return { error: statusChange.error };
+
   const airlineId = str(formData, 'airline_id');
-  let airlineCode: string | null = null;
-  if (airlineId) {
-    const airline = await prisma.airline.findUnique({ where: { id: airlineId } });
-    if (airline) airlineCode = airline.code;
-  }
-
-  // SV's ticket-issuance policy date (null for every other airline, and whenever
-  // the outbound date is unknown).
-  const svIssuanceDeadline = svTicketIssuanceDeadline(
-    airlineCode,
-    outboundDate ? outboundDate.toISOString().slice(0, 10) : null
-  );
-
   const createdBy = user.id;
 
   // ---------------------------------------------------------------------
-  // 3. ONE transaction: the booking, its rounds and every log entry commit
+  // 2. ONE transaction: the booking, its rounds and every log entry commit
   //    together, or nothing does.
   // ---------------------------------------------------------------------
   const created = await prisma.$transaction(async (tx) => {
@@ -161,9 +202,12 @@ export async function createPnr(formData: FormData) {
         // on to the next outstanding round as rounds are issued.
         pnrTlDate: firstEmdDeadline,
         airlineTaxes: numVal(formData, 'airline_taxes'),
-        psf: numVal(formData, 'psf'),
+        // No PSF on a new booking: it is bought on company investment, and PSF
+        // is charged only to agents, through their charge or discount (owner,
+        // 2026-10-20).
+        psf: null,
         fare,
-        status: str(formData, 'status') ?? 'active',
+        status: statusChange.status,
         rawAirlineText: str(formData, 'raw_airline_text'),
         createdBy,
       },
@@ -191,37 +235,32 @@ export async function createPnr(formData: FormData) {
     // side effect of the form. What the booking carries is the DEADLINE by which
     // the first EMD must be issued — `pnr_tl_date`, set above.
 
-    // Saudia issues tickets no later than 72 hours before departure (owner
-    // ruling, 2026-09-17), so a new SV booking starts with that deadline already
-    // recorded — editable like every other policy default. Without writing it
-    // here the daily alert could never warn about a booking nobody had opened.
-    // Other airlines have no stored policy; staff enter the date themselves.
-    if (svIssuanceDeadline) {
-      await tx.ticketing.create({
-        data: {
-          pnrId: pnr.id,
-          ticketIssuanceDeadline: new Date(`${svIssuanceDeadline}T00:00:00.000Z`),
-        },
-      });
-      await tx.activityLog.create({
-        data: {
-          tableName: 'ticketing',
-          recordId: pnr.id,
-          fieldName: 'ticketIssuanceDeadline',
-          oldValue: null,
-          newValue: svIssuanceDeadline,
-          changedBy: createdBy,
-        },
-      });
-    }
+    // Every new booking starts with its ticket issuance deadline recorded (A6).
+    // Until Phase 9 only SV's was, worked out here from the policy (owner
+    // ruling, 2026-09-17); the form now pre-fills that date and staff confirm
+    // it, or enter another airline's.
+    await tx.ticketing.create({
+      data: {
+        pnrId: pnr.id,
+        ticketIssuanceDeadline: new Date(`${ticketIssuanceDeadline}T00:00:00.000Z`),
+      },
+    });
+    await tx.activityLog.create({
+      data: {
+        tableName: 'ticketing',
+        recordId: pnr.id,
+        fieldName: 'ticketIssuanceDeadline',
+        oldValue: null,
+        newValue: ticketIssuanceDeadline,
+        changedBy: createdBy,
+      },
+    });
 
     return pnr;
   }, { timeout: TX_TIMEOUT_MS });
 
   revalidatePath('/');
-  // redirect() throws internally, so it must stay OUTSIDE the transaction —
-  // inside, it would abort and roll back the booking that was just created.
-  redirect(`/pnrs/${created.id}`);
+  return { id: created.id, pnr: created.pnr };
 }
 
 export async function updatePnr(formData: FormData) {
@@ -258,6 +297,8 @@ export async function updatePnr(formData: FormData) {
   // Duplicate check excludes THIS booking: re-saving a booking without changing
   // its code must not report the booking as a duplicate of itself.
   const duplicate = await findPnrByCode(pnrCode, id);
+  const splitDuplicate = await findSplitByCode(pnrCode, id);
+  if (splitDuplicate) return { error: splitDuplicate };
   if (duplicate) {
     return {
       error: `PNR ${duplicate.pnr} already exists (SR#${duplicate.srNo}). A booking cannot be entered twice.`,
@@ -277,8 +318,11 @@ export async function updatePnr(formData: FormData) {
 
   // A booking saved before flight details existed has only a sector and two
   // dates; the edit form pre-fills the cities from the sector and asks for the
-  // rest, so every saved edit leaves a complete set.
-  const flights = readFlightDetails((key) => str(formData, key));
+  // rest, so every saved edit leaves a complete set. A booking entered in the
+  // app keeps the rules it was entered under — every time, overnight dates —
+  // on every edit; an imported one is not held to them (owner, 2026-10-20).
+  const strict = enteredInApp(existing);
+  const flights = readFlightDetails((key) => str(formData, key), { requireTimes: strict });
   if ('error' in flights) return { error: flights.error };
 
   // Tickets issued can never exceed the seats on the booking (owner rule,
@@ -286,10 +330,25 @@ export async function updatePnr(formData: FormData) {
   // ticketed — that would break the rule from the other side and leave a stored
   // balance that no longer matches.
   const ticketing = await prisma.ticketing.findUnique({ where: { pnrId: id } });
-  if (ticketing?.ticketsIssued != null && seats < ticketing.ticketsIssued) {
+  // Seats in splits are part of the booking (Phase 9 Step 6) and the booking's
+  // own ticket count covers the rest, so both must still fit.
+  const splits = await prisma.pnrSplit.findMany({ where: { pnrId: id }, select: { seats: true, assignmentId: true } });
+  const inSplits = splitSeats(splits);
+  if (ticketing?.ticketsIssued != null && seats < ticketing.ticketsIssued + inSplits) {
     return {
-      error: `This booking already has ${ticketing.ticketsIssued} tickets issued, so it cannot be reduced to ${seats} seats.`,
+      error: `This booking already has ${ticketing.ticketsIssued} tickets issued${inSplits ? ` and ${inSplits} seats in splits` : ''}, so it cannot be reduced to ${seats} seats.`,
     };
+  }
+  if (seats < inSplits) {
+    return { error: `${inSplits} seats are in splits, so this booking cannot be reduced to ${seats} seats.` };
+  }
+
+  // Its ticket deadline may not fall after departure (owner, 2026-10-20), so
+  // an earlier departure date waits until the deadline is moved under Ticketing.
+  const ticketDeadline = dateFromDb(ticketing?.ticketIssuanceDeadline);
+  if (strict && ticketDeadline) {
+    const ticketError = ticketDeadlineError(ticketDeadline, flights.details.outbound.date);
+    if (ticketError) return { error: `${ticketError} Move the deadline under Ticketing first.` };
   }
 
   // Nor below what the selling side has already committed: seats held by agents
@@ -302,12 +361,22 @@ export async function updatePnr(formData: FormData) {
     agentSeats: liveAgentSeats(liveAssignments),
   });
   if (seatsError) return { error: seatsError };
+  // The company's split seats must still be the company's.
+  const companySplit = splitSeats(splits.filter((x) => x.assignmentId === null));
+  if (seats < liveAgentSeats(liveAssignments) + companySplit) {
+    return { error: `Agents hold ${liveAgentSeats(liveAssignments)} seats and ${companySplit} of the company's are in a split, so this booking cannot be reduced to ${seats} seats.` };
+  }
 
   // Head office may reassign the branch; a branch user may not. Preserve the
   // PNR's existing branch rather than stamping the user's primary row onto it —
   // otherwise editing a booking would silently move it between the duplicate
   // case-variant rows of the same real branch.
   const branchId = isHeadOffice(authUser) ? str(formData, 'branch_id') : existing.branchId;
+
+  // A release cannot be undone, and neither released nor cancelled is set from
+  // this form (Phase 9 Step 2; owner, 2026-10-20).
+  const statusChange = formStatusChange(existing.status, str(formData, 'status'));
+  if ('error' in statusChange) return { error: statusChange.error };
 
   const next = {
     requestDate,
@@ -323,9 +392,11 @@ export async function updatePnr(formData: FormData) {
     mealIncluded: str(formData, 'meal_included') === 'yes',
     pnrTlDate: dateVal(formData, 'pnr_tl_date'),
     airlineTaxes: numVal(formData, 'airline_taxes'),
-    psf: numVal(formData, 'psf'),
+    // The form shows PSF only on a booking that already carries one (owner,
+    // 2026-10-20); with no field posted, the stored value is kept.
+    psf: formData.has('psf') ? numVal(formData, 'psf') : existing.psf,
     fare,
-    status: str(formData, 'status') ?? 'active',
+    status: statusChange.status,
   };
 
   // `time` columns come back as a Date on 1970-01-01, so printing them as a
@@ -365,11 +436,27 @@ export async function updatePnr(formData: FormData) {
       await tx.flightStop.createMany({ data: newStops.map((st) => ({ ...st, pnrId: id })) });
     }
     for (const leg of ['outbound', 'inbound'] as const) {
-      const as = (rows: { leg: string; city: string; flightCode: string | null; arrivalTime: Date | null; departureTime: Date | null }[]) =>
+      const as = (
+        rows: {
+          leg: string;
+          city: string;
+          flightCode: string | null;
+          arrivalTime: Date | null;
+          departureTime: Date | null;
+          arrivalDate: Date | null;
+          departureDate: Date | null;
+        }[]
+      ) =>
         describeStops(
           rows
             .filter((r) => r.leg === leg)
-            .map((r) => ({ ...r, arrivalTime: timeFromDb(r.arrivalTime), departureTime: timeFromDb(r.departureTime) }))
+            .map((r) => ({
+              ...r,
+              arrivalTime: timeFromDb(r.arrivalTime),
+              departureTime: timeFromDb(r.departureTime),
+              arrivalDate: dateFromDb(r.arrivalDate),
+              departureDate: dateFromDb(r.departureDate),
+            }))
         );
       const before = as(existing.flightStops);
       const after = as(newStops);
@@ -380,11 +467,13 @@ export async function updatePnr(formData: FormData) {
       }
     }
 
-    // Balance tickets is seats − issued, so changing the seats changes it too.
-    // Recomputed here rather than left stale, and logged like any other write to
-    // `ticketing`.
+    // The seats changed after a ticket count was recorded: the tickets already
+    // issued stay issued and the remainder is recalculated (owner, 2026-10-28,
+    // Phase 9 Step 4 — even though the remainder is now the typed field).
+    // Logged like any other write to `ticketing`.
     if (ticketing?.ticketsIssued != null && seats !== existing.seats) {
-      const newBalance = balanceTicketsFor(seats, ticketing.ticketsIssued);
+      // The booking's own count covers its seats not in a split.
+      const newBalance = balanceTicketsFor(seats - inSplits, ticketing.ticketsIssued);
       if (newBalance !== ticketing.balanceTickets) {
         await tx.ticketing.update({ where: { pnrId: id }, data: { balanceTickets: newBalance } });
         await tx.activityLog.create({
@@ -419,226 +508,82 @@ export async function updatePnr(formData: FormData) {
   redirect(`/pnrs/${id}`);
 }
 
-export async function splitPnr(formData: FormData) {
-  const user = await requireHeadOffice();
 
-  const parentPnrId = str(formData, 'parent_pnr_id');
-  if (!parentPnrId) return { error: 'Missing parent PNR ID.' };
+/**
+ * Releases a booking: it ends before EMD-1 is issued (Phase 9 Step 2, A2).
+ * A branch may release its own bookings, Head Office any. Refused once any EMD
+ * round exists — for Head Office too — and when any agent has paid on it. The
+ * reason goes to the change history; agents' unpaid seats end with it, each
+ * logged. It cannot be undone.
+ */
+export async function releasePnr(formData: FormData): Promise<{ error: string } | undefined> {
+  const user = await requireUser();
+  const id = str(formData, 'pnr_id');
+  if (!id) return { error: 'Missing booking id.' };
+  const reason = str(formData, 'reason');
 
-  const childPnrCode = str(formData, 'child_pnr_code');
-  if (!childPnrCode) return { error: 'A child PNR code from the airline is required.' };
-
-  // The airline issues a NEW code for the child (docs/decisions.md, 2026-09-01),
-  // so it is a new booking and the uniqueness rule applies to it as well.
-  const childCodeError = validatePnrCode(childPnrCode);
-  if (childCodeError) return { error: childCodeError.error };
-  const childDuplicate = await findPnrByCode(childPnrCode);
-  if (childDuplicate) {
-    return {
-      error: `PNR ${childDuplicate.pnr} already exists (SR#${childDuplicate.srNo}). The child booking needs the new code the airline issued.`,
-    };
+  const pnr = await prisma.pnr.findUnique({ where: { id }, select: { branchId: true } });
+  if (!pnr) return { error: 'Booking not found.' };
+  // The edit rule's branch scope: a branch only on its own bookings. Its "no
+  // EMD yet" half is checked inside the lock below, for everyone.
+  if (!canEditPnr(user, pnr.branchId, false)) {
+    return { error: 'You do not have permission to release this booking.' };
   }
 
-  // A child booking is company investment like any other, until its seats are
-  // handed to an agent or put on sale (owner ruling, 2026-09-20). It is no
-  // longer typed at split time: assign the child on its own page afterwards.
-  const newInvestorCompany = COMPANY_INVESTMENT;
-
-  const seatsToAllocate = numVal(formData, 'seats_to_allocate');
-  if (seatsToAllocate === null) {
-    return { error: 'Seats to allocate must be a positive whole number.' };
-  }
-
-  // Fetch parent with its rounds and existing allocations
-  const parent = await prisma.pnr.findUnique({
-    where: { id: parentPnrId },
-    include: {
-      emdRounds: { orderBy: { roundNumber: 'asc' } },
-      agentAssignments: { where: { releasedAt: null } },
-      flightStops: true,
-    },
-  });
-  if (!parent) return { error: 'Parent PNR not found.' };
-
-  // Seat maths lives in src/lib/seats.ts (unit-tested): a PNR's `seats` is what
-  // it still holds, so it IS the unallocated count. Subtracting `allocations` on
-  // top double-counted every past split.
-  //
-  // From phase 6 a split may only take seats nobody is selling yet: seats an
-  // agent holds cannot be moved to a different PNR behind their back. The ledger
-  // decides what is free (docs/business-rules.md, "Selling side").
-  const ledger = seatLedger({ seats: unallocatedSeats(parent), assignments: parent.agentAssignments });
-  const seatsError = validateSplit(ledger.unassigned, seatsToAllocate);
-  if (seatsError) {
-    return {
-      error:
-        ledger.agentSeats > 0
-          ? `${seatsError} ${ledger.agentSeats} seat${ledger.agentSeats === 1 ? ' is' : 's are'} held by agents and cannot be split away — release them first.`
-          : seatsError,
-    };
-  }
-
-  const parentFare = Number(parent.fare);
-  const parentRemainingSeats = parent.seats - seatsToAllocate;
-  const childOutboundDate = dateVal(formData, 'child_outbound_date');
-  const childInboundDate = dateVal(formData, 'child_inbound_date');
-
-  // Use a transaction for atomicity
   const result = await prisma.$transaction(async (tx) => {
-    // 1. Create the child PNR — inherits flight details, gets new investor and PNR code
-    const child = await tx.pnr.create({
-      data: {
-        requestDate: parent.requestDate,
-        investorCompany: newInvestorCompany,
-        licenseId: parent.licenseId,
-        branchId: parent.branchId,
-        parentPnrId: parent.id,
-        pnr: childPnrCode,
-        gdsPnr: null,
-        segment: parent.segment,
-        airlineId: parent.airlineId,
-        seats: seatsToAllocate,
-        outboundDate: childOutboundDate ?? parent.outboundDate,
-        // A one-way booking has no return, so its child cannot be given one.
-        inboundDate: parent.tripType === 'one_way' ? null : childInboundDate ?? parent.inboundDate,
-        sector: parent.sector,
-        tripType: parent.tripType,
-        outboundDepartureCity: parent.outboundDepartureCity,
-        outboundArrivalCity: parent.outboundArrivalCity,
-        outboundDepartureTime: parent.outboundDepartureTime,
-        outboundArrivalTime: parent.outboundArrivalTime,
-        outboundFlightCode: parent.outboundFlightCode,
-        outboundBaggagePieces: parent.outboundBaggagePieces,
-        outboundBaggageKg: parent.outboundBaggageKg,
-        inboundDepartureCity: parent.inboundDepartureCity,
-        inboundArrivalCity: parent.inboundArrivalCity,
-        inboundDepartureTime: parent.inboundDepartureTime,
-        inboundArrivalTime: parent.inboundArrivalTime,
-        inboundFlightCode: parent.inboundFlightCode,
-        inboundBaggagePieces: parent.inboundBaggagePieces,
-        inboundBaggageKg: parent.inboundBaggageKg,
-        pnrTlDate: parent.pnrTlDate,
-        airlineTaxes: parent.airlineTaxes,
-        psf: parent.psf,
-        fare: parent.fare,
-        mealIncluded: parent.mealIncluded,
-        status: 'active',
-        createdBy: user.id,
+    // Locked, so an EMD issued or a payment recorded at the same moment cannot
+    // slip past the checks.
+    await tx.$queryRaw`select id from pnrs where id = ${id}::uuid for update`;
+    const current = await tx.pnr.findUnique({
+      where: { id },
+      select: {
+        status: true,
+        _count: { select: { emdRounds: true } },
+        agentAssignments: {
+          select: { id: true, seats: true, releasedAt: true, agent: { select: { name: true } }, _count: { select: { recoveries: true } } },
+        },
       },
     });
+    if (!current) return { error: 'Booking not found.' };
 
-    // Same flights, same stops. A one-way parent has no inbound stops to copy.
-    if (parent.flightStops.length > 0) {
-      await tx.flightStop.createMany({
-        data: parent.flightStops.map(({ leg, position, city, flightCode, arrivalTime, departureTime }) => ({
-          pnrId: child.id, leg, position, city, flightCode, arrivalTime, departureTime,
-        })),
+    const blocker = releaseBlocker({
+      status: current.status,
+      roundCount: current._count.emdRounds,
+      // Every assignment, live or ended: any payment ever received blocks it.
+      agentPaymentCount: current.agentAssignments.reduce((n, a) => n + a._count.recoveries, 0),
+      reason,
+    });
+    if (blocker) return { error: blocker };
+
+    await tx.pnr.update({ where: { id }, data: { status: 'released' } });
+    await tx.activityLog.createMany({
+      data: [
+        { tableName: 'pnrs', recordId: id, fieldName: 'status', oldValue: current.status, newValue: 'released', changedBy: user.id },
+        { tableName: 'pnrs', recordId: id, fieldName: 'releaseReason', oldValue: null, newValue: reason!.trim(), changedBy: user.id },
+      ],
+    });
+
+    // The agents' seats end with the booking. None has paid, or the release
+    // was refused above.
+    const now = new Date();
+    for (const a of current.agentAssignments.filter((x) => !x.releasedAt)) {
+      await tx.agentAssignment.update({ where: { id: a.id }, data: { releasedAt: now } });
+      await tx.activityLog.create({
+        data: {
+          tableName: 'agent_assignments',
+          recordId: a.id,
+          fieldName: 'seats',
+          oldValue: String(a.seats),
+          newValue: `0 (booking released; ${a.agent.name}'s seats ended)`,
+          changedBy: user.id,
+        },
       });
     }
+    return null;
+  }, { timeout: TX_TIMEOUT_MS });
 
-    // 2. Create the allocation record
-    await tx.allocation.create({
-      data: {
-        parentPnrId: parent.id,
-        childPnrId: child.id,
-        seatsAllocated: seatsToAllocate,
-      },
-    });
-
-    // 3. Update parent seats to reflect remaining
-    await tx.pnr.update({
-      where: { id: parent.id },
-      data: { seats: parentRemainingSeats },
-    });
-
-    // 4. Handle EMD rounds based on whether EMD-1 was already paid
-    const parentRounds = parent.emdRounds;
-    const emd1 = parentRounds.find((r) => r.roundNumber === 1);
-    // Settled = the airline gave it back. With two statuses, that is `refunded`.
-    const emd1IsPaid = emd1 && emd1.status === 'refunded';
-
-    if (emd1IsPaid) {
-      // Scenario 1: EMD-1 already paid — parent and child share the original EMD-1.
-      // Only EMD-2 gets recalculated proportionally based on new seat counts.
-      const emd2 = parentRounds.find((r) => r.roundNumber === 2);
-      if (emd2) {
-        // Recalculate parent EMD-2 for reduced seats
-        const parentEmd2Amount = parentFare * parentRemainingSeats * (Number(emd2.paymentPct) / 100);
-        await tx.emdRound.update({
-          where: { id: emd2.id },
-          data: { emdAmount: parentEmd2Amount },
-        });
-
-        // Create child EMD-2 proportional to child seats
-        const childEmd2Amount = parentFare * seatsToAllocate * (Number(emd2.paymentPct) / 100);
-        await tx.emdRound.create({
-          data: {
-            pnrId: child.id,
-            roundNumber: 2,
-            issuanceDate: emd2.issuanceDate,
-            paymentPct: emd2.paymentPct,
-            emdAmount: childEmd2Amount,
-            deadlineDate: emd2.deadlineDate,
-            deadlineTime: emd2.deadlineTime,
-            status: emd2.status,
-          },
-        });
-      }
-    } else {
-      // Scenario 2: No EMD paid yet — recalculate all rounds for both parent and child
-      for (const round of parentRounds) {
-        // Recalculate parent round amount for reduced seats
-        const parentRoundAmount = parentFare * parentRemainingSeats * (Number(round.paymentPct) / 100);
-        await tx.emdRound.update({
-          where: { id: round.id },
-          data: { emdAmount: parentRoundAmount },
-        });
-
-        // Create matching child round proportional to child seats
-        const childRoundAmount = parentFare * seatsToAllocate * (Number(round.paymentPct) / 100);
-        await tx.emdRound.create({
-          data: {
-            pnrId: child.id,
-            roundNumber: round.roundNumber,
-            issuanceDate: round.issuanceDate,
-            paymentPct: round.paymentPct,
-            emdAmount: childRoundAmount,
-            deadlineDate: round.deadlineDate,
-            deadlineTime: round.deadlineTime,
-            status: round.status,
-          },
-        });
-      }
-    }
-
-    // 5. Activity log on parent
-    await tx.activityLog.create({
-      data: {
-        tableName: 'pnrs',
-        recordId: parent.id,
-        fieldName: 'split',
-        oldValue: `${parent.seats} seats`,
-        newValue: `${seatsToAllocate} seats → ${childPnrCode} (${newInvestorCompany})`,
-        changedBy: user.id,
-      },
-    });
-
-    // 6. Activity log on child
-    await tx.activityLog.create({
-      data: {
-        tableName: 'pnrs',
-        recordId: child.id,
-        fieldName: null,
-        oldValue: null,
-        newValue: `record created (split from ${parent.pnr})`,
-        changedBy: user.id,
-      },
-    });
-
-    return child;
-  });
-
+  if (result) return result;
   revalidatePath('/');
-  revalidatePath(`/pnrs/${parentPnrId}`);
-  redirect(`/pnrs/${result.id}`);
+  revalidatePath(`/pnrs/${id}`);
+  return undefined;
 }

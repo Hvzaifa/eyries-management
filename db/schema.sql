@@ -15,13 +15,21 @@ create extension if not exists "pgcrypto";
 
 create table if not exists licenses (
   id uuid primary key default gen_random_uuid(),
+  -- The full name, e.g. "Travel Advisor Islamabad". Equal to the code where
+  -- the owner gave no full name (TU-PIA (PSA), SIX SIGMA).
   name text not null unique,
+  -- The supplier code it is shown by, e.g. TA-ISB-BSP (owner, 2026-10-20).
+  code text unique,
   created_at timestamptz not null default now()
 );
 
 create table if not exists branches (
   id uuid primary key default gen_random_uuid(),
   name text not null unique,
+  -- The code the business knows each branch by, e.g. RWP, STH-LHE (owner,
+  -- 2026-10-19). Shown wherever a branch is shown. `name` stays the full name
+  -- because a branch login is matched on it (src/lib/auth.ts).
+  code text unique,
   created_at timestamptz not null default now()
 );
 
@@ -62,6 +70,7 @@ create table if not exists pnrs (
   outbound_arrival_city text,
   outbound_departure_time time,
   outbound_arrival_time time,
+  outbound_arrival_date date,
   outbound_flight_code text,
   outbound_baggage_pieces integer check (outbound_baggage_pieces between 0 and 10),
   outbound_baggage_kg integer check (outbound_baggage_kg between 1 and 100),
@@ -70,6 +79,7 @@ create table if not exists pnrs (
   inbound_arrival_city text,
   inbound_departure_time time,
   inbound_arrival_time time,
+  inbound_arrival_date date,
   inbound_flight_code text,
   inbound_baggage_pieces integer check (inbound_baggage_pieces between 0 and 10),
   inbound_baggage_kg integer check (inbound_baggage_kg between 1 and 100),
@@ -78,7 +88,11 @@ create table if not exists pnrs (
   psf numeric(12,2),
   fare numeric(12,2) not null,
   total_emd_value numeric(14,2) generated always as (seats * fare) stored,
-  status text not null default 'active' check (status in ('active','cancelled','completed')),
+  status text not null default 'active' check (status in ('active','released','cancelled','completed')),
+  -- Whether the airline's penalty on a CANCELLED booking has been paid (Phase 9
+  -- Step 5, B3). Set to false when the booking is cancelled, null otherwise.
+  -- Once true, its forfeited EMDs go on "To be refunded".
+  penalty_paid boolean,
   raw_airline_text text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -110,7 +124,12 @@ create table if not exists emd_rounds (
   -- 'refund_requested' and 'expired' were removed: when an EMD is paid is an
   -- IATA matter this system does not model yet, and a status nobody can define
   -- is a status that gets set by guesswork.
-  status text not null default 'issued' check (status in ('issued','refunded')),
+  -- 'refund_requested' came back in Phase 9 Step 3 (A1, 2026-10-13): a person
+  -- asked for the refund and Head Office has not recorded it. It is no longer
+  -- money held, and never goes back to 'issued'.
+  -- 'forfeited' (Phase 9 Step 5, B3): the booking was cancelled; the airline
+  -- keeps the EMD until the penalty is paid, then it can be refunded.
+  status text not null default 'issued' check (status in ('issued','refund_requested','forfeited','refunded')),
   refund_amount numeric(14,2),
   refund_date date,
   -- The day this EMD was PAID to IATA. Added 2026-09-22 with the IATA
@@ -148,6 +167,14 @@ create table if not exists emd_rounds (
 alter table pnrs drop column if exists deal_pct;
 alter table pnrs drop column if exists issued_status;
 
+-- Branch codes (owner, 2026-10-19). Filled by `npm run db:seed -- --commit`.
+alter table branches add column if not exists code text;
+create unique index if not exists idx_branches_code on branches (code);
+
+-- License codes (owner, 2026-10-20), shown like branch codes. Filled by the seed.
+alter table licenses add column if not exists code text;
+create unique index if not exists idx_licenses_code on licenses (code);
+
 -- Flight details (owner request, 2026-09-26). All nullable: bookings saved
 -- before this carry only a sector and two dates, and the form asks for the
 -- rest the next time one is edited. Nothing is backfilled — a flight code or
@@ -167,6 +194,20 @@ alter table pnrs add column if not exists inbound_arrival_city text;
 alter table pnrs add column if not exists inbound_departure_time time;
 alter table pnrs add column if not exists inbound_arrival_time time;
 alter table pnrs add column if not exists inbound_flight_code text;
+
+-- Released: a booking ended before EMD-1 is issued, by a person, with a
+-- reason (Phase 9 Step 2, A2). Distinct from cancelled, which follows a missed
+-- EMD-2 deadline.
+alter table pnrs drop constraint if exists pnrs_status_check;
+alter table pnrs add constraint pnrs_status_check
+  check (status in ('active','released','cancelled','completed'));
+-- Phase 9 Step 5: penalty paid on a cancelled booking. Nullable, no backfill.
+alter table pnrs add column if not exists penalty_paid boolean;
+
+-- The day an overnight flight lands (Phase 9 Step 1, A4). Null = it lands the
+-- day it departs (`outbound_date` / `inbound_date`).
+alter table pnrs add column if not exists outbound_arrival_date date;
+alter table pnrs add column if not exists inbound_arrival_date date;
 
 -- Meal included in the package, for the booking as a whole (owner, 2026-09-28).
 alter table pnrs add column if not exists meal_included boolean not null default false;
@@ -205,12 +246,15 @@ update emd_rounds set status = 'issued' where status = 'pending';
 alter table emd_rounds alter column status set default 'issued';
 -- Statuses reduced to two (owner ruling, 2026-09-21). Any row still carrying a
 -- removed status is mapped first, or the constraint cannot be validated:
---   paid / refund_requested / expired -> issued (the EMD is still with the
---   airline; none of them mean the deposit came back).
+--   paid / expired -> issued (the EMD is still with the airline; neither
+--   means the deposit came back).
+-- 'refund_requested' is NOT mapped any more: Phase 9 Step 3 (A1) brought it
+-- back as a real status, and mapping it here would quietly turn every
+-- requested round back into an issued one on each apply.
 update emd_rounds set status = 'issued'
-  where status in ('paid', 'refund_requested', 'expired');
+  where status in ('paid', 'expired');
 alter table emd_rounds add constraint emd_rounds_status_check
-  check (status in ('issued','refunded'));
+  check (status in ('issued','refund_requested','forfeited','refunded'));
 
 -- IATA payment tracking (2026-09-22). Nullable with no default and no
 -- backfill: a null here means "we have not recorded paying this", which is the
@@ -248,9 +292,27 @@ create table if not exists ticketing (
   name_update_deadline date,
   ticket_issuance_deadline date,
   status text,
+  -- Phase 9 Step 4 (A8): balance_tickets is TYPED ("how many remain"; 0 means
+  -- all issued) and tickets_issued is worked out as seats - balance_tickets.
+  -- Both null = not answered, never zero.
   tickets_issued integer,
-  balance_tickets integer
+  balance_tickets integer,
+  -- The penalty on the company's own unissued seats, and the license its
+  -- penalty EMD was issued against (Phase 9 Step 4, A9/A10; 2026-10-14).
+  company_penalty_amount numeric(14,2) check (company_penalty_amount >= 0),
+  penalty_license_id uuid references licenses(id),
+  constraint ticketing_penalty_license_present
+    check ((company_penalty_amount is null) = (penalty_license_id is null))
 );
+-- Healing for an existing table (Phase 9 Step 4). Nullable, no backfill.
+alter table ticketing add column if not exists company_penalty_amount numeric(14,2);
+alter table ticketing add column if not exists penalty_license_id uuid references licenses(id);
+alter table ticketing drop constraint if exists ticketing_company_penalty_amount_check;
+alter table ticketing add constraint ticketing_company_penalty_amount_check
+  check (company_penalty_amount >= 0);
+alter table ticketing drop constraint if exists ticketing_penalty_license_present;
+alter table ticketing add constraint ticketing_penalty_license_present
+  check ((company_penalty_amount is null) = (penalty_license_id is null));
 
 create table if not exists allocations (
   id uuid primary key default gen_random_uuid(),
@@ -298,8 +360,30 @@ create table if not exists agents (
   -- agent; a branch sees only its own (owner ruling, 2026-09-17).
   created_by_branch_id uuid references branches(id) on update cascade on delete set null,
   active boolean not null default true,
+  -- Registration details (owner, 2026-10-19). Optional: the agents recorded
+  -- before then have none.
+  dts_code text,
+  address text,
+  iata_number text,
   created_at timestamptz not null default now()
 );
+
+-- Healing for the registration details above. Here rather than in the healing
+-- section because `agents` does not exist yet at that point on a fresh database.
+alter table agents add column if not exists dts_code text;
+alter table agents add column if not exists address text;
+alter table agents add column if not exists iata_number text;
+-- Balance owed on bookings not yet in the system (owner, 2026-10-29, from the
+-- Branch-Wise Client Ageing Report): what the agent owes beyond every booking
+-- the system holds for them. `unbooked_baseline` is the agent's receivable in
+-- the system when it was recorded. As bookings are added, the receivable they
+-- add comes out of this amount (owner: the balance stays the same until it is
+-- used up), worked out live — never rewritten.
+alter table agents add column if not exists unbooked_balance numeric(14,2);
+alter table agents add column if not exists unbooked_baseline numeric(14,2);
+alter table agents drop constraint if exists agents_unbooked_balance_check;
+alter table agents add constraint agents_unbooked_balance_check
+  check ((unbooked_balance is null or unbooked_balance >= 0) and ((unbooked_balance is null) = (unbooked_baseline is null)));
 
 create index if not exists idx_agents_branch on agents(created_by_branch_id);
 create index if not exists idx_agents_active on agents(active);
@@ -325,6 +409,13 @@ create table if not exists agent_assignments (
   -- Set when seats are taken back. A released row stays as history and stops
   -- counting against the ledger; it is never deleted.
   released_at timestamptz,
+  -- The airline's penalty for this agent's unissued seats, added to what the
+  -- agent owes, and the license its penalty EMD was issued against (Phase 9
+  -- Step 4, A9/A10; 2026-10-14). Entered by staff, never calculated.
+  penalty_amount numeric(14,2) check (penalty_amount >= 0),
+  penalty_license_id uuid references licenses(id),
+  constraint agent_assignments_penalty_license_present
+    check ((penalty_amount is null) = (penalty_license_id is null)),
   -- A charge and a discount are never both set (owner ruling, 2026-09-17).
   -- Enforced here as well as in the app: this is a money rule, and the database
   -- is the only place that cannot be bypassed.
@@ -342,6 +433,15 @@ create index if not exists idx_agent_assignments_agent on agent_assignments(agen
 -- The ledger only ever sums LIVE assignments, so the index matches that query.
 create index if not exists idx_agent_assignments_live
   on agent_assignments(pnr_id) where released_at is null;
+-- Healing for an existing table (Phase 9 Step 4). Nullable, no backfill.
+alter table agent_assignments add column if not exists penalty_amount numeric(14,2);
+alter table agent_assignments add column if not exists penalty_license_id uuid references licenses(id);
+alter table agent_assignments drop constraint if exists agent_assignments_penalty_amount_check;
+alter table agent_assignments add constraint agent_assignments_penalty_amount_check
+  check (penalty_amount >= 0);
+alter table agent_assignments drop constraint if exists agent_assignments_penalty_license_present;
+alter table agent_assignments add constraint agent_assignments_penalty_license_present
+  check ((penalty_amount is null) = (penalty_license_id is null));
 
 -- Money actually received from an agent against one assignment. "Recovery" is
 -- the company's own word for it (phase 7 step 2).
@@ -363,10 +463,16 @@ create table if not exists flight_stops (
   flight_code text,
   arrival_time time,
   departure_time time,
+  -- the day the stop is reached / left, when not the flight's departure date
+  -- (Phase 9 Step 1); null = that day
+  arrival_date date,
+  departure_date date,
   created_at timestamptz not null default now(),
   unique (pnr_id, leg, position)
 );
 create index if not exists idx_flight_stops_pnr on flight_stops(pnr_id);
+alter table flight_stops add column if not exists arrival_date date;
+alter table flight_stops add column if not exists departure_date date;
 
 create table if not exists agent_recoveries (
   id uuid primary key default gen_random_uuid(),
@@ -386,6 +492,53 @@ create table if not exists agent_recoveries (
 );
 
 create index if not exists idx_agent_recoveries_assignment on agent_recoveries(assignment_id);
+
+-- Money paid BACK to an agent after their booking was cancelled (Phase 9
+-- Step 5; owner, 2026-10-14): what they paid less their penalty. Kept apart
+-- from agent_recoveries, which stays receipts only. Never more than is owed
+-- back (checked in the app, owner 2026-10-28). A new table, so `create table if
+-- not exists` heals an existing database too.
+create table if not exists agent_paybacks (
+  id uuid primary key default gen_random_uuid(),
+  assignment_id uuid not null references agent_assignments(id) on delete cascade,
+  amount numeric(14,2) not null check (amount > 0),
+  paid_on date not null,
+  -- The payment reference. Shown to staff, NEVER written to activity_log
+  -- (CLAUDE.md rule 8).
+  reference text,
+  created_by uuid,
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_agent_paybacks_assignment on agent_paybacks(assignment_id);
+
+-- A split: part of a booking's seats flying on other dates, kept INSIDE the
+-- booking (Phase 9 Step 6; owner, 2026-10-29 — no separate booking, no
+-- dashboard row, PNR code optional). The booking keeps its full seat count and
+-- its one set of EMD rounds. Seats come from one holder: one agent's assignment,
+-- or (assignment_id null) the company's unassigned seats. The split has its own
+-- ticket issuance deadline and its own "All tickets issued?" count, read as on
+-- `ticketing` (balance typed, tickets issued = seats - balance; null = not
+-- answered). SV only, checked in the app. A new table, so `create table if not
+-- exists` heals an existing database too.
+create table if not exists pnr_splits (
+  id uuid primary key default gen_random_uuid(),
+  pnr_id uuid not null references pnrs(id) on delete cascade,
+  assignment_id uuid references agent_assignments(id),
+  seats integer not null check (seats > 0),
+  -- The airline's new code, if it issued one. Stored normalised (no spaces,
+  -- upper case) so the unique index compares as bookings do.
+  pnr_code text,
+  outbound_date date not null,
+  inbound_date date,
+  ticket_issuance_deadline date,
+  tickets_issued integer check (tickets_issued >= 0),
+  balance_tickets integer check (balance_tickets >= 0 and balance_tickets <= seats),
+  created_by uuid,
+  created_at timestamptz not null default now(),
+  check (inbound_date is null or inbound_date >= outbound_date)
+);
+create index if not exists idx_pnr_splits_pnr on pnr_splits(pnr_id);
+create unique index if not exists idx_pnr_splits_code on pnr_splits(pnr_code) where pnr_code is not null;
 create index if not exists idx_agent_recoveries_date on agent_recoveries(received_date);
 
 -- ---------------------------------------------------------------------------
@@ -418,6 +571,8 @@ alter table activity_log enable row level security;
 alter table agents       enable row level security;
 alter table agent_assignments enable row level security;
 alter table agent_recoveries enable row level security;
+alter table agent_paybacks   enable row level security;
+alter table pnr_splits       enable row level security;
 alter table flight_stops     enable row level security;
 
 
@@ -438,7 +593,7 @@ select
   er.status, er.refund_amount, er.refund_date, er.license_id,
   er.created_at, er.updated_at,
   p.pnr, p.gds_pnr, p.sector, p.seats, p.outbound_date,
-  a.code as airline_code, b.name as branch_name
+  a.code as airline_code, b.name as branch_name, b.code as branch_code
 from emd_rounds er
 join pnrs p on p.id = er.pnr_id
 left join airlines a on a.id = p.airline_id

@@ -128,7 +128,7 @@ describe('parseRawLlmJson — stops and meal', () => {
       'text'
     );
     expect(d.outboundStops).toEqual({
-      value: [{ city: 'DXB', flightCode: 'EK612', arrivalTime: '10:05', departureTime: null }],
+      value: [{ city: 'DXB', flightCode: 'EK612', arrivalTime: '10:05', departureTime: null, arrivalDate: null, departureDate: null }],
       confidence: 'high',
     });
     expect(d.mealIncluded).toEqual({ value: true, confidence: 'high' });
@@ -139,5 +139,25 @@ describe('parseRawLlmJson — stops and meal', () => {
     expect(d.inboundStops).toEqual({ value: null, confidence: 'low' });
     expect(d.outboundStops).toEqual({ value: null, confidence: 'low' });
     expect(d.mealIncluded).toEqual({ value: null, confidence: 'low' });
+  });
+});
+
+describe('parseRawLlmJson — Phase 9 Step 1 fields', () => {
+  it('reads the ticketing deadline, arrival dates and stop dates', () => {
+    const [d] = parseRawLlmJson(
+      JSON.stringify({
+        ticketIssuanceDeadline: { value: '2026-11-12', confidence: 'high' },
+        inboundArrivalDate: { value: '2026-12-02', confidence: 'medium' },
+        outboundStops: {
+          value: [{ city: 'DXB', flightCode: null, arrivalTime: '01:00', departureTime: '03:00', arrivalDate: '2026-11-16', departureDate: '2026-11-16' }],
+          confidence: 'high',
+        },
+      }),
+      'text'
+    );
+    expect(d.ticketIssuanceDeadline).toEqual({ value: '2026-11-12', confidence: 'high' });
+    expect(d.inboundArrivalDate).toEqual({ value: '2026-12-02', confidence: 'medium' });
+    expect(d.outboundArrivalDate).toEqual({ value: null, confidence: 'low' });
+    expect(d.outboundStops.value?.[0]).toMatchObject({ arrivalDate: '2026-11-16', departureDate: '2026-11-16' });
   });
 });

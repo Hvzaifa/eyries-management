@@ -15,7 +15,7 @@ export interface DashboardSummary {
   pnrCount: number;
   totalSeats: number;
   totalEmdValue: number;
-  /** EMD the airline is holding across the visible rows (issued, not refunded). */
+  /** EMD the airline is holding across the visible rows (issued; not requested back, not refunded). */
   totalIssued: number;
   totalRefunded: number;
 }
@@ -66,14 +66,29 @@ export function pnrCountLabel(statusFilter: string | null): string {
  * done on it here:
  *
  * - an EMD still has to be issued (`emdsComplete` is false), or
- * - an IATA payment is not yet recorded (owed, dated or not).
+ * - an IATA payment is not yet recorded (owed, dated or not), or
+ * - an EMD is paid to IATA but its refund is not due yet (`paidAwaitingRefund`,
+ *   Phase 9 Step 3, A6): a paid EMD stays here until the day after the ticket
+ *   issuance deadline, then moves to "To be refunded", or
+ * - it is flagged for a cancellation decision (`cancellationFlag`, Step 5).
  *
- * A booking whose EMDs are all issued and paid has nothing left but refunds,
- * which are worked from the Refunds page's "To be refunded" list. Cancelled and
- * completed bookings are not active work either; they appear only when the
- * status filter asks for them, so they stay reachable.
+ * A booking with nothing left but refunds is worked from the Refunds page's "To
+ * be refunded" list. Cancelled and completed bookings are not active work
+ * either; they appear only when the status filter asks for them, so they stay
+ * reachable.
  */
-export function isDashboardWork(row: Pick<PnrListRow, 'status' | 'emdsComplete' | 'nextIataPayment' | 'iataUndated'>): boolean {
+export function isDashboardWork(
+  row: Pick<PnrListRow, 'status' | 'emdsComplete' | 'nextIataPayment' | 'iataUndated' | 'paidAwaitingRefund'> & {
+    cancellationFlag?: PnrListRow['cancellationFlag'];
+  }
+): boolean {
   if (row.status !== 'active') return false;
-  return !row.emdsComplete || row.nextIataPayment !== null || row.iataUndated;
+  return (
+    !row.emdsComplete ||
+    row.nextIataPayment !== null ||
+    row.iataUndated ||
+    row.paidAwaitingRefund ||
+    // Waiting on a person's cancellation decision (Phase 9 Step 5).
+    !!row.cancellationFlag
+  );
 }

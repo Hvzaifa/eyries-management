@@ -9,10 +9,13 @@ import {
   saveAssignmentTerms,
 } from '../actions/assignments';
 import { recordRecovery, deleteRecovery } from '../actions/recoveries';
+import { recordPayback } from '../actions/cancellation';
+import { cancelledAgentMoney, type CancelledAgentMoney } from '@/lib/cancellation';
 import {
   agentBalance,
   agentTotal,
   describeTerm,
+  type AgentBalance,
   type AgentTerms,
   type PnrPricing,
   type TermType,
@@ -34,9 +37,41 @@ export interface AssignmentRow {
   id: string;
   agentId: string;
   agentName: string;
+  b2bCode: string | null;
   seats: number;
   terms: AgentTerms;
+  /** The airline's penalty for this agent's unissued seats (Phase 9 Step 4). */
+  penaltyAmount: number | null;
   recoveries: RecoveryRow[];
+  /** Money paid back after a cancellation (Phase 9 Step 5). */
+  paybacks: { id: string; amount: number; paidOn: string; reference: string | null }[];
+}
+
+/** A cancelled booking's agent money (Phase 9 Step 5). */
+function cancelledMoneyOf(row: AssignmentRow): CancelledAgentMoney {
+  return cancelledAgentMoney({
+    recoveries: row.recoveries.map((r) => r.amount),
+    penalty: row.penaltyAmount,
+    paybacks: row.paybacks.map((b) => b.amount),
+  });
+}
+
+/**
+ * What the agent owes on this booking. On a cancelled booking only their
+ * penalty, less what they paid — the rest is paid back, never credit.
+ */
+function balanceOf(row: AssignmentRow, pricing: PnrPricing, cancelled: boolean): AgentBalance {
+  if (!cancelled) {
+    return agentBalance({
+      seats: row.seats,
+      pricing,
+      terms: row.terms,
+      recoveries: row.recoveries.map((r) => r.amount),
+      penalty: row.penaltyAmount,
+    });
+  }
+  const m = cancelledMoneyOf(row);
+  return { base: 0, charge: 0, discount: 0, tax: 0, penalty: m.penalty, total: m.penalty, margin: 0, recovered: m.paid, outstanding: m.owes, credit: 0 };
 }
 
 const inputCls =
@@ -63,6 +98,7 @@ export default function SeatOwnership({
   today,
   canAssign,
   canReleaseOrMove,
+  cancelled = false,
 }: {
   pnrId: string;
   seats: number;
@@ -96,6 +132,11 @@ export default function SeatOwnership({
   canAssign: boolean;
   /** Release and move are Head Office only (docs/decisions.md, ruling 7). */
   canReleaseOrMove: boolean;
+  /**
+   * The booking is cancelled (Phase 9 Step 5): seats stay as they were, each
+   * agent owes only their penalty, and Head Office records paybacks.
+   */
+  cancelled?: boolean;
 }) {
   const [dialog, setDialog] = useState<
     | { kind: 'assign' }
@@ -103,6 +144,7 @@ export default function SeatOwnership({
     | { kind: 'move'; row: AssignmentRow }
     | { kind: 'terms'; row: AssignmentRow }
     | { kind: 'pay'; row: AssignmentRow }
+    | { kind: 'payback'; row: AssignmentRow }
     | null
   >(null);
   const [isPending, startTransition] = useTransition();
@@ -127,7 +169,7 @@ export default function SeatOwnership({
     <section className="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm">
       <div className="flex items-center justify-between mb-1">
         <h2 className="text-sm font-semibold text-stone-900">Seat ownership</h2>
-        {canAssign && unassignedSeats > 0 && agents.length > 0 && (
+        {canAssign && !cancelled && unassignedSeats > 0 && agents.length > 0 && (
           <button
             onClick={() => { setError(null); setDialog({ kind: 'assign' }); }}
             className="text-[11px] font-medium text-stone-500 hover:text-brand-dark transition-colors inline-flex items-center gap-1 cursor-pointer border border-stone-200 bg-white px-2.5 py-1.5 rounded-lg hover:bg-brand-50 hover:border-brand-200 shadow-sm"
@@ -180,12 +222,7 @@ export default function SeatOwnership({
       ) : (
         <ul className="space-y-2">
           {assignments.map((a) => {
-            const money = agentBalance({
-              seats: a.seats,
-              pricing,
-              terms: a.terms,
-              recoveries: a.recoveries.map((r) => r.amount),
-            });
+            const money = balanceOf(a, pricing, cancelled);
             const dues = agentDues({
               agentSeats: a.seats,
               pnrSeats: seats,
@@ -195,6 +232,7 @@ export default function SeatOwnership({
               rounds,
               ticketIssuanceDeadline,
               upcomingRoundAmount,
+              penalty: a.penaltyAmount,
             });
             const hasTerms = a.terms.chargeType !== 'none' || a.terms.discountType !== 'none';
             return (
@@ -203,7 +241,10 @@ export default function SeatOwnership({
                 className="rounded-xl border border-stone-200 bg-stone-50/60 px-4 py-3"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-sm font-medium text-stone-800">{a.agentName}</span>
+                  <span className="text-sm font-medium text-stone-800">
+                    {a.agentName}
+                    {a.b2bCode && <span className="ml-2 font-mono text-xs font-normal text-stone-500">{a.b2bCode}</span>}
+                  </span>
                   <div className="flex items-center gap-3">
                     <span className="text-sm text-stone-700 tabular-nums">
                       {a.seats} seat{a.seats === 1 ? '' : 's'}
@@ -218,16 +259,22 @@ export default function SeatOwnership({
                           >
                             <Banknote className="w-3.5 h-3.5" />
                           </button>
-                          <button
+                          {!cancelled && <button
                             onClick={() => { setError(null); setDialog({ kind: 'terms', row: a }); }}
                             className="text-stone-400 hover:text-emerald-600 p-1.5 rounded-lg hover:bg-white transition-colors cursor-pointer"
-                            title="Set charge, discount and tax"
+                            title="Set PSF: charge, discount and tax"
                           >
                             <Percent className="w-3.5 h-3.5" />
-                          </button>
+                          </button>}
                         </>
                       )}
-                      {canReleaseOrMove && (
+                      {/* Paid seats stay with the agent (owner, 2026-10-23). */}
+                      {canReleaseOrMove && !cancelled && a.recoveries.length > 0 && (
+                        <span className="text-[10px] text-stone-400 px-1" title="Paid seats cannot be taken back or moved">
+                          Paid — kept
+                        </span>
+                      )}
+                      {canReleaseOrMove && !cancelled && a.recoveries.length === 0 && (
                         <>
                           <button
                             onClick={() => { setError(null); setDialog({ kind: 'move', row: a }); }}
@@ -249,6 +296,15 @@ export default function SeatOwnership({
                   </div>
                 </div>
 
+                {cancelled && (
+                  <CancelledAgentLine
+                    money={cancelledMoneyOf(a)}
+                    canPayBack={canReleaseOrMove}
+                    onPayBack={() => { setError(null); setDialog({ kind: 'payback', row: a }); }}
+                  />
+                )}
+
+                {!cancelled && (<>
                 {/* What this agent owes. Every figure is calculated from the
                     terms and the booking's fare — nothing here is stored. */}
                 <div className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[11px] text-stone-500">
@@ -268,6 +324,9 @@ export default function SeatOwnership({
                   )}
                   {money.tax > 0 && (
                     <span className="tabular-nums">+ {formatPkr(money.tax)} airline tax</span>
+                  )}
+                  {money.penalty > 0 && (
+                    <span className="text-red-700 tabular-nums">+ {formatPkr(money.penalty)} penalty (unissued seats)</span>
                   )}
                   {hasTerms && (
                     <span className={money.margin < 0 ? 'text-amber-700' : 'text-emerald-700'}>
@@ -319,6 +378,7 @@ export default function SeatOwnership({
                     compact
                   />
                 </div>
+                </>)}
               </li>
             );
           })}
@@ -335,9 +395,11 @@ export default function SeatOwnership({
                   : dialog.kind === 'release'
                     ? `Take seats back from ${dialog.row.agentName}`
                     : dialog.kind === 'terms'
-                      ? `What ${dialog.row.agentName} pays`
+                      ? `PSF — ${dialog.row.agentName}`
                       : dialog.kind === 'pay'
                         ? `Payments from ${dialog.row.agentName}`
+                      : dialog.kind === 'payback'
+                        ? `Pay back ${dialog.row.agentName}`
                       : `Move ${dialog.row.agentName}’s seats`}
               </h3>
               <button
@@ -462,10 +524,25 @@ export default function SeatOwnership({
               />
             )}
 
+            {dialog.kind === 'payback' && (
+              <PaybackForm
+                row={dialog.row}
+                today={today}
+                error={error}
+                isPending={isPending}
+                onSubmit={run(async (fd) => {
+                  const res = await recordPayback(fd);
+                  return res?.error ? { ok: false, error: res.error } : { ok: true };
+                })}
+                onCancel={() => setDialog(null)}
+              />
+            )}
+
             {dialog.kind === 'pay' && (
               <RecoveryForm
                 row={dialog.row}
                 pricing={pricing}
+                cancelled={cancelled}
                 today={today}
                 error={error}
                 isPending={isPending}
@@ -703,6 +780,7 @@ function Line({ label, value }: { label: string; value: string }) {
 function RecoveryForm({
   row,
   pricing,
+  cancelled = false,
   today,
   error,
   isPending,
@@ -713,6 +791,7 @@ function RecoveryForm({
 }: {
   row: AssignmentRow;
   pricing: PnrPricing;
+  cancelled?: boolean;
   today: string;
   error: string | null;
   isPending: boolean;
@@ -721,19 +800,18 @@ function RecoveryForm({
   onDelete: (e: React.FormEvent<HTMLFormElement>) => void;
   onCancel: () => void;
 }) {
-  const money = agentBalance({
-    seats: row.seats,
-    pricing,
-    terms: row.terms,
-    recoveries: row.recoveries.map((r) => r.amount),
-  });
+  const money = balanceOf(row, pricing, cancelled);
 
   return (
     <div className="p-5 space-y-4">
       {error && <FormError message={error} />}
 
       <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-xs space-y-1">
-        <Line label={`Owes on ${row.seats} seat${row.seats === 1 ? '' : 's'}`} value={formatPkr(money.total)} />
+        <Line
+          label={cancelled ? 'Owes: penalty (booking cancelled)' : `Owes on ${row.seats} seat${row.seats === 1 ? '' : 's'}`}
+          value={formatPkr(money.total)}
+        />
+        {!cancelled && money.penalty > 0 && <Line label="of which penalty for unissued seats" value={formatPkr(money.penalty)} />}
         <Line label="Paid so far" value={formatPkr(money.recovered)} />
         <div className="flex justify-between pt-1.5 border-t border-stone-200 font-semibold text-stone-800">
           <span>{money.credit > 0 ? 'In credit' : 'Outstanding'}</span>
@@ -869,5 +947,128 @@ function NextDue({ dues, today }: { dues: ReturnType<typeof agentDues>; today: s
       <CalendarClock className="w-3 h-3" />
       {what} {formatPkr(next.amount)} {days < 0 ? `overdue since ${next.date}` : `due ${next.date}`}
     </span>
+  );
+}
+
+/**
+ * One agent on a cancelled booking (Phase 9 Step 5): their penalty, what they
+ * paid, what has been paid back, and what is left either way. Nothing is paid
+ * back until the penalty is entered (blank is not zero).
+ */
+function CancelledAgentLine({
+  money,
+  canPayBack,
+  onPayBack,
+}: {
+  money: CancelledAgentMoney;
+  canPayBack: boolean;
+  onPayBack: () => void;
+}) {
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-stone-500">
+      <span className="text-red-700 font-medium">Booking cancelled</span>
+      <span>
+        Penalty{' '}
+        {money.penaltyEntered ? (
+          <span className="tabular-nums text-stone-700">{formatPkr(money.penalty)}</span>
+        ) : (
+          <span className="text-amber-700">not entered yet</span>
+        )}
+      </span>
+      <span>
+        Paid <span className="tabular-nums text-stone-700">{formatPkr(money.paid)}</span>
+      </span>
+      {money.paidBack > 0 && (
+        <span>
+          Paid back <span className="tabular-nums text-stone-700">{formatPkr(money.paidBack)}</span>
+        </span>
+      )}
+      {money.owes > 0 ? (
+        <span className="font-semibold text-stone-900">
+          Owes <span className="tabular-nums">{formatPkr(money.owes)}</span>
+        </span>
+      ) : money.toPayBack > 0 ? (
+        <span className="font-semibold text-sky-700">
+          To pay back <span className="tabular-nums">{formatPkr(money.toPayBack)}</span>
+        </span>
+      ) : money.penaltyEntered ? (
+        <span className="font-semibold text-emerald-700">Settled</span>
+      ) : null}
+      {canPayBack && money.toPayBack > 0 && (
+        <button
+          onClick={onPayBack}
+          className="ml-auto text-[11px] font-semibold text-sky-700 bg-white border border-sky-200 px-2.5 py-1 rounded-lg hover:bg-sky-50 cursor-pointer"
+        >
+          Record payback
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Head Office records money paid back to an agent; never more than is owed back. */
+function PaybackForm({
+  row,
+  today,
+  error,
+  isPending,
+  onSubmit,
+  onCancel,
+}: {
+  row: AssignmentRow;
+  today: string;
+  error: string | null;
+  isPending: boolean;
+  onSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
+  onCancel: () => void;
+}) {
+  const money = cancelledMoneyOf(row);
+  return (
+    <form onSubmit={onSubmit} className="p-5 space-y-4">
+      {error && <FormError message={error} />}
+      <input type="hidden" name="assignment_id" value={row.id} />
+      <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-xs space-y-1">
+        <Line label="Paid by the agent" value={formatPkr(money.paid)} />
+        <Line label="Less their penalty" value={formatPkr(money.penalty)} />
+        <Line label="Already paid back" value={formatPkr(money.paidBack)} />
+        <div className="flex justify-between pt-1.5 border-t border-stone-200 font-semibold text-stone-800">
+          <span>To pay back</span>
+          <span className="tabular-nums">{formatPkr(money.toPayBack)}</span>
+        </div>
+      </div>
+      {row.paybacks.length > 0 && (
+        <ul className="space-y-1 text-xs text-stone-600">
+          {row.paybacks.map((b) => (
+            <li key={b.id} className="flex justify-between gap-3">
+              <span>
+                {b.paidOn}
+                {b.reference && <span className="text-stone-400"> · {b.reference}</span>}
+              </span>
+              <span className="tabular-nums">{formatPkr(b.amount)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs font-medium text-stone-600 mb-1.5">
+            Amount <span className="text-red-500">*</span>
+          </label>
+          <input type="number" name="amount" required min="0.01" step="0.01" max={money.toPayBack} defaultValue={money.toPayBack} className={inputCls} />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-stone-600 mb-1.5">
+            Paid on <span className="text-red-500">*</span>
+          </label>
+          <input type="date" name="paid_on" required max={today} defaultValue={today} className={inputCls} />
+        </div>
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-stone-600 mb-1.5">Reference</label>
+        <input type="text" name="reference" maxLength={120} placeholder="Cheque or transfer number" className={inputCls} />
+        <p className="mt-1 text-[11px] text-stone-400">Shown to staff; never written to the change history.</p>
+      </div>
+      <Buttons onCancel={onCancel} isPending={isPending} label="Record payback" />
+    </form>
   );
 }

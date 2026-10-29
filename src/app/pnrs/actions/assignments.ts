@@ -31,7 +31,7 @@ import {
   canSellOnPnr,
   TX_TIMEOUT_MS,
 } from '@/lib/server/guards';
-import { seatLedger, validateAssign, validateMove, validateRelease } from '@/lib/inventory';
+import { paidSeatsLock, seatLedger, validateAssign, validateMove, validateRelease } from '@/lib/inventory';
 import {
   describeTerm,
   isTermType,
@@ -69,8 +69,10 @@ export async function assignSeatsToAgent(formData: FormData): Promise<Assignment
   if (!pnrId || !agentId) return { ok: false, error: 'Missing booking or agent.' };
   if (seats === null) return { ok: false, error: 'Seats must be a positive whole number.' };
 
-  const pnr = await prisma.pnr.findUnique({ where: { id: pnrId }, select: { branchId: true } });
+  const pnr = await prisma.pnr.findUnique({ where: { id: pnrId }, select: { branchId: true, status: true } });
   if (!pnr) return { ok: false, error: 'Booking not found.' };
+  if (pnr.status === 'released') return { ok: false, error: 'This booking was released, so its seats cannot be assigned.' };
+  if (pnr.status === 'cancelled') return { ok: false, error: 'This booking was cancelled, so its seats cannot be assigned.' };
   if (!canSellOnPnr(user, pnr.branchId)) {
     return { ok: false, error: 'You do not have permission to assign seats on this booking.' };
   }
@@ -88,6 +90,17 @@ export async function assignSeatsToAgent(formData: FormData): Promise<Assignment
 
     const invalid = validateAssign(ledger, seats);
     if (invalid) return { ok: false, error: invalid };
+    // The company's seats in a split stay the company's (Phase 9 Step 6): a split
+    // takes seats from one holder, and handing them to an agent would change it.
+    const companySplit = (await tx.pnrSplit.findMany({ where: { pnrId, assignmentId: null }, select: { seats: true } }))
+      .reduce((n, x) => n + x.seats, 0);
+    if (seats > ledger.unassigned - companySplit) {
+      const free = Math.max(0, ledger.unassigned - companySplit);
+      return {
+        ok: false,
+        error: `Only ${free} of the company's seats can be assigned: ${companySplit} are in a split. Remove the split first to assign them.`,
+      };
+    }
 
     // One live assignment per agent per PNR: topping up an agent's seats adds to
     // the row they already have, rather than leaving two rows to reconcile.
@@ -155,6 +168,14 @@ export async function releaseAgentSeats(formData: FormData): Promise<AssignmentA
     if (existing.releasedAt) return { ok: false, error: 'These seats have already been released.' };
 
     await lockPnr(tx, existing.pnrId);
+    // A cancelled booking's agents are settled by penalty and payback (Phase 9
+    // Step 5); taking seats back would change who is owed what.
+    if (await isCancelled(tx, existing.pnrId)) return { ok: false, error: 'This booking was cancelled, so its seats stay as they were.' };
+    if (await hasSplit(tx, existing.id)) return { ok: false, error: `Some of ${existing.agent.name}'s seats are in a split. Remove the split first.` };
+
+    // Counted inside the lock, so a payment recorded at the same moment counts.
+    const paid = paidSeatsLock(existing.agent.name, await tx.agentRecovery.count({ where: { assignmentId: existing.id } }));
+    if (paid) return { ok: false, error: paid };
 
     // No seats given = release the whole assignment.
     const toRelease = seats ?? existing.seats;
@@ -224,6 +245,12 @@ export async function moveAgentSeats(formData: FormData): Promise<AssignmentActi
     if (from.releasedAt) return { ok: false, error: 'These seats have already been released.' };
 
     await lockPnr(tx, from.pnrId);
+    if (await isCancelled(tx, from.pnrId)) return { ok: false, error: 'This booking was cancelled, so its seats stay as they were.' };
+    if (await hasSplit(tx, from.id)) return { ok: false, error: `Some of ${from.agent.name}'s seats are in a split. Remove the split first.` };
+
+    // Paid seats stay with the agent who paid, so they cannot be moved either.
+    const paid = paidSeatsLock(from.agent.name, await tx.agentRecovery.count({ where: { assignmentId: from.id } }));
+    if (paid) return { ok: false, error: paid };
 
     const toMove = seats ?? from.seats;
     const invalid = validateMove(from.seats, toMove, from.agentId === toAgentId);
@@ -318,10 +345,13 @@ export async function saveAssignmentTerms(formData: FormData): Promise<Assignmen
     where: { id: assignmentId },
     include: {
       agent: { select: { name: true } },
-      pnr: { select: { id: true, branchId: true, fare: true, airlineTaxes: true } },
+      pnr: { select: { id: true, branchId: true, fare: true, airlineTaxes: true, status: true } },
     },
   });
   if (!existing) return { ok: false, error: 'Assignment not found.' };
+  if (existing.pnr.status === 'cancelled') {
+    return { ok: false, error: 'This booking was cancelled: the agent now owes only their penalty, so the terms no longer apply.' };
+  }
   if (existing.releasedAt) {
     return { ok: false, error: 'These seats have been released — there are no terms to set.' };
   }
@@ -409,4 +439,19 @@ export async function saveAssignmentTerms(formData: FormData): Promise<Assignmen
     revalidatePath(`/agents/${existing.agentId}`);
   }
   return { ok: result.ok, error: result.error };
+}
+
+/** Whether the booking is cancelled, read inside the caller's row lock. */
+async function isCancelled(tx: Prisma.TransactionClient, pnrId: string): Promise<boolean> {
+  const p = await tx.pnr.findUnique({ where: { id: pnrId }, select: { status: true } });
+  return p?.status === 'cancelled';
+}
+
+/**
+ * Whether an agent's assignment has seats in a split (Phase 9 Step 6; owner,
+ * 2026-10-29): those seats cannot be taken back or moved until the split is
+ * removed.
+ */
+async function hasSplit(tx: Prisma.TransactionClient, assignmentId: string): Promise<boolean> {
+  return (await tx.pnrSplit.count({ where: { assignmentId } })) > 0;
 }

@@ -24,8 +24,10 @@ export default async function AgentsPage() {
   const isHQ = isHeadOffice(authUser);
   const agents = await loadAgentLedger(authUser, todayIsoInPkt());
 
-  const rows = agents.map((a) => ({ agent: a, summary: summarizeReceivables(a.lines) }));
-  const all = summarizeReceivables(agents.flatMap((a) => a.lines));
+  // The balance left includes what is owed on bookings not yet in the system
+  // (owner, 2026-10-29).
+  const rows = agents.map((a) => ({ agent: a, summary: summarizeReceivables(a.lines, a.notInSystem) }));
+  const all = summarizeReceivables(agents.flatMap((a) => a.lines), agents.reduce((s, a) => s + Math.round(a.notInSystem * 100), 0) / 100);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -50,7 +52,7 @@ export default async function AgentsPage() {
               {isHQ
                 ? 'What every agent owes, across all branches.'
                 : `What agents owe on ${authUser.branchName ?? 'your branch'}’s bookings.`}{' '}
-              Active and completed bookings count; cancelled ones do not.
+              Active and completed bookings count; cancelled and released ones do not.
             </p>
           </div>
           <AgentFormButton />
@@ -99,6 +101,14 @@ export default async function AgentsPage() {
                         {formatPkr(s.balance)}
                         {s.credit > 0 && (
                           <span className="block text-[10px] font-normal text-emerald-700">{formatPkr(s.credit)} credit</span>
+                        )}
+                        {s.payBack > 0 && (
+                          <span className="block text-[10px] font-normal text-sky-700">{formatPkr(s.payBack)} to pay back</span>
+                        )}
+                        {s.notInSystem > 0 && (
+                          <span className="block text-[10px] font-normal text-amber-700">
+                            incl. {formatPkr(s.notInSystem)} on bookings not yet in the system
+                          </span>
                         )}
                       </td>
                       <td className="px-3 py-3.5 text-right">

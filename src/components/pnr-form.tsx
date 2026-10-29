@@ -18,11 +18,17 @@ import {
   MAX_STOPS,
   buildSector,
   isAirportCode,
+  legTimeline,
+  walkTimeline,
 } from '@/lib/flight-details';
+import { svTicketIssuanceDeadline } from '@/lib/ticketing';
+import { FORM_STATUSES } from '@/lib/release';
 import { diffInDays, todayIsoInPkt } from '@/lib/urgency';
 import type { PnrFormOptions } from '@/lib/pnrs';
+import SearchSelect from './search-select';
 import type { FieldConfidence } from '@/lib/ai/parse-booking';
 import { EMPTY_STOP, type PnrFormValues, type StopFormValues } from '@/lib/pnr-form-values';
+import { lookupOptionText } from '@/lib/lookups';
 
 const inputCls =
   'w-full bg-stone-50 border border-stone-300 rounded-xl px-3 py-2 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-brand-light/50 focus:border-brand-light transition-colors';
@@ -86,7 +92,7 @@ function SectionCard({
 }
 
 type LegKey = 'outbound' | 'inbound';
-type LegField = 'date' | 'departureCity' | 'departureTime' | 'arrivalCity' | 'arrivalTime' | 'flightCode';
+type LegField = 'date' | 'departureCity' | 'departureTime' | 'arrivalCity' | 'arrivalTime' | 'arrivalDate' | 'flightCode';
 
 const LEG_FIELD_NAMES: Record<LegField, string> = {
   date: 'date',
@@ -94,6 +100,7 @@ const LEG_FIELD_NAMES: Record<LegField, string> = {
   departureTime: 'departure_time',
   arrivalCity: 'arrival_city',
   arrivalTime: 'arrival_time',
+  arrivalDate: 'arrival_date',
   flightCode: 'flight_code',
 };
 
@@ -103,7 +110,14 @@ const LEG_FIELD_LABELS: Record<Exclude<LegField, 'flightCode'>, string> = {
   departureTime: 'Departure time',
   arrivalCity: 'Arrival city',
   arrivalTime: 'Arrival time',
+  arrivalDate: 'Arrival date',
 };
+
+/**
+ * Under a date the same as the moment before, with an earlier time: allowed
+ * (flying west), but usually an overnight flight left on the departure day.
+ */
+const SAME_DAY_EARLIER_HINT = 'Earlier than the time before it on the same date. If it is after midnight, it is the next day.';
 
 function legValueKey(leg: LegKey, field: LegField): keyof PnrFormValues {
   return `${leg}${field[0].toUpperCase()}${field.slice(1)}` as keyof PnrFormValues;
@@ -124,6 +138,7 @@ function FlightSection({
   onChange,
   onStopsChange,
   conf,
+  requireTimes,
 }: {
   title: string;
   leg: LegKey;
@@ -135,10 +150,35 @@ function FlightSection({
   onChange: (key: keyof PnrFormValues, value: string) => void;
   onStopsChange: (stops: StopFormValues[]) => void;
   conf: (key: keyof PnrFormValues) => FieldConfidence | undefined;
+  /** Every time required, and the date of any moment earlier than the one before (Phase 9 Step 1). */
+  requireTimes: boolean;
 }) {
   const stops = values[`${leg}Stops`];
   const setStop = (i: number, patch: Partial<StopFormValues>) =>
     onStopsChange(stops.map((s, j) => (j === i ? { ...s, ...patch } : s)));
+
+  // The same walk the save makes, to warn about a likely wrong date.
+  // Moment 2k is reaching stop k, 2k+1 leaving it, and the last is landing.
+  const legDate = values[`${leg}Date`];
+  const blank = (v: string) => v || null;
+  const steps = legDate
+    ? walkTimeline(
+        { date: legDate, time: blank(values[`${leg}DepartureTime`]) },
+        legTimeline(
+          stops.map((s) => ({
+            arrivalDate: blank(s.arrivalDate),
+            arrivalTime: blank(s.arrivalTime),
+            departureDate: blank(s.departureDate),
+            departureTime: blank(s.departureTime),
+          })),
+          { arrivalDate: blank(values[`${leg}ArrivalDate`]), arrivalTime: blank(values[`${leg}ArrivalTime`]) }
+        )
+      )
+    : [];
+  const sameDayEarlier = (moment: number) => !!steps[moment]?.sameDayEarlier;
+  const warn = (moment: number) => (sameDayEarlier(moment) ? SAME_DAY_EARLIER_HINT : undefined);
+  const landing = stops.length * 2;
+
   const input = (field: LegField) => {
     const key = legValueKey(leg, field);
     const name = `${leg}_${LEG_FIELD_NAMES[field]}`;
@@ -151,7 +191,19 @@ function FlightSection({
       case 'departureTime':
       case 'arrivalTime':
         return (
-          <input type="time" name={name} value={value} onChange={(e) => onChange(key, e.target.value)} className={inputCls} />
+          <input type="time" name={name} required={requireTimes} value={value} onChange={(e) => onChange(key, e.target.value)} className={inputCls} />
+        );
+      case 'arrivalDate':
+        return (
+          <input
+            type="date"
+            name={name}
+            required={requireTimes}
+            min={legDate || undefined}
+            value={value}
+            onChange={(e) => onChange(key, e.target.value)}
+            className={inputCls}
+          />
         );
       case 'departureCity':
       case 'arrivalCity':
@@ -191,8 +243,16 @@ function FlightSection({
           <Field
             key={field}
             label={field === 'flightCode' ? flightCodeLabel : LEG_FIELD_LABELS[field]}
-            required={field !== 'departureTime' && field !== 'arrivalTime'}
-            hint={field === 'date' ? dateHint : undefined}
+            required={
+              field === 'arrivalDate' || field === 'departureTime' || field === 'arrivalTime' ? requireTimes : true
+            }
+            hint={
+              field === 'date'
+                ? dateHint
+                : field === 'arrivalDate'
+                  ? warn(landing) ?? 'The day it lands, even if it is the departure day.'
+                  : undefined
+            }
             confidence={conf(legValueKey(leg, field))}
           >
             {input(field)}
@@ -219,7 +279,7 @@ function FlightSection({
         </div>
         <input type="hidden" name={`${leg}_stop_count`} value={stops.length} />
         {stops.map((stop, i) => (
-          <div key={i} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_1.3fr_auto] gap-x-4 gap-y-3 items-start mb-3">
+          <div key={i} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[0.8fr_1.7fr_1.7fr_1.2fr_auto] gap-x-4 gap-y-3 items-start mb-3">
             <Field label={`Stop ${i + 1} city`} required confidence={i === 0 ? conf(`${leg}Stops`) : undefined}>
               <input
                 name={`${leg}_stop_${i}_city`}
@@ -233,11 +293,36 @@ function FlightSection({
                 className={`${inputCls} font-mono uppercase placeholder:normal-case`}
               />
             </Field>
-            <Field label="Arrives">
-              <input type="time" name={`${leg}_stop_${i}_arrival_time`} value={stop.arrivalTime} onChange={(e) => setStop(i, { arrivalTime: e.target.value })} className={inputCls} />
+            {/* Both dates at a stop, even on the departure day (owner, 2026-10-20). */}
+            <Field label="Arrives" required={requireTimes} hint={warn(i * 2)}>
+              <div className="flex gap-2">
+                <input
+                  type="date"
+                  name={`${leg}_stop_${i}_arrival_date`}
+                  aria-label={`Stop ${i + 1} arrival date`}
+                  required={requireTimes}
+                  min={legDate || undefined}
+                  value={stop.arrivalDate}
+                  onChange={(e) => setStop(i, { arrivalDate: e.target.value })}
+                  className={inputCls}
+                />
+                <input type="time" name={`${leg}_stop_${i}_arrival_time`} aria-label={`Stop ${i + 1} arrival time`} required={requireTimes} value={stop.arrivalTime} onChange={(e) => setStop(i, { arrivalTime: e.target.value })} className={`${inputCls} max-w-[7.5rem]`} />
+              </div>
             </Field>
-            <Field label="Departs">
-              <input type="time" name={`${leg}_stop_${i}_departure_time`} value={stop.departureTime} onChange={(e) => setStop(i, { departureTime: e.target.value })} className={inputCls} />
+            <Field label="Departs" required={requireTimes} hint={warn(i * 2 + 1)}>
+              <div className="flex gap-2">
+                <input
+                  type="date"
+                  name={`${leg}_stop_${i}_departure_date`}
+                  aria-label={`Stop ${i + 1} departure date`}
+                  required={requireTimes}
+                  min={legDate || undefined}
+                  value={stop.departureDate}
+                  onChange={(e) => setStop(i, { departureDate: e.target.value })}
+                  className={inputCls}
+                />
+                <input type="time" name={`${leg}_stop_${i}_departure_time`} aria-label={`Stop ${i + 1} departure time`} required={requireTimes} value={stop.departureTime} onChange={(e) => setStop(i, { departureTime: e.target.value })} className={`${inputCls} max-w-[7.5rem]`} />
+              </div>
             </Field>
             <Field label="Onward flight code" hint="If the aircraft changes here.">
               <input
@@ -296,8 +381,8 @@ function FlightSection({
   );
 }
 
-const ONE_WAY_ORDER: LegField[] = ['date', 'departureTime', 'arrivalTime', 'departureCity', 'arrivalCity', 'flightCode'];
-const ROUND_TRIP_ORDER: LegField[] = ['date', 'departureCity', 'departureTime', 'arrivalCity', 'arrivalTime', 'flightCode'];
+const ONE_WAY_ORDER: LegField[] = ['date', 'departureTime', 'arrivalTime', 'arrivalDate', 'departureCity', 'arrivalCity', 'flightCode'];
+const ROUND_TRIP_ORDER: LegField[] = ['date', 'departureCity', 'departureTime', 'arrivalCity', 'arrivalTime', 'arrivalDate', 'flightCode'];
 
 export default function PnrForm({
   mode,
@@ -309,18 +394,26 @@ export default function PnrForm({
   submitLabel,
   onSkip,
   onSuccess,
+  requireTimes: requireTimesOnEdit = false,
 }: {
   mode: 'create' | 'edit';
   options: PnrFormOptions;
   initial: PnrFormValues;
-  action: (formData: FormData) => Promise<{ error: string } | undefined>;
+  action: (formData: FormData) => Promise<{ error: string } | { id: string; pnr: string } | undefined>;
   confidenceMap?: Partial<Record<keyof PnrFormValues, FieldConfidence>>;
   rawAirlineText?: string;
   submitLabel?: string;
   onSkip?: () => void;
-  onSuccess?: () => void;
+  /** Called with what the action returned, e.g. the saved booking's id. */
+  onSuccess?: (result?: { id: string; pnr: string }) => void;
+  /**
+   * Edit mode: the booking was entered in the app, so it keeps the entry rules
+   * — every flight time, overnight dates. A new booking always has them.
+   */
+  requireTimes?: boolean;
 }) {
   const conf = (key: keyof PnrFormValues) => confidenceMap?.[key];
+  const requireTimes = mode === 'create' || requireTimesOnEdit;
   const [values, setValues] = useState<PnrFormValues>(initial);
   // Seeded from the booking so a date that arrived with the draft — the AI
   // intake parses a TL date off the airline's email — is not silently replaced
@@ -329,6 +422,11 @@ export default function PnrForm({
   const [roundDeadlineTouched, setRoundDeadlineTouched] = useState(
     Boolean(initial.pnrTlDate)
   );
+  // The ticket issuance deadline, entered with a new booking (A6). SV's policy
+  // date fills it until staff type their own, as with the EMD deadline above;
+  // a date that came with the draft counts as typed.
+  const [ticketDeadline, setTicketDeadline] = useState<string>(initial.ticketIssuanceDeadline ?? '');
+  const [ticketDeadlineTouched, setTicketDeadlineTouched] = useState(Boolean(initial.ticketIssuanceDeadline));
   const [duplicateWarning, setDuplicateWarning] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -337,6 +435,9 @@ export default function PnrForm({
     () => options.airlines.find((a) => a.id === values.airlineId)?.code ?? null,
     [options.airlines, values.airlineId]
   );
+
+  const svTicketDeadline = svTicketIssuanceDeadline(airlineCode, values.outboundDate || null);
+  const shownTicketDeadline = !ticketDeadlineTouched && svTicketDeadline ? svTicketDeadline : ticketDeadline;
 
   const suggestion = useMemo(
     () =>
@@ -411,6 +512,17 @@ export default function PnrForm({
   const setValue = (key: keyof PnrFormValues, value: string) =>
     setValues((v) => ({ ...v, [key]: value }));
 
+  // Typeable dropdowns (owner, 2026-10-19): branches by code, airlines by code
+  // and the supplier sheet's name.
+  const branchOptions = useMemo(
+    () => options.branches.map((b) => ({ value: b.id, code: b.code ?? b.name, name: b.name })),
+    [options.branches]
+  );
+  const airlineOptions = useMemo(
+    () => options.airlines.map((a) => ({ value: a.id, code: a.code, name: a.name })),
+    [options.airlines]
+  );
+
   // The sector the save will build, shown so staff can check the route reads
   // the way it always has. Same function as the server.
   const sectorPreview = useMemo(() => {
@@ -446,11 +558,11 @@ export default function PnrForm({
     const formData = new FormData(e.currentTarget);
     startTransition(async () => {
       const res = await action(formData);
-      if (res?.error) {
+      if (res && 'error' in res) {
         setErrorMessage(res.error);
         setDuplicateWarning(false);
       } else {
-        onSuccess?.();
+        onSuccess?.(res ?? undefined);
       }
     });
   };
@@ -508,20 +620,28 @@ export default function PnrForm({
         <Field label="License" confidence={conf('licenseId')}>
           <select name="license_id" value={values.licenseId} onChange={set('licenseId')} className={`${inputCls} cursor-pointer`}>
             <option value="">—</option>
-            {options.licenses.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+            {options.licenses.map((l) => <option key={l.id} value={l.id}>{lookupOptionText(l)}</option>)}
           </select>
         </Field>
         <Field label="Branch" confidence={conf('branchId')}>
-          <select name="branch_id" value={values.branchId} onChange={set('branchId')} className={`${inputCls} cursor-pointer`}>
-            <option value="">—</option>
-            {options.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </select>
+          <SearchSelect
+            name="branch_id"
+            options={branchOptions}
+            value={values.branchId}
+            onChange={(v) => setValue('branchId', v)}
+            placeholder="Type a code or city…"
+            className={inputCls}
+          />
         </Field>
         <Field label="Airline" confidence={conf('airlineId')}>
-          <select name="airline_id" value={values.airlineId} onChange={set('airlineId')} className={`${inputCls} cursor-pointer`}>
-            <option value="">—</option>
-            {options.airlines.map((a) => <option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}
-          </select>
+          <SearchSelect
+            name="airline_id"
+            options={airlineOptions}
+            value={values.airlineId}
+            onChange={(v) => setValue('airlineId', v)}
+            placeholder="Type a code or airline…"
+            className={inputCls}
+          />
         </Field>
         <Field label="Segment" confidence={conf('segment')}>
           <select name="segment" value={values.segment} onChange={set('segment')} className={`${inputCls} cursor-pointer`}>
@@ -554,12 +674,24 @@ export default function PnrForm({
             <input type="date" name="pnr_tl_date" value={values.pnrTlDate} onChange={set('pnrTlDate')} className={inputCls} />
           </Field>
         )}
-        <Field label="Status">
-          <select name="status" value={values.status} onChange={set('status')} className={`${inputCls} cursor-pointer`}>
-            <option value="active">active</option>
-            <option value="cancelled">cancelled</option>
-            <option value="completed">completed</option>
-          </select>
+        {/* Released is set only by Release on the booking page, with a reason,
+            and can never be undone; cancelled is no longer set by hand
+            (Phase 9 Step 2; owner, 2026-10-20). */}
+        <Field label="Status" hint={initial.status === 'released' ? 'Released bookings stay released.' : undefined}>
+          {initial.status === 'released' ? (
+            <>
+              <input type="hidden" name="status" value="released" />
+              <p className="text-sm text-stone-500 px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl">released</p>
+            </>
+          ) : (
+            <select name="status" value={values.status} onChange={set('status')} className={`${inputCls} cursor-pointer`}>
+              {FORM_STATUSES.map((st) => <option key={st} value={st}>{st}</option>)}
+              {/* A booking recorded as cancelled keeps it until changed. */}
+              {!(FORM_STATUSES as readonly string[]).includes(initial.status) && (
+                <option value={initial.status}>{initial.status} (as recorded)</option>
+              )}
+            </select>
+          )}
         </Field>
         {/* For the package as a whole, not per flight (owner, 2026-09-28). */}
         <Field label="Meal included" confidence={conf('mealIncluded')}>
@@ -612,6 +744,7 @@ export default function PnrForm({
               onChange={setValue}
               onStopsChange={(st) => setValues((v) => ({ ...v, outboundStops: st }))}
               conf={conf}
+              requireTimes={requireTimes}
             />
           ) : values.tripType === 'round_trip' ? (
             <>
@@ -625,6 +758,7 @@ export default function PnrForm({
                 onChange={setValue}
                 onStopsChange={(st) => setValues((v) => ({ ...v, outboundStops: st }))}
                 conf={conf}
+                requireTimes={requireTimes}
               />
               <FlightSection
                 title="Inbound"
@@ -636,6 +770,7 @@ export default function PnrForm({
                 onChange={setValue}
                 onStopsChange={(st) => setValues((v) => ({ ...v, inboundStops: st }))}
                 conf={conf}
+                requireTimes={requireTimes}
               />
             </>
           ) : (
@@ -651,9 +786,14 @@ export default function PnrForm({
         <Field label="Airline taxes" confidence={conf('airlineTaxes')}>
           <input type="number" name="airline_taxes" step="0.01" min="0" value={values.airlineTaxes} onChange={set('airlineTaxes')} className={inputCls} />
         </Field>
-        <Field label="PSF" confidence={conf('psf')}>
-          <input type="number" name="psf" step="0.01" min="0" value={values.psf} onChange={set('psf')} className={inputCls} />
-        </Field>
+        {/* PSF is charged only to agents, through their charge or discount, so a
+            new booking has none (owner, 2026-10-20). Shown only to keep a value
+            an older booking already carries. */}
+        {mode === 'edit' && initial.psf !== '' && (
+          <Field label="PSF" hint="Recorded before PSF moved to agents' charges." confidence={conf('psf')}>
+            <input type="number" name="psf" step="0.01" min="0" value={values.psf} onChange={set('psf')} className={inputCls} />
+          </Field>
+        )}
       </SectionCard>
 
       {mode === 'create' && (
@@ -698,6 +838,38 @@ export default function PnrForm({
               (policy, no margin).
             </div>
           )}
+        </SectionCard>
+      )}
+
+      {/* Every new booking carries its ticket issuance deadline (Phase 9 Step 1,
+          A6), no later than departure (owner, 2026-10-20). Afterwards it is
+          changed under Ticketing on the booking page. */}
+      {mode === 'create' && (
+        <SectionCard title="Ticket issuance deadline">
+          <div className="sm:col-span-2 lg:col-span-3 flex items-start gap-2 text-[11px] text-brand-dark -mt-1 mb-1">
+            <Sparkles className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            {svTicketDeadline ? (
+              <span>
+                SV policy: tickets are issued by <strong>{svTicketDeadline}</strong>, 3 days before departure. Editable.
+              </span>
+            ) : (
+              <span>Enter the airline&rsquo;s ticketing deadline. It cannot be after the departure date.</span>
+            )}
+          </div>
+          <Field label="Issue tickets by" required confidence={conf('ticketIssuanceDeadline')}>
+            <input
+              type="date"
+              name="ticket_issuance_deadline"
+              required
+              max={values.outboundDate || undefined}
+              value={shownTicketDeadline}
+              onChange={(e) => {
+                setTicketDeadline(e.target.value);
+                setTicketDeadlineTouched(true);
+              }}
+              className={inputCls}
+            />
+          </Field>
         </SectionCard>
       )}
 

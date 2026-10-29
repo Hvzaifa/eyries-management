@@ -33,6 +33,9 @@ function readForm(formData: FormData) {
     b2bCode: str(formData, 'b2b_code'),
     contactEmails: parseContactEmails(str(formData, 'contact_emails')),
     contactPhone: str(formData, 'contact_phone'),
+    dtsCode: str(formData, 'dts_code'),
+    address: str(formData, 'address'),
+    iataNumber: str(formData, 'iata_number'),
   };
 }
 
@@ -80,6 +83,9 @@ export async function createAgent(formData: FormData): Promise<AgentActionResult
           b2bCode: input.b2bCode,
           contactEmails: input.contactEmails,
           contactPhone: input.contactPhone,
+          dtsCode: input.dtsCode,
+          address: input.address,
+          iataNumber: input.iataNumber,
           // Head office agents carry no branch; a branch stamps its own.
           createdByBranchId: user.accountType === 'branch' ? user.branchId : null,
         },
@@ -133,6 +139,9 @@ export async function updateAgent(formData: FormData): Promise<AgentActionResult
     b2bCode: input.b2bCode,
     contactEmails: input.contactEmails,
     contactPhone: input.contactPhone,
+    dtsCode: input.dtsCode,
+    address: input.address,
+    iataNumber: input.iataNumber,
     active,
   };
 

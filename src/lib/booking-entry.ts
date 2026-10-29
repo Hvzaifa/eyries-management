@@ -13,6 +13,18 @@
  */
 
 /**
+ * Whether a booking was entered in the app, through the booking form (an AI
+ * draft or a spreadsheet upload goes through it too) or a split, rather than
+ * imported from the sheet. Such a booking is held to the current entry rules on
+ * every save: every flight time, the date of an overnight flight, and the
+ * ticket issuance deadline (Phase 9 Step 1; owner, 2026-10-20: "bookings made
+ * from UI"). Imported bookings have no `created_by`; every app write records one.
+ */
+export function enteredInApp(pnr: { createdBy: string | null }): boolean {
+  return pnr.createdBy !== null;
+}
+
+/**
  * Travel purposes a booking may have.
  *
  * Was free text with autocomplete, because the sheet's values were inconsistent
@@ -20,7 +32,8 @@
  * 2026-08-21). The re-entered data is consistent, so this is now a fixed list.
  * Every active booking in the current data already uses one of these three.
  */
-export const SEGMENTS = ['Umrah', 'Employment', 'Tour'] as const;
+// Employment was replaced by One Way, and its bookings renamed (owner, 2026-10-20).
+export const SEGMENTS = ['Umrah', 'One Way', 'Tour'] as const;
 export type Segment = (typeof SEGMENTS)[number];
 
 /** Case-insensitive match against the fixed list; returns the canonical spelling. */

@@ -22,6 +22,7 @@ import type { PnrListRow } from '@/lib/pnrs';
 import { formatNumber, formatPkr } from '@/lib/format';
 import DashboardCards from '@/components/dashboard-cards';
 import { isDashboardWork } from '@/lib/dashboard';
+import { describeFlag } from '@/lib/cancellation';
 
 const URGENCY_STYLES = {
   red: {
@@ -48,12 +49,22 @@ const URGENCY_STYLES = {
 
 const STATUS_STYLES: Record<string, string> = {
   active: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  released: 'bg-stone-100 text-stone-600 border-stone-300',
   cancelled: 'bg-red-50 text-red-700 border-red-200',
   completed: 'bg-sky-50 text-sky-700 border-sky-200',
 };
 
 function fmtDate(v: unknown): string {
   return typeof v === 'string' && v ? v : '—';
+}
+
+/**
+ * A paid EMD on a booking with no ticket issuance deadline reaches "To be
+ * refunded" only once the outbound date passes (owner, 2026-10-28). Flagged so
+ * someone enters the deadline rather than waiting on it.
+ */
+function NoTicketDeadlineFlag() {
+  return <span className="text-[10px] font-medium text-amber-700">No ticket deadline — add one under Ticketing</span>;
 }
 
 export default function PnrTable({
@@ -152,12 +163,23 @@ export default function PnrTable({
       { accessorKey: 'licenseName', header: 'License', cell: (c) => c.getValue<string>() ?? '—' },
       { accessorKey: 'branchName', header: 'Branch', filterFn: 'equalsString' },
       { accessorKey: 'pnr', header: 'PNR', cell: (c) => (
-          <Link
-            href={`/pnrs/${c.row.original.id}`}
-            className="font-mono text-brand-dark hover:text-brand-dark hover:underline"
-          >
-            {c.getValue<string>()}
-          </Link>
+          <span className="inline-flex flex-col">
+            <Link
+              href={`/pnrs/${c.row.original.id}`}
+              className="font-mono text-brand-dark hover:text-brand-dark hover:underline"
+            >
+              {c.getValue<string>()}
+            </Link>
+            {/* Splits live inside the booking, never as rows of their own
+                (Phase 9 Step 6; owner, 2026-10-29). */}
+            {c.row.original.splits.map((x, i) => (
+              <span key={i} className="text-[10px] text-stone-500 whitespace-nowrap">
+                Split: {x.seats} seat{x.seats === 1 ? '' : 's'}
+                {x.pnrCode ? ` · ${x.pnrCode}` : ''} · out {x.outboundDate}
+                {x.inboundDate ? ` · in ${x.inboundDate}` : ''}
+              </span>
+            ))}
+          </span>
         ) },
       { accessorKey: 'gdsPnr', header: 'GDS PNR', cell: (c) => c.getValue<string>() ?? '—' },
       { accessorKey: 'segment', header: 'Segment' },
@@ -255,7 +277,22 @@ export default function PnrTable({
             return (
               <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[11px] whitespace-nowrap font-medium ${s.badge}`}>
                 <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
-                {row.status === 'cancelled' ? 'Cancelled' : 'Completed'}
+                {row.status.charAt(0).toUpperCase() + row.status.slice(1)}
+              </span>
+            );
+          }
+
+          // A missed EMD-2 or ticketing deadline: flagged for staff to decide
+          // whether to cancel (Phase 9 Step 5) — never cancelled by the system.
+          if (row.cancellationFlag) {
+            const s = URGENCY_STYLES.red;
+            return (
+              <span className="inline-flex flex-col gap-0.5">
+                <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[11px] whitespace-nowrap font-medium ${s.badge}`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
+                  Cancellation review
+                </span>
+                <span className="text-[10px] text-stone-400">{describeFlag(row.cancellationFlag)}</span>
               </span>
             );
           }
@@ -274,6 +311,7 @@ export default function PnrTable({
                 <span className="text-[10px] text-stone-400">
                   {row.ticketsBy ? `Tickets by ${row.ticketsBy}` : 'Tickets next'}
                 </span>
+                {row.refundNeedsTicketDeadline && <NoTicketDeadlineFlag />}
               </span>
             );
           }
@@ -284,10 +322,14 @@ export default function PnrTable({
           // by another is how a red badge ends up beside a comfortable deadline.
           const u = getUrgency(todayIso, deadline, row.status);
           const s = URGENCY_STYLES[u];
+          // EMD-1 overdue: flagged for a person to confirm with the airline
+          // and release (Phase 9 Step 2, A2) — never changed by the system.
           const label = !deadline
             ? 'No deadline recorded'
             : deadline < todayIso
-              ? `Overdue since ${deadline}`
+              ? row.roundsIssued === 0
+                ? 'At risk — confirm with airline'
+                : `Overdue since ${deadline}`
               : `Issue by ${deadline}`;
 
           return (
@@ -298,8 +340,10 @@ export default function PnrTable({
               </span>
               <span className="text-[10px] text-stone-400">
                 {which}
+                {row.roundsIssued === 0 && deadline && deadline < todayIso && ` was due ${deadline}`}
                 {row.nextEmdAmount !== null && ` · ${formatPkr(row.nextEmdAmount)}`}
               </span>
+              {row.refundNeedsTicketDeadline && <NoTicketDeadlineFlag />}
             </span>
           );
         },
@@ -374,6 +418,8 @@ export default function PnrTable({
     getFilteredRowModel: getFilteredRowModel(),
     globalFilterFn: (row, _columnId, filterValue) => {
       const q = String(filterValue).toLowerCase();
+      // A split's PNR code finds the booking it lives in (Phase 9 Step 6).
+      if (row.original.splits.some((x) => x.pnrCode?.toLowerCase().includes(q))) return true;
       // Primitives and arrays of primitives only. `holderParts` is an array of
       // objects, and stringifying one yields "[object Object]" — which would
       // make a search for "o" or "ct" match every booking on the dashboard.
@@ -533,7 +579,7 @@ export default function PnrTable({
         </div>
 
         {[
-          { id: 'status', label: 'Needing action', options: ['cancelled', 'completed'] },
+          { id: 'status', label: 'Needing action', options: ['released', 'cancelled', 'completed'] },
           { id: 'branchName', label: 'All branches', options: branchOptions },
           { id: 'airlineCode', label: 'All airlines', options: airlineOptions },
         ].map((sel) => (

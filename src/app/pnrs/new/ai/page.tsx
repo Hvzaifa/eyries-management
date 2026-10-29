@@ -2,7 +2,7 @@ import { requirePageUser } from '@/lib/server/session';
 import { getPnrFormOptions } from '@/lib/pnrs';
 import AppHeader from '@/components/app-header';
 import AiIntakeForm from '@/components/ai-intake-form';
-import { createPnr } from '../../actions/pnr';
+import { createPnrAndContinue } from '../../actions/pnr';
 
 export default async function AiIntakePage() {
   const { user, authUser } = await requirePageUser();
@@ -29,7 +29,7 @@ export default async function AiIntakePage() {
           </p>
         </div>
 
-        <AiIntakeForm options={filteredOptions} action={createPnr} />
+        <AiIntakeForm options={filteredOptions} action={createPnrAndContinue} />
       </main>
     </div>
   );

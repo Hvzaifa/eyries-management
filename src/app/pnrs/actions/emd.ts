@@ -1,15 +1,26 @@
 'use server';
 
 /**
- * Server actions for EMD rounds: adding one, editing one, and recording refunds
- * both singly and in bulk. All of these are Head Office only.
+ * Server actions for EMD rounds: adding one, editing one, requesting refunds,
+ * and recording refunds both singly and in bulk. All of these are Head Office
+ * only, except requesting a refund, which a branch may do on its own bookings
+ * (Phase 9 Step 3, A1).
  */
 
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/prisma';
-import { validateRefund, MAX_BULK_REFUNDS } from '@/lib/refunds';
+import {
+  validateRefund,
+  MAX_BULK_REFUNDS,
+  REFUNDABLE_STATUSES,
+  refundRequestBlocker,
+  partsRefundTiming,
+  roundStatusEdit,
+} from '@/lib/refunds';
+import { ticketParts } from '@/lib/splits';
+import { canEditPnr } from '@/lib/auth';
 import { str, dateVal, numVal } from '@/lib/form';
-import { requireHeadOffice, TX_TIMEOUT_MS } from '@/lib/server/guards';
+import { requireHeadOffice, requireUser, TX_TIMEOUT_MS } from '@/lib/server/guards';
 import { syncPnrTlDate } from '@/lib/server/pnr-tl';
 import { isValidEmdNumber, EMD_NUMBER_HINT } from '@/lib/bulk-emd';
 import { iataPaymentState, validateIataPayment } from '@/lib/iata-payments';
@@ -23,6 +34,8 @@ export async function createEmdRound(formData: FormData) {
 
   const existing = await prisma.pnr.findUnique({ where: { id: pnrId } });
   if (!existing) return { error: 'Booking not found.' };
+  // A released booking ended before EMD-1, for good (Phase 9 Step 2).
+  if (existing.status === 'released') return { error: 'This booking was released, so no EMD can be issued on it.' };
 
   const roundPct = numVal(formData, 'round_payment_pct');
   const roundAmount = numVal(formData, 'round_emd_amount');
@@ -103,7 +116,9 @@ export async function updateEmdRound(formData: FormData) {
   const roundPct = numVal(formData, 'round_payment_pct');
   const roundAmount = numVal(formData, 'round_emd_amount');
   const roundDeadline = dateVal(formData, 'round_deadline_date');
-  const roundStatus = str(formData, 'round_status') || existing.status;
+  const statusChange = roundStatusEdit(existing.status, str(formData, 'round_status') || existing.status);
+  if ('error' in statusChange) return { error: statusChange.error };
+  const roundStatus = statusChange.status;
 
   if (!roundIssuance || roundPct === null || roundAmount === null || !roundDeadline) {
     return { error: 'Issuance date, payment %, EMD amount, and deadline are required.' };
@@ -165,7 +180,10 @@ export async function recordEmdRefund(formData: FormData) {
   const roundId = str(formData, 'round_id');
   if (!roundId) return { error: 'Missing round ID.' };
 
-  const existing = await prisma.emdRound.findUnique({ where: { id: roundId } });
+  const existing = await prisma.emdRound.findUnique({
+    where: { id: roundId },
+    include: { pnr: { select: { penaltyPaid: true } } },
+  });
   if (!existing) return { error: 'EMD round not found.' };
 
   // The round itself says which PNR it belongs to. This used to take `pnr_id`
@@ -178,7 +196,8 @@ export async function recordEmdRefund(formData: FormData) {
     refundAmount,
     str(formData, 'refund_date'),
     existing.status,
-    Number(existing.emdAmount)
+    Number(existing.emdAmount),
+    existing.pnr.penaltyPaid
   );
   // Re-wrap in a fresh object literal rather than returning `check` directly.
   // Every action here returns literals, which TypeScript merges into one type
@@ -231,12 +250,16 @@ export async function fetchEmdRoundsByPnrs(pnrCodes: string[]) {
   const rounds = await prisma.emdRound.findMany({
     where: {
       pnr: { pnr: { in: normalizedCodes } },
-      // Only an issued round can be refunded — the one other status IS refunded.
-      status: 'issued',
+      // Issued or refund requested (A1), or forfeited once the cancelled
+      // booking's penalty is paid (Phase 9 Step 5).
+      OR: [
+        { status: { in: REFUNDABLE_STATUSES.filter((s) => s !== 'forfeited') } },
+        { status: 'forfeited', pnr: { penaltyPaid: true } },
+      ],
     },
     include: {
       pnr: { select: { pnr: true, investorCompany: true } },
-      license: { select: { name: true } }
+      license: { select: { name: true, code: true } }
     },
     orderBy: [
       { pnr: { pnr: 'asc' } },
@@ -263,6 +286,126 @@ export async function fetchEmdRoundsByPnrs(pnrCodes: string[]) {
   return { rounds: withPaid, error: undefined };
 }
 
+/**
+ * Marks EMD rounds as refund requested (Phase 9 Step 3, A1).
+ *
+ * Only a round on "To be refunded" may be marked: issued, paid to IATA, on a
+ * booking whose refund is due (`refundRequestBlocker`). A branch may mark its
+ * own bookings' rounds, Head Office any. The batch is all-or-nothing, like the
+ * bulk refund, and names the round that stopped it.
+ *
+ * The status change is conditional on the round still being `issued`, so a
+ * refund recorded or requested by someone else at the same moment fails the
+ * whole batch instead of being overwritten.
+ */
+export async function requestEmdRefunds(roundIds: string[]) {
+  const user = await requireUser();
+
+  if (!Array.isArray(roundIds) || roundIds.length === 0) return { error: 'No EMD rounds selected.' };
+  if (roundIds.length > MAX_BULK_REFUNDS) {
+    return { error: `Too many rounds in one batch (${roundIds.length}). Request at most ${MAX_BULK_REFUNDS} at a time.` };
+  }
+  if (new Set(roundIds).size !== roundIds.length) {
+    return { error: 'The same EMD round appears more than once in this batch.' };
+  }
+
+  const rounds = await prisma.emdRound.findMany({
+    where: { id: { in: roundIds } },
+    select: {
+      id: true,
+      pnrId: true,
+      roundNumber: true,
+      status: true,
+      issuanceDate: true,
+      paymentDate: true,
+      pnr: {
+        select: {
+          pnr: true,
+          branchId: true,
+          seats: true,
+          outboundDate: true,
+          ticketing: { select: { ticketIssuanceDeadline: true, ticketsIssued: true, balanceTickets: true } },
+          splits: { select: { seats: true, ticketsIssued: true, balanceTickets: true, ticketIssuanceDeadline: true, outboundDate: true } },
+        },
+      },
+    },
+  });
+  if (rounds.length !== roundIds.length) {
+    return { error: 'One of the selected EMD rounds no longer exists. Reload the page and try again.' };
+  }
+
+  const today = todayIsoInPkt();
+  const iso = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
+  for (const r of rounds) {
+    const label = `${r.pnr.pnr} round ${r.roundNumber}`;
+    // The edit rule's branch scope, as for release: a branch only on its own bookings.
+    if (!canEditPnr(user, r.pnr.branchId, false)) {
+      return { error: `${label}: you can only request refunds on your own branch's bookings.` };
+    }
+    const blocker = refundRequestBlocker({
+      roundStatus: r.status,
+      paidToIata:
+        iataPaymentState({
+          issuanceDate: iso(r.issuanceDate)!,
+          paymentDate: iso(r.paymentDate),
+          refundDate: null,
+          roundStatus: r.status,
+          todayIso: today,
+        }).status === 'paid',
+      // Every part of the booking, splits included (Phase 9 Step 6).
+      timing: partsRefundTiming(
+        ticketParts(
+          {
+            seats: r.pnr.seats,
+            ticketsIssued: r.pnr.ticketing?.ticketsIssued ?? null,
+            balanceTickets: r.pnr.ticketing?.balanceTickets ?? null,
+            ticketIssuanceDeadline: iso(r.pnr.ticketing?.ticketIssuanceDeadline ?? null),
+            outboundDate: iso(r.pnr.outboundDate),
+          },
+          r.pnr.splits.map((x) => ({ ...x, ticketIssuanceDeadline: iso(x.ticketIssuanceDeadline), outboundDate: iso(x.outboundDate)! }))
+        ),
+        today
+      ),
+    });
+    if (blocker) return { error: `${label}: ${blocker}` };
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    const updated = await tx.emdRound.updateMany({
+      where: { id: { in: roundIds }, status: 'issued' },
+      data: { status: 'refund_requested' },
+    });
+    if (updated.count !== roundIds.length) {
+      throw new RequestRaced();
+    }
+    await tx.activityLog.createMany({
+      data: rounds.map((r) => ({
+        tableName: 'emd_rounds',
+        recordId: r.id,
+        fieldName: 'status',
+        oldValue: 'issued',
+        newValue: 'refund_requested',
+        changedBy: user.id,
+      })),
+    });
+    return { success: true as const };
+  }, { timeout: TX_TIMEOUT_MS }).catch((e: unknown) => {
+    if (e instanceof RequestRaced) {
+      return { error: 'One of these rounds changed while you were working. Reload the page and try again.' };
+    }
+    throw e;
+  });
+  if ('error' in result) return { error: result.error };
+
+  revalidatePath('/');
+  revalidatePath('/refunds');
+  for (const pnrId of new Set(rounds.map((r) => r.pnrId))) revalidatePath(`/pnrs/${pnrId}`);
+  return { success: true, count: rounds.length };
+}
+
+/** Thrown inside the request transaction so a raced round rolls the whole batch back. */
+class RequestRaced extends Error {}
+
 export async function processBulkRefunds(refunds: { roundId: string, amount: number, date: string }[]) {
   const user = await requireHeadOffice();
   
@@ -287,7 +430,7 @@ export async function processBulkRefunds(refunds: { roundId: string, amount: num
 
   const rounds = await prisma.emdRound.findMany({
     where: { id: { in: ids } },
-    include: { pnr: { select: { pnr: true } } },
+    include: { pnr: { select: { pnr: true, penaltyPaid: true } } },
   });
   const byId = new Map(rounds.map((r) => [r.id, r]));
 
@@ -298,7 +441,7 @@ export async function processBulkRefunds(refunds: { roundId: string, amount: num
       return { error: `One of the selected EMD rounds no longer exists. Re-fetch the list and try again.` };
     }
     const label = `${existing.pnr.pnr} round ${existing.roundNumber}`;
-    const check = validateRefund(req.amount, req.date, existing.status, Number(existing.emdAmount));
+    const check = validateRefund(req.amount, req.date, existing.status, Number(existing.emdAmount), existing.pnr.penaltyPaid);
     if ('error' in check) return { error: `${label}: ${check.error}` };
     validated.push({ roundId: req.roundId, pnrId: existing.pnrId, amount: req.amount, date: check.date });
   }

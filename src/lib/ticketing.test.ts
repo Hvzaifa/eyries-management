@@ -1,12 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import {
+  allTicketsAnswerOf,
   balanceTicketsFor,
-  cancelledTickets,
   isRealIsoDate,
+  penaltyEntryOpen,
+  svUnissuedAllowance,
+  ticketCountsFromAnswer,
+  unissuedSeats,
+  validatePenalty,
   svTicketIssuanceDeadline,
+  ticketDeadlineError,
   validateTicketing,
   type TicketingInput,
 } from './ticketing';
+import { refundTiming } from './refunds';
 
 describe('svTicketIssuanceDeadline', () => {
   it('is the outbound date minus 3 days for SV (72h policy, owner ruling 2026-09-17)', () => {
@@ -135,50 +142,162 @@ describe('validateTicketing', () => {
   });
 });
 
-describe('cancelledTickets', () => {
-  const base = {
-    todayIso: '2026-09-19',
-    ticketIssuanceDeadline: '2026-09-17',
-    ticketsIssued: 35,
-    balanceTickets: 15,
+describe('ticketCountsFromAnswer — "All tickets issued?" (A8)', () => {
+  it('not answered: both counts blank, never zero', () => {
+    expect(ticketCountsFromAnswer(30, '', null)).toEqual({ ticketsIssued: null, balanceTickets: null });
+    expect(ticketCountsFromAnswer(30, null, 5)).toEqual({ ticketsIssued: null, balanceTickets: null });
+  });
+
+  it('Yes: nothing remains and every seat is issued', () => {
+    expect(ticketCountsFromAnswer(30, 'yes', null)).toEqual({ ticketsIssued: 30, balanceTickets: 0 });
+  });
+
+  it('No: the typed remaining count is stored, tickets issued is worked out', () => {
+    expect(ticketCountsFromAnswer(30, 'no', 6)).toEqual({ ticketsIssued: 24, balanceTickets: 6 });
+    // None issued at all is an answer too (Step 5's ticketing trigger reads it).
+    expect(ticketCountsFromAnswer(30, 'no', 30)).toEqual({ ticketsIssued: 0, balanceTickets: 30 });
+  });
+
+  it('No needs a whole count from 1 to the seats', () => {
+    expect(ticketCountsFromAnswer(30, 'no', null)).toHaveProperty('error');
+    expect(ticketCountsFromAnswer(30, 'no', 0)).toEqual({ error: 'If no tickets remain, answer Yes — all tickets are issued.' });
+    expect(ticketCountsFromAnswer(30, 'no', 31)).toHaveProperty('error');
+    expect(ticketCountsFromAnswer(30, 'no', 2.5)).toHaveProperty('error');
+    expect(ticketCountsFromAnswer(30, 'no', -1)).toHaveProperty('error');
+  });
+
+  it('refuses any other answer', () => {
+    expect(ticketCountsFromAnswer(30, 'maybe', null)).toHaveProperty('error');
+  });
+
+  it('round-trips through the form', () => {
+    expect(allTicketsAnswerOf(null)).toBe('');
+    expect(allTicketsAnswerOf(0)).toBe('yes');
+    expect(allTicketsAnswerOf(6)).toBe('no');
+  });
+});
+
+describe('Yes → the paid EMDs go on "To be refunded" at once', () => {
+  it('before the ticket deadline', () => {
+    const counts = ticketCountsFromAnswer(30, 'yes', null) as { ticketsIssued: number };
+    expect(
+      refundTiming({ seats: 30, ticketsIssued: counts.ticketsIssued, ticketIssuanceDeadline: '2026-11-20', outboundDate: '2026-11-23', todayIso: '2026-10-28' })
+    ).toEqual({ due: true, why: 'tickets-issued' });
+  });
+
+  it('a No with tickets remaining does not', () => {
+    const counts = ticketCountsFromAnswer(30, 'no', 1) as { ticketsIssued: number };
+    expect(
+      refundTiming({ seats: 30, ticketsIssued: counts.ticketsIssued, ticketIssuanceDeadline: '2026-11-20', outboundDate: '2026-11-23', todayIso: '2026-10-28' }).due
+    ).toBe(false);
+  });
+});
+
+describe('svUnissuedAllowance — 10% rounded down (A9)', () => {
+  it.each([
+    [25, 2],
+    [30, 3],
+    [9, 0],
+    [10, 1],
+    [19, 1],
+    [100, 10],
+    [0, 0],
+  ])('%i seats allow %i', (seats, allowed) => {
+    expect(svUnissuedAllowance(seats)).toBe(allowed);
+  });
+});
+
+describe('unissuedSeats — after ticketing closes (A9, A10)', () => {
+  const sv = {
+    airlineCode: 'SV',
+    seats: 30,
+    balanceTickets: 3,
+    ticketIssuanceDeadline: '2026-10-20',
+    outboundDate: '2026-10-23',
+    todayIso: '2026-10-28',
     pnrStatus: 'active',
   };
 
-  it('reports the unissued balance once the deadline has passed', () => {
-    expect(cancelledTickets(base)).toBe(15);
+  it('SV, 30 seats, 3 unissued: within the 10%, no penalty', () => {
+    expect(unissuedSeats(sv)).toEqual({ unissued: 3, allowance: 3, overLimit: 0, penaltyCalledFor: false, isSv: true });
   });
 
-  it('says nothing while the deadline is today or still ahead', () => {
-    expect(cancelledTickets({ ...base, ticketIssuanceDeadline: '2026-09-19' })).toBeNull();
-    expect(cancelledTickets({ ...base, ticketIssuanceDeadline: '2026-09-20' })).toBeNull();
+  it('SV, 30 seats, 6 unissued: 3 beyond the limit, a penalty is called for', () => {
+    expect(unissuedSeats({ ...sv, balanceTickets: 6 })).toEqual({
+      unissued: 6,
+      allowance: 3,
+      overLimit: 3,
+      penaltyCalledFor: true,
+      isSv: true,
+    });
   });
 
-  it('says nothing when the whole booking was ticketed', () => {
-    expect(cancelledTickets({ ...base, ticketsIssued: 50, balanceTickets: 0 })).toBeNull();
+  it('another airline: any unissued seat calls for a penalty (PK, 1 unissued)', () => {
+    expect(unissuedSeats({ ...sv, airlineCode: 'PK', balanceTickets: 1 })).toEqual({
+      unissued: 1,
+      allowance: 0,
+      overLimit: 1,
+      penaltyCalledFor: true,
+      isSv: false,
+    });
   });
 
-  it('distinguishes "none recorded" from "none issued" — blank counts say nothing', () => {
-    // All 1,483 legacy ticketing rows look like this: dates, no counts. Reading
-    // blank as zero would declare every old booking wholly cancelled.
+  it('says nothing on or before the deadline day', () => {
+    expect(unissuedSeats({ ...sv, balanceTickets: 6, todayIso: '2026-10-20' })).toBeNull();
+    expect(unissuedSeats({ ...sv, balanceTickets: 6, todayIso: '2026-10-19' })).toBeNull();
+  });
+
+  it('a blank count is not zero issued — it says nothing', () => {
+    expect(unissuedSeats({ ...sv, balanceTickets: null })).toBeNull();
+  });
+
+  it('says nothing once every ticket is issued, or on a booking not active', () => {
+    expect(unissuedSeats({ ...sv, balanceTickets: 0 })).toBeNull();
+    expect(unissuedSeats({ ...sv, balanceTickets: 6, pnrStatus: 'released' })).toBeNull();
+  });
+
+  it('with no ticket deadline, ticketing closes when the outbound date has passed', () => {
+    const none = { ...sv, airlineCode: 'PK', ticketIssuanceDeadline: null, balanceTickets: 2 };
+    expect(unissuedSeats({ ...none, todayIso: '2026-10-23' })).toBeNull();
+    expect(unissuedSeats({ ...none, todayIso: '2026-10-24' })?.penaltyCalledFor).toBe(true);
+  });
+});
+
+describe('penaltyEntryOpen — outbound passed AND a penalty called for (owner, 2026-10-28)', () => {
+  const calledFor = { unissued: 6, allowance: 3, overLimit: 3, penaltyCalledFor: true, isSv: true };
+
+  it('opens after the outbound date when the limit is passed', () => {
+    expect(penaltyEntryOpen({ outboundDate: '2026-10-23', todayIso: '2026-10-24', unissued: calledFor })).toBe(true);
+  });
+
+  it('stays shut on the outbound day itself, and before it', () => {
+    expect(penaltyEntryOpen({ outboundDate: '2026-10-24', todayIso: '2026-10-24', unissued: calledFor })).toBe(false);
+  });
+
+  it('stays shut within SV\'s 10%, or with nothing unissued', () => {
     expect(
-      cancelledTickets({ ...base, ticketsIssued: null, balanceTickets: null })
-    ).toBeNull();
-    // Zero issued, explicitly recorded, IS an answer.
-    expect(cancelledTickets({ ...base, ticketsIssued: 0, balanceTickets: 50 })).toBe(50);
+      penaltyEntryOpen({ outboundDate: '2026-10-23', todayIso: '2026-10-28', unissued: { ...calledFor, unissued: 3, overLimit: 0, penaltyCalledFor: false } })
+    ).toBe(false);
+    expect(penaltyEntryOpen({ outboundDate: '2026-10-23', todayIso: '2026-10-28', unissued: null })).toBe(false);
+  });
+});
+
+describe('validatePenalty', () => {
+  it('blank means no penalty, and drops the license', () => {
+    expect(validatePenalty('QFC', null, 'lic')).toEqual({ amount: null, licenseId: null });
   });
 
-  it('says nothing without a recorded issuance deadline', () => {
-    expect(cancelledTickets({ ...base, ticketIssuanceDeadline: null })).toBeNull();
+  it('an amount needs its penalty EMD license', () => {
+    expect(validatePenalty('QFC', 50_000, null)).toEqual({ error: 'QFC: choose the license the penalty EMD was issued against.' });
+    expect(validatePenalty('QFC', 50_000, 'lic')).toEqual({ amount: 50_000, licenseId: 'lic' });
   });
 
-  it('says nothing on a booking that is no longer active', () => {
-    expect(cancelledTickets({ ...base, pnrStatus: 'completed' })).toBeNull();
-    expect(cancelledTickets({ ...base, pnrStatus: 'cancelled' })).toBeNull();
-  });
-
-  it('stops reporting as soon as the deadline is extended', () => {
-    expect(cancelledTickets(base)).toBe(15);
-    expect(cancelledTickets({ ...base, ticketIssuanceDeadline: '2026-10-01' })).toBeNull();
+  it('accepts zero (a waived penalty) and paisa; refuses negative, NaN and fractions of a paisa', () => {
+    expect(validatePenalty('Company', 0, 'lic')).toEqual({ amount: 0, licenseId: 'lic' });
+    expect(validatePenalty('Company', 1234.56, 'lic')).toEqual({ amount: 1234.56, licenseId: 'lic' });
+    expect(validatePenalty('Company', -1, 'lic')).toHaveProperty('error');
+    expect(validatePenalty('Company', NaN, 'lic')).toHaveProperty('error');
+    expect(validatePenalty('Company', 1.005, 'lic')).toHaveProperty('error');
   });
 });
 
@@ -206,5 +325,33 @@ describe('balanceTicketsFor', () => {
         expect(validateTicketing(input({ ticketsIssued: issued, balanceTickets: balance }), seats)).toBeNull();
       }
     }
+  });
+});
+
+// A6 (2026-10-13): every new booking has a ticket issuance deadline; owner,
+// 2026-10-20: it may not be after the outbound departure date.
+describe('ticketDeadlineError', () => {
+  it('requires the deadline', () => {
+    expect(ticketDeadlineError(null, '2026-11-15')).toMatch(/^The ticket issuance deadline is required\./);
+  });
+
+  it('refuses a date the calendar does not have', () => {
+    expect(ticketDeadlineError('2026-02-30', '2026-11-15')).toBe('The ticket issuance deadline is not a valid date.');
+  });
+
+  it('refuses a deadline after departure; the departure day itself is allowed', () => {
+    expect(ticketDeadlineError('2026-11-16', '2026-11-15')).toBe(
+      'The ticket issuance deadline (2026-11-16) cannot be after the outbound departure date (2026-11-15).'
+    );
+    expect(ticketDeadlineError('2026-11-15', '2026-11-15')).toBeNull();
+    expect(ticketDeadlineError('2026-11-12', '2026-11-15')).toBeNull();
+  });
+
+  it('accepts the SV policy date', () => {
+    expect(ticketDeadlineError(svTicketIssuanceDeadline('SV', '2026-11-15'), '2026-11-15')).toBeNull();
+  });
+
+  it('checks only presence when the departure date is unknown', () => {
+    expect(ticketDeadlineError('2026-11-12', null)).toBeNull();
   });
 });

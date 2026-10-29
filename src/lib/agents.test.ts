@@ -51,6 +51,9 @@ const agent = (over: Partial<AgentInput> = {}): AgentInput => ({
   b2bCode: 'B2B6022',
   contactEmails: ['bookings@qfc.example'],
   contactPhone: '+92 51 1234567',
+  dtsCode: 'DTS-1042',
+  address: 'Office 4, Saddar, Rawalpindi',
+  iataNumber: '27312345',
   ...over,
 });
 
@@ -61,7 +64,15 @@ describe('validateAgent', () => {
 
   it('accepts an agent with only a name — everything else is optional', () => {
     expect(
-      validateAgent({ name: 'Walk-in', b2bCode: null, contactEmails: [], contactPhone: null })
+      validateAgent({
+        name: 'Walk-in',
+        b2bCode: null,
+        contactEmails: [],
+        contactPhone: null,
+        dtsCode: null,
+        address: null,
+        iataNumber: null,
+      })
     ).toBeNull();
   });
 
@@ -101,6 +112,9 @@ describe('validateAgent', () => {
   it('rejects absurdly long values', () => {
     expect(validateAgent(agent({ name: 'x'.repeat(201) }))?.error).toMatch(/too long/);
     expect(validateAgent(agent({ b2bCode: 'x'.repeat(51) }))?.error).toMatch(/too long/);
+    expect(validateAgent(agent({ dtsCode: 'x'.repeat(51) }))?.error).toMatch(/DTS code is too long/);
+    expect(validateAgent(agent({ iataNumber: 'x'.repeat(51) }))?.error).toMatch(/IATA number is too long/);
+    expect(validateAgent(agent({ address: 'x'.repeat(501) }))?.error).toMatch(/Address is too long/);
   });
 });
 

@@ -17,6 +17,9 @@ export interface ParsedStop {
   flightCode: string | null;
   arrivalTime: string | null;
   departureTime: string | null;
+  /** YYYY-MM-DD, the days the stop is reached and left. */
+  arrivalDate: string | null;
+  departureDate: string | null;
 }
 
 export interface ParsedBookingDraft {
@@ -34,6 +37,8 @@ export interface ParsedBookingDraft {
   inboundDate: ParsedField<string>; // YYYY-MM-DD
   sector: ParsedField<string>; // e.g. "ISB-JED-MED-ISB"
   pnrTlDate: ParsedField<string>; // YYYY-MM-DD
+  /** The ticketing deadline, when the source states one (Phase 9 Step 1). */
+  ticketIssuanceDeadline: ParsedField<string>; // YYYY-MM-DD
   airlineTaxes: ParsedField<number>;
   psf: ParsedField<number>;
   fare: ParsedField<number>;
@@ -44,6 +49,8 @@ export interface ParsedBookingDraft {
   outboundArrivalCity: ParsedField<string>;
   outboundDepartureTime: ParsedField<string>; // HH:mm
   outboundArrivalTime: ParsedField<string>;
+  /** The day it lands, the departure day included (Phase 9 Step 1). */
+  outboundArrivalDate: ParsedField<string>; // YYYY-MM-DD
   outboundFlightCode: ParsedField<string>; // e.g. SV727
   outboundBaggagePieces: ParsedField<number>; // checked bags per passenger
   outboundBaggageKg: ParsedField<number>; // kg limit per bag
@@ -51,6 +58,7 @@ export interface ParsedBookingDraft {
   inboundArrivalCity: ParsedField<string>;
   inboundDepartureTime: ParsedField<string>;
   inboundArrivalTime: ParsedField<string>;
+  inboundArrivalDate: ParsedField<string>;
   inboundFlightCode: ParsedField<string>;
   inboundBaggagePieces: ParsedField<number>;
   inboundBaggageKg: ParsedField<number>;
@@ -90,14 +98,15 @@ ${fieldListForPrompt()}
 
 Rules:
 1. Dates YYYY-MM-DD; times 24-hour HH:mm as printed.
-2. airlineCode is the 2-character IATA code (SV Saudia, PA Airblue, 9P Fly Jinnah, PK PIA, ER Serene, FZ Flydubai, QR Qatar Airways).
+2. airlineCode is the 2-character IATA code (SV Saudia, PA Airblue, 9P Fly Jinnah, PK PIA, ER Serene, FZ Flydubai, QR Qatar Airways, XY flynas, RX Riyadh Air, OV SalamAir, F3 flyadeal).
 3. sector: 3-letter airport codes joined by dashes (ISB-JED, LHE-MED-JED-LHE).
 4. Numbers without commas or currency symbols. fare and airlineTaxes are per passenger.
 5. Not found: value null, confidence "low". Never invent codes or amounts; if unsure, confidence "low".
-6. tripType "round_trip" when there is a return flight, else "one_way" (then every inbound field null). Outbound fields describe the first flight; inbound the return. Flight codes are designator + number, no space (SV727, 9P842). For connections use the first flight's code and departure and the final arrival, and list each intermediate airport in that leg's Stops: city, flightCode of the flight DEPARTING the stop (null if the same flight continues), arrival and departure times. Direct flight: [].
+6. tripType "round_trip" when there is a return flight, else "one_way" (then every inbound field null). Outbound fields describe the first flight; inbound the return. Flight codes are designator + number, no space (SV727, 9P842). For connections use the first flight's code and departure and the final arrival, and list each intermediate airport in that leg's Stops: city, flightCode of the flight DEPARTING the stop (null if the same flight continues), arrival and departure times. Direct flight: []. Give every arrival date (outboundArrivalDate, inboundArrivalDate, each stop's arrivalDate and departureDate) as YYYY-MM-DD, the departure day when it is the same day; "+1" after a time means the next day.
 7. Baggage is checked allowance PER PASSENGER: pieces = number of bags, kg = limit of EACH bag. "2PC 23KG" = 2 and 23; "30KG" alone = pieces null, kg 30. One allowance for the trip applies to both flights. Ignore cabin baggage.
 8. mealIncluded: true if meals are included, false if stated not included, null if not mentioned.
-9. round* fields describe the first EMD / deposit: issue date, percentage (30 for 30%), amount, EMD number, and the deadline date and time.`;
+9. round* fields describe the first EMD / deposit: issue date, percentage (30 for 30%), amount, EMD number, and the deadline date and time.
+10. ticketIssuanceDeadline is the date tickets must be issued by (ticketing deadline, ticket TL), only when stated. It is not pnrTlDate or an EMD / deposit deadline.`;
 }
 
 export function cleanJsonString(raw: string): string {
@@ -199,7 +208,14 @@ function parseStops(data: Record<string, unknown>, key: string): ParsedField<Par
   const str = (v: unknown) => (typeof v === 'string' && v.trim() !== '' ? v.trim() : null);
   const stops = list
     .filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
-    .map((x) => ({ city: str(x.city), flightCode: str(x.flightCode), arrivalTime: str(x.arrivalTime), departureTime: str(x.departureTime) }));
+    .map((x) => ({
+      city: str(x.city),
+      flightCode: str(x.flightCode),
+      arrivalTime: str(x.arrivalTime),
+      departureTime: str(x.departureTime),
+      arrivalDate: str(x.arrivalDate),
+      departureDate: str(x.departureDate),
+    }));
   return { value: stops, confidence: Array.isArray(item) ? 'medium' : confidenceOf(item) };
 }
 
@@ -272,6 +288,7 @@ export function parseRawLlmJson(
       inboundDate: parseField<string>(obj, 'inboundDate', 'date'),
       sector: parseField<string>(obj, 'sector', 'string'),
       pnrTlDate: parseField<string>(obj, 'pnrTlDate', 'date'),
+      ticketIssuanceDeadline: parseField<string>(obj, 'ticketIssuanceDeadline', 'date'),
       airlineTaxes: parseField<number>(obj, 'airlineTaxes', 'number'),
       psf: parseField<number>(obj, 'psf', 'number'),
       fare: parseField<number>(obj, 'fare', 'number'),
@@ -281,6 +298,7 @@ export function parseRawLlmJson(
       outboundArrivalCity: parseField<string>(obj, 'outboundArrivalCity', 'string'),
       outboundDepartureTime: parseField<string>(obj, 'outboundDepartureTime', 'string'),
       outboundArrivalTime: parseField<string>(obj, 'outboundArrivalTime', 'string'),
+      outboundArrivalDate: parseField<string>(obj, 'outboundArrivalDate', 'date'),
       outboundFlightCode: parseField<string>(obj, 'outboundFlightCode', 'string'),
       outboundBaggagePieces: parseField<number>(obj, 'outboundBaggagePieces', 'number'),
       outboundBaggageKg: parseField<number>(obj, 'outboundBaggageKg', 'number'),
@@ -288,6 +306,7 @@ export function parseRawLlmJson(
       inboundArrivalCity: parseField<string>(obj, 'inboundArrivalCity', 'string'),
       inboundDepartureTime: parseField<string>(obj, 'inboundDepartureTime', 'string'),
       inboundArrivalTime: parseField<string>(obj, 'inboundArrivalTime', 'string'),
+      inboundArrivalDate: parseField<string>(obj, 'inboundArrivalDate', 'date'),
       inboundFlightCode: parseField<string>(obj, 'inboundFlightCode', 'string'),
       inboundBaggagePieces: parseField<number>(obj, 'inboundBaggagePieces', 'number'),
       inboundBaggageKg: parseField<number>(obj, 'inboundBaggageKg', 'number'),

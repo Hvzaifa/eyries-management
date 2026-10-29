@@ -32,6 +32,12 @@ export interface FlightLeg {
   /** HH:MM (24h), or null when not entered */
   departureTime: string | null;
   arrivalTime: string | null;
+  /**
+   * The day it lands, as entered — the departure day included (owner,
+   * 2026-10-20: never left empty). Required on a booking entered in the app;
+   * null only on an older booking that never had one.
+   */
+  arrivalDate: string | null;
   /** e.g. SV727 — uppercase, no spaces */
   flightCode: string;
   /** Checked bags each passenger may carry on this flight, or null. */
@@ -45,13 +51,17 @@ export interface FlightLeg {
 /**
  * A stop on a connecting flight (owner, 2026-09-28). `flightCode` is the
  * ONWARD flight from the stop — the aircraft may change there — and is null
- * when the same flight continues. Times are local, both optional.
+ * when the same flight continues. Times are local. The dates are the days the
+ * stop is reached and left, as entered (Phase 9 Step 1; owner, 2026-10-20:
+ * both, even on the departure day). Null only on an older booking.
  */
 export interface FlightStop {
   city: string;
   flightCode: string | null;
   arrivalTime: string | null;
   departureTime: string | null;
+  arrivalDate: string | null;
+  departureDate: string | null;
 }
 
 /** Most stops one flight may have; the database enforces the same. */
@@ -92,9 +102,9 @@ export function isAirportCode(v: string): boolean {
   return /^[A-Z]{3}$/.test(v);
 }
 
-/** `sv 727` → `SV727`. */
+/** `sv 727` → `SV727`; `PK-731`, as the booking portal writes it, → `PK731`. */
 export function normalizeFlightCode(v: string): string {
-  return v.replace(/\s+/g, '').toUpperCase();
+  return v.replace(/[\s-]+/g, '').toUpperCase();
 }
 
 /**
@@ -111,7 +121,7 @@ export function isTime(v: string): boolean {
   return /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
 }
 
-function isIsoDate(v: string): boolean {
+export function isIsoDate(v: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
   const d = new Date(`${v}T00:00:00.000Z`);
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v;
@@ -186,18 +196,92 @@ export function citiesFromSector(sector: string | null | undefined): SectorCitie
   return null;
 }
 
+/**
+ * One moment along a flight after its departure: reaching or leaving a stop,
+ * or landing. `date` is what was entered; blank (only possible on an older
+ * booking) is read as the day of the moment before. `sameAirport` marks
+ * leaving a stop, which is in the same time zone as reaching it.
+ */
+export interface TimelinePoint {
+  date: string | null;
+  time: string | null;
+  sameAirport?: boolean;
+}
+
+export interface TimelineStep {
+  /** The day this moment falls on: the date entered, or the day before it carried on. */
+  date: string;
+  /** The date entered is earlier than the day of the moment before. */
+  backwards: boolean;
+  /**
+   * Lands (or reaches a stop) at an earlier time than the moment before, on
+   * the same date. Possible flying west, but usually an overnight flight whose
+   * date was left at the departure day — JED 18:10 → ISB 01:10 lands the next
+   * day. The form warns; the save allows it.
+   */
+  sameDayEarlier: boolean;
+  /** Leaving a stop at an earlier time than reaching it, with the same date entered for both. */
+  leavesBeforeArriving: boolean;
+}
+
+/**
+ * Walks a flight from its departure through each stop to its landing.
+ * Times are compared only between neighbouring moments, and only when both
+ * are known; a moment with no time compares nothing with the next one.
+ * Pure — the form warns with it, and the save checks it.
+ */
+export function walkTimeline(start: { date: string; time: string | null }, points: TimelinePoint[]): TimelineStep[] {
+  let date = start.date;
+  let time = start.time;
+  return points.map((p) => {
+    const backwards = !!p.date && p.date < date;
+    const earlier = !!p.time && !!time && p.time < time;
+    const step: TimelineStep = {
+      date: p.date && !backwards ? p.date : date,
+      backwards,
+      sameDayEarlier: !p.sameAirport && earlier && (!p.date || p.date === date),
+      leavesBeforeArriving: !!p.sameAirport && earlier && p.date === date,
+    };
+    date = step.date;
+    time = p.time;
+    return step;
+  });
+}
+
+/** A flight's moments after departure, in order: each stop reached and left, then landing. */
+export function legTimeline(
+  stops: { arrivalDate: string | null; arrivalTime: string | null; departureDate: string | null; departureTime: string | null }[],
+  landing: { arrivalDate: string | null; arrivalTime: string | null }
+): TimelinePoint[] {
+  return [
+    ...stops.flatMap((s) => [
+      { date: s.arrivalDate, time: s.arrivalTime },
+      { date: s.departureDate, time: s.departureTime, sameAirport: true },
+    ]),
+    { date: landing.arrivalDate, time: landing.arrivalTime },
+  ];
+}
+
+/** What each moment of `legTimeline` is called in a message: "stop 1 arrival", …, "arrival". */
+function momentName(i: number, stopCount: number): string {
+  if (i === stopCount * 2) return 'arrival';
+  return `stop ${Math.floor(i / 2) + 1} ${i % 2 === 0 ? 'arrival' : 'departure'}`;
+}
+
 type Read = (key: string) => string | null;
 
 function readLeg(
   read: Read,
   prefix: 'outbound' | 'inbound',
-  label: string
+  label: string,
+  requireTimes: boolean
 ): { leg: FlightLeg } | { error: string } {
   const date = read(`${prefix}_date`);
   const departureCity = normalizeAirportCode(read(`${prefix}_departure_city`) ?? '');
   const arrivalCity = normalizeAirportCode(read(`${prefix}_arrival_city`) ?? '');
   const departureTime = read(`${prefix}_departure_time`);
   const arrivalTime = read(`${prefix}_arrival_time`);
+  const arrivalDate = read(`${prefix}_arrival_date`);
   const flightCode = normalizeFlightCode(read(`${prefix}_flight_code`) ?? '');
   const baggagePieces = wholeNumber(read(`${prefix}_baggage_pieces`));
   const baggageKg = wholeNumber(read(`${prefix}_baggage_kg`));
@@ -221,6 +305,14 @@ function readLeg(
   if (arrivalTime && !isTime(arrivalTime)) {
     return { error: `${label}: arrival time must be HH:MM.` };
   }
+  if (arrivalDate && !isIsoDate(arrivalDate)) {
+    return { error: `${label}: arrival date is not a valid date.` };
+  }
+  // Bookings entered in the app need every flight time (Phase 9 Step 1, A4),
+  // and the arrival date even when it is the departure day (owner, 2026-10-20).
+  if (requireTimes && !departureTime) return { error: `${label}: departure time is required.` };
+  if (requireTimes && !arrivalTime) return { error: `${label}: arrival time is required.` };
+  if (requireTimes && !arrivalDate) return { error: `${label}: arrival date is required.` };
   if (!flightCode) return { error: `${label}: flight code is required.` };
   if (!isFlightCode(flightCode)) {
     return { error: `${label}: flight code "${flightCode}" is not a flight number, e.g. SV727.` };
@@ -235,12 +327,25 @@ function readLeg(
     return { error: `${label}: weight must be a whole number of kg from 1 to ${BAGGAGE_MAX_KG}.` };
   }
 
-  const stops = readStops(read, prefix, label, departureCity, arrivalCity);
+  const stops = readStops(read, prefix, label, departureCity, arrivalCity, requireTimes);
   if ('error' in stops) return stops;
 
+  // The days, on every booking: none may go backwards, and a stop cannot be
+  // left before it is reached. These are impossible itineraries, so an older
+  // booking is held to them too.
+  const steps = walkTimeline({ date, time: departureTime }, legTimeline(stops.stops, { arrivalDate, arrivalTime }));
+  for (const [i, step] of steps.entries()) {
+    const what = momentName(i, stops.stops.length);
+    const before = i === 0 ? 'departure' : momentName(i - 1, stops.stops.length);
+    if (step.backwards) return { error: `${label}: the ${what} date is before the ${before} date.` };
+    if (step.leavesBeforeArriving) return { error: `${label}: stop ${Math.floor(i / 2) + 1} departure time is before its arrival time.` };
+  }
+
+  // Saved exactly as entered (owner, 2026-10-20).
   return {
     leg: {
       date, departureCity, arrivalCity, departureTime, arrivalTime, flightCode, baggagePieces, baggageKg,
+      arrivalDate,
       stops: stops.stops,
     },
   };
@@ -248,14 +353,16 @@ function readLeg(
 
 /**
  * The stops of one flight, posted as `<leg>_stop_count` and
- * `<leg>_stop_<i>_city|flight_code|arrival_time|departure_time`.
+ * `<leg>_stop_<i>_city|flight_code|arrival_time|departure_time|arrival_date|departure_date`.
+ * Dates are returned as entered; `readLeg` checks them along the flight.
  */
 function readStops(
   read: Read,
   prefix: 'outbound' | 'inbound',
   label: string,
   from: string,
-  to: string
+  to: string,
+  requireTimes: boolean
 ): { stops: FlightStop[] } | { error: string } {
   const count = Number(read(`${prefix}_stop_count`) ?? '0');
   if (!Number.isInteger(count) || count < 0 || count > MAX_STOPS) {
@@ -268,6 +375,8 @@ function readStops(
     const code = normalizeFlightCode(read(`${prefix}_stop_${i}_flight_code`) ?? '');
     const arrivalTime = read(`${prefix}_stop_${i}_arrival_time`);
     const departureTime = read(`${prefix}_stop_${i}_departure_time`);
+    const arrivalDate = read(`${prefix}_stop_${i}_arrival_date`);
+    const departureDate = read(`${prefix}_stop_${i}_departure_date`);
     if (!city) return { error: `${label}: stop ${n} needs a city.` };
     if (!isAirportCode(city)) return { error: `${label}: stop ${n} city must be a 3-letter airport code, e.g. DXB.` };
     const before = i === 0 ? from : stops[i - 1].city;
@@ -277,7 +386,13 @@ function readStops(
     }
     if (arrivalTime && !isTime(arrivalTime)) return { error: `${label}: stop ${n} arrival time must be HH:MM.` };
     if (departureTime && !isTime(departureTime)) return { error: `${label}: stop ${n} departure time must be HH:MM.` };
-    stops.push({ city, flightCode: code || null, arrivalTime, departureTime });
+    if (arrivalDate && !isIsoDate(arrivalDate)) return { error: `${label}: stop ${n} arrival date is not a valid date.` };
+    if (departureDate && !isIsoDate(departureDate)) return { error: `${label}: stop ${n} departure date is not a valid date.` };
+    if (requireTimes && !arrivalTime) return { error: `${label}: stop ${n} arrival time is required.` };
+    if (requireTimes && !arrivalDate) return { error: `${label}: stop ${n} arrival date is required.` };
+    if (requireTimes && !departureTime) return { error: `${label}: stop ${n} departure time is required.` };
+    if (requireTimes && !departureDate) return { error: `${label}: stop ${n} departure date is required.` };
+    stops.push({ city, flightCode: code || null, arrivalTime, departureTime, arrivalDate, departureDate });
   }
   if (stops.length > 0 && stops[stops.length - 1].city === to) {
     return { error: `${label}: the last stop cannot be the arrival city ${to}.` };
@@ -291,13 +406,21 @@ function readStops(
  * booking validation.
  *
  * Required, as the owner specified: date, both cities and the flight code on
- * every leg. Every time is optional (owner, 2026-09-26).
+ * every leg. With `requireTimes` — a booking entered in the app (Phase 9 Step
+ * 1, A4) — also every departure and arrival time, the arrival date, and each
+ * stop's arrival and departure dates, even on the departure day (owner,
+ * 2026-10-20). Without it, these stay optional (owner, 2026-09-26), so an
+ * older booking still saves.
  */
-export function readFlightDetails(read: Read): { details: FlightDetails } | { error: string } {
+export function readFlightDetails(
+  read: Read,
+  opts: { requireTimes?: boolean } = {}
+): { details: FlightDetails } | { error: string } {
+  const requireTimes = opts.requireTimes ?? false;
   const tripType = read('trip_type');
   if (!isTripType(tripType)) return { error: 'Choose one way or round trip.' };
 
-  const outbound = readLeg(read, 'outbound', tripType === 'one_way' ? 'Flight details' : 'Outbound');
+  const outbound = readLeg(read, 'outbound', tripType === 'one_way' ? 'Flight details' : 'Outbound', requireTimes);
   if ('error' in outbound) return outbound;
 
   if (tripType === 'one_way') {
@@ -311,11 +434,15 @@ export function readFlightDetails(read: Read): { details: FlightDetails } | { er
     };
   }
 
-  const inbound = readLeg(read, 'inbound', 'Inbound');
+  const inbound = readLeg(read, 'inbound', 'Inbound', requireTimes);
   if ('error' in inbound) return inbound;
 
   if (inbound.leg.date < outbound.leg.date) {
     return { error: 'Inbound: departure date cannot be before the outbound departure date.' };
+  }
+  const landed = outbound.leg.arrivalDate ?? outbound.leg.date;
+  if (inbound.leg.date < landed) {
+    return { error: `Inbound: departure date cannot be before the outbound flight lands (${landed}).` };
   }
 
   return {
@@ -339,16 +466,25 @@ export function flightStopRows(d: FlightDetails) {
       flightCode: s.flightCode,
       arrivalTime: timeToDb(s.arrivalTime),
       departureTime: timeToDb(s.departureTime),
+      arrivalDate: s.arrivalDate ? dateToDb(s.arrivalDate) : null,
+      departureDate: s.departureDate ? dateToDb(s.departureDate) : null,
     }))
   );
 }
 
 /** "DXB (EK612)" / "none" — how a leg's stops read in the change history. */
-export function describeStops(stops: Pick<FlightStop, 'city' | 'flightCode' | 'arrivalTime' | 'departureTime'>[]): string {
+export function describeStops(
+  stops: (Pick<FlightStop, 'city' | 'flightCode' | 'arrivalTime' | 'departureTime'> &
+    Partial<Pick<FlightStop, 'arrivalDate' | 'departureDate'>>)[]
+): string {
   if (stops.length === 0) return 'none';
+  const at = (date: string | null | undefined, time: string | null) => `${date ? `${date} ` : ''}${time ?? '?'}`;
   return stops
     .map((s) => {
-      const times = s.arrivalTime || s.departureTime ? ` ${s.arrivalTime ?? '?'}–${s.departureTime ?? '?'}` : '';
+      const times =
+        s.arrivalTime || s.departureTime || s.arrivalDate || s.departureDate
+          ? ` ${at(s.arrivalDate, s.arrivalTime)}–${at(s.departureDate, s.departureTime)}`
+          : '';
       return `${s.city}${times}${s.flightCode ? ` (${s.flightCode})` : ''}`;
     })
     .join(', ');
@@ -359,7 +495,7 @@ function timeToDb(t: string | null): Date | null {
   return t ? new Date(`1970-01-01T${t}:00.000Z`) : null;
 }
 
-function dateToDb(d: string): Date {
+export function dateToDb(d: string): Date {
   return new Date(`${d}T00:00:00.000Z`);
 }
 
@@ -377,6 +513,7 @@ export function flightColumns(d: FlightDetails) {
     outboundArrivalCity: d.outbound.arrivalCity,
     outboundDepartureTime: timeToDb(d.outbound.departureTime),
     outboundArrivalTime: timeToDb(d.outbound.arrivalTime),
+    outboundArrivalDate: d.outbound.arrivalDate ? dateToDb(d.outbound.arrivalDate) : null,
     outboundFlightCode: d.outbound.flightCode,
     outboundBaggagePieces: d.outbound.baggagePieces,
     outboundBaggageKg: d.outbound.baggageKg,
@@ -385,6 +522,7 @@ export function flightColumns(d: FlightDetails) {
     inboundArrivalCity: d.inbound?.arrivalCity ?? null,
     inboundDepartureTime: timeToDb(d.inbound?.departureTime ?? null),
     inboundArrivalTime: timeToDb(d.inbound?.arrivalTime ?? null),
+    inboundArrivalDate: d.inbound?.arrivalDate ? dateToDb(d.inbound.arrivalDate) : null,
     inboundFlightCode: d.inbound?.flightCode ?? null,
     inboundBaggagePieces: d.inbound?.baggagePieces ?? null,
     inboundBaggageKg: d.inbound?.baggageKg ?? null,
@@ -398,6 +536,11 @@ export const FLIGHT_TIME_COLUMNS = new Set([
   'inboundDepartureTime',
   'inboundArrivalTime',
 ]);
+
+/** A `date` column as YYYY-MM-DD, or null. */
+export function dateFromDb(d: Date | null | undefined): string | null {
+  return d ? d.toISOString().slice(0, 10) : null;
+}
 
 /** A `time` column as HH:MM, or null. */
 export function timeFromDb(t: Date | null | undefined): string | null {

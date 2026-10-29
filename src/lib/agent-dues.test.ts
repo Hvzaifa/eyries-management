@@ -101,6 +101,56 @@ describe('the extension cycle — ruling 13, end to end', () => {
   });
 });
 
+/**
+ * Phase 9 Step 3 (A1): a round marked refund requested is no longer money the
+ * airline holds, so the agent's EMD share drops the moment it is requested —
+ * not only once the refund is recorded. QFC holds 10 of 30 seats.
+ */
+describe('a round requested back — the agent’s share drops (Phase 9 Step 3)', () => {
+  const agentSeats = 10;
+  const pnrSeats = 30;
+  const r1 = (status: string) => round({ roundNumber: 1, status, emdAmount: 450_000 });
+  const r2 = round({ roundNumber: 2, emdAmount: 2_550_000 });
+
+  it('both rounds held: 1,000,000 required', () => {
+    const share = emdShareDue({ agentSeats, pnrSeats, rounds: [r1('issued'), r2], recovered: 0 });
+    expect(share.held).toBe(3_000_000);
+    expect(share.required).toBe(1_000_000);
+  });
+
+  it('round 1 requested: 850,000 required, the same as once it is refunded', () => {
+    const requested = emdShareDue({ agentSeats, pnrSeats, rounds: [r1('refund_requested'), r2], recovered: 0 });
+    const refunded = emdShareDue({ agentSeats, pnrSeats, rounds: [r1('refunded'), r2], recovered: 0 });
+    expect(requested.held).toBe(2_550_000);
+    expect(requested.required).toBe(850_000);
+    expect(requested.due).toBe(850_000);
+    expect(requested).toEqual(refunded);
+  });
+
+  it('an agent who paid the full 1,000,000 owes nothing more; the rest stands as credit', () => {
+    const share = emdShareDue({ agentSeats, pnrSeats, rounds: [r1('refund_requested'), r2], recovered: 1_000_000 });
+    expect(share.required).toBe(850_000);
+    expect(share.due).toBe(0);
+  });
+
+  it('every round requested: nothing held, nothing required', () => {
+    const share = emdShareDue({
+      agentSeats,
+      pnrSeats,
+      rounds: [r1('refund_requested'), round({ roundNumber: 2, status: 'refund_requested', emdAmount: 2_550_000 })],
+      recovered: 0,
+    });
+    expect(share.held).toBe(0);
+    expect(share.required).toBe(0);
+  });
+
+  it('the requested round leaves the agent’s per-round breakdown', () => {
+    expect(emdRoundShares({ agentSeats, pnrSeats, rounds: [r1('refund_requested'), r2] })).toEqual([
+      { roundNumber: 1, emdAmount: 2_550_000, share: 850_000, issued: true },
+    ]);
+  });
+});
+
 describe('emdHeldByAirline', () => {
   it('counts every issued round', () => {
     expect(
@@ -214,6 +264,67 @@ describe('finalBalanceDue', () => {
     terms: terms({ chargeType: 'pct', chargeValue: 5, chargeTax: true }),
     recoveries: [],
   };
+
+  it('a penalty for unissued seats rides in the balance, under the same due date (Phase 9 Step 4)', () => {
+    const final = finalBalanceDue({ ...base, recoveries: [1_250_000], ticketIssuanceDeadline: '2026-10-20', penalty: 40_000 });
+    expect(final.total).toBe(1_290_000);
+    expect(final.outstanding).toBe(40_000);
+    expect(final.dueDate).toBe('2026-10-17');
+  });
+
+  it('duesForAssignment passes the stored penalty through, and margin ignores it', () => {
+    const { dues, margin } = duesForAssignment({
+      agentSeats: 10,
+      pnrSeats: 30,
+      fare: 100_000,
+      airlineTaxes: 20_000,
+      chargeType: 'pct',
+      chargeValue: 5,
+      discountType: 'none',
+      discountValue: null,
+      chargeTax: true,
+      recoveries: [1_250_000],
+      rounds: [],
+      ticketIssuanceDeadline: '2026-10-20',
+      penaltyAmount: 40_000,
+    });
+    expect(dues.final.outstanding).toBe(40_000);
+    expect(dues.next).toEqual({ kind: 'final', amount: 40_000, date: '2026-10-17' });
+    expect(margin).toBe(50_000);
+  });
+
+  it('on a cancelled booking the agent owes only their penalty; the rest is paid back (Phase 9 Step 5)', () => {
+    const { dues, margin } = duesForAssignment({
+      agentSeats: 10,
+      pnrSeats: 30,
+      fare: 100_000,
+      airlineTaxes: 20_000,
+      chargeType: 'pct',
+      chargeValue: 5,
+      discountType: 'none',
+      discountValue: null,
+      chargeTax: true,
+      recoveries: [200_000],
+      rounds: [{ roundNumber: 1, status: 'forfeited', emdAmount: 450_000, deadlineDate: '2026-11-20' }],
+      ticketIssuanceDeadline: '2026-12-10',
+      upcomingRoundAmount: 2_550_000,
+      penaltyAmount: 50_000,
+      cancelled: { paybacks: [] },
+    });
+    expect(dues.final).toMatchObject({ total: 50_000, recovered: 200_000, outstanding: 0, credit: 0, paidBack: 0, toPayBack: 150_000, dueDate: null });
+    // No unpaid EMD share and no next round to collect.
+    expect(dues.emd.due).toBe(0);
+    expect(dues.rounds).toEqual([]);
+    expect(dues.next).toBeNull();
+    expect(margin).toBe(0);
+  });
+
+  it('a cancelled booking’s agent who paid less than the penalty owes the rest, undated', () => {
+    const final = finalBalanceDue({ ...base, recoveries: [20_000], ticketIssuanceDeadline: '2026-12-10', penalty: 50_000, cancelled: { paybacks: [] } });
+    expect(final.outstanding).toBe(30_000);
+    expect(final.toPayBack).toBe(0);
+    expect(final.dueDate).toBeNull();
+  });
 
   it('falls due 3 days before the ticket-issuance deadline', () => {
     const final = finalBalanceDue({ ...base, ticketIssuanceDeadline: '2026-11-20' });

@@ -5,8 +5,9 @@ import { Pencil, X, AlertTriangle } from 'lucide-react';
 import { updateEmdRound } from '../actions/emd';
 import { formatEmdNumberInput } from '@/lib/format';
 import type { EmdRoundView } from '@/lib/pnrs';
+import { lookupOptionText } from '@/lib/lookups';
 
-export default function EditRoundButton({ round, licenses }: { pnrId: string, round: EmdRoundView, licenses: { id: string, name: string }[] }) {
+export default function EditRoundButton({ round, licenses }: { pnrId: string, round: EmdRoundView, licenses: { id: string; name: string; code: string | null }[] }) {
   const [isOpen, setIsOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -99,7 +100,7 @@ export default function EditRoundButton({ round, licenses }: { pnrId: string, ro
                 <select name="round_license_id" defaultValue={round.licenseId ?? ''} className={`${inputCls} cursor-pointer`}>
                   <option value="">— (Same as PNR) —</option>
                   {licenses.map(l => (
-                    <option key={l.id} value={l.id}>{l.name}</option>
+                    <option key={l.id} value={l.id}>{lookupOptionText(l)}</option>
                   ))}
                 </select>
               </div>
@@ -138,10 +139,24 @@ export default function EditRoundButton({ round, licenses }: { pnrId: string, ro
                 <label className="block text-xs font-medium text-stone-600 mb-1.5">
                   Status
                 </label>
+                {/* A requested round never goes back to issued, and requesting
+                    has its own button (Phase 9 Step 3, A1). */}
+                {/* A forfeited round changes only through a recorded refund once
+                    the penalty is paid (Phase 9 Step 5). */}
                 <select name="round_status" defaultValue={round.status} className={inputCls}>
-                  <option value="issued">Issued</option>
-                  <option value="refunded">Refunded</option>
-                  </select>
+                  {round.status === 'forfeited' ? (
+                    <option value="forfeited">Forfeited</option>
+                  ) : (
+                    <>
+                      {round.status === 'refund_requested' ? (
+                        <option value="refund_requested">Refund requested</option>
+                      ) : (
+                        <option value="issued">Issued</option>
+                      )}
+                      <option value="refunded">Refunded</option>
+                    </>
+                  )}
+                </select>
               </div>
 
               <div className="pt-2 flex justify-end gap-2">

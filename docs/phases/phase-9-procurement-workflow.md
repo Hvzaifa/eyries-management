@@ -1,8 +1,7 @@
 # Phase 9 — The procurement workflow
 
-**Status: draft, awaiting owner sign-off.** Nothing here is built. Do not start
-Step 1 until the owner has signed off this file and answered the questions at
-the end. **Built before Phase 8** (owner, 2026-10-14).
+**Status: signed off 2026-10-20 (the owner asked for Step 1 to begin). Steps 1–3
+built and reviewed (2026-10-28); Steps 4 and 5 built 2026-10-28, Step 6 built 2026-10-29, awaiting review.** **Built before Phase 8** (owner, 2026-10-14).
 
 Goal: bring the system in line with the proposed workflow in
 `Group Procurement.xlsx` ("Proposed Workflow" sheet), as the owner ruled on
@@ -156,7 +155,14 @@ No field is added for release, cancel or branch-move **reasons**. They go in
 
 ## Step 5 — Cancellation, forfeiture and paying agents back
 
-- **Automatic cancellation** (2026-10-14). The daily job cancels a PNR when
+> **Changed by the owner on 2026-10-28:** nothing is cancelled automatically.
+> A booking meeting either trigger is **flagged**, and a person (a branch on its
+> own bookings, Head Office on any) cancels it with a reason, or leaves it
+> active. Only bookings created from 29 Oct 2026 are flagged. The rest of the
+> process follows as below. See `decisions.md` 2026-10-28, Step 5.
+
+- ~~**Automatic cancellation** (2026-10-14). The daily job cancels a PNR when
+  either trigger's due date has passed:~~ **Flagged for cancellation** when
   either trigger's due date has passed:
   - **EMD-2:** the deadline recorded on EMD-1 (the policy date for SV, the
     staff-entered date for other airlines) passed without EMD-2 being issued.
@@ -198,6 +204,14 @@ No field is added for release, cancel or branch-move **reasons**. They go in
 ## Step 6 — Splits (SV only)
 
 Replaces the Phase 4 split rules, `decisions.md` 2026-09-01.
+
+> **Changed by the owner on 2026-10-29:** a split is kept **inside the
+> booking**, like an agent's seats — no new booking, no dashboard row, and the
+> PNR code is optional. The booking keeps its seat count and one set of EMDs;
+> the split has its own dates, ticket deadline and ticket count. The child-booking
+> points below (edit-locked child, the child's next EMD, deadlines copied to it)
+> no longer apply. See `decisions.md` 2026-10-29 and `business-rules.md`
+> "Splits".
 
 - **SV only.** Splitting any other airline's PNR is refused.
 - **Branches may split** their own PNRs, including after EMD-1 is issued. The

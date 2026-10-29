@@ -21,10 +21,16 @@ datasource db {
 
 model License {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Full name, e.g. "Travel Advisor Islamabad"; equal to the code where none was given.
   name      String   @unique
+  /// Supplier code it is shown by, e.g. TA-ISB-BSP (owner, 2026-10-20).
+  code      String?  @unique
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   pnrs      Pnr[]
   emdRounds EmdRound[]
+  /// Penalty EMDs issued against this license (Phase 9 Step 4).
+  assignmentPenalties AgentAssignment[]
+  ticketingPenalties  Ticketing[]
 
   @@map("licenses")
 }
@@ -32,6 +38,9 @@ model License {
 model Branch {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name      String   @unique
+  /// The code the business knows the branch by, e.g. RWP (owner, 2026-10-19).
+  /// Shown wherever a branch is shown; logins still match on `name`.
+  code      String?  @unique
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   pnrs      Pnr[]
   agents    Agent[]
@@ -54,6 +63,13 @@ model Agent {
   createdByBranchId String?  @map("created_by_branch_id") @db.Uuid
   createdByBranch   Branch?  @relation(fields: [createdByBranchId], references: [id])
   active            Boolean  @default(true)
+  dtsCode           String?  @map("dts_code")
+  address           String?
+  iataNumber        String?  @map("iata_number")
+  /// Balance owed on bookings not yet in the system (ageing report, 2026-10-29),
+  /// and the agent's receivable in the system when it was recorded.
+  unbookedBalance   Decimal? @map("unbooked_balance") @db.Decimal(14, 2)
+  unbookedBaseline  Decimal? @map("unbooked_baseline") @db.Decimal(14, 2)
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([createdByBranchId], map: "idx_agents_branch")
@@ -83,8 +99,15 @@ model AgentAssignment {
   /// Set when seats are taken back. Released rows stay as history and stop
   /// counting against the ledger — they are never deleted.
   releasedAt    DateTime? @map("released_at") @db.Timestamptz
+  /// The airline's penalty for this agent's unissued seats (Phase 9 Step 4),
+  /// added to what the agent owes; its license is required with it.
+  penaltyAmount    Decimal? @map("penalty_amount") @db.Decimal(14, 2)
+  penaltyLicenseId String?  @map("penalty_license_id") @db.Uuid
+  penaltyLicense   License? @relation(fields: [penaltyLicenseId], references: [id])
 
   recoveries AgentRecovery[]
+  paybacks   AgentPayback[]
+  splits     PnrSplit[]
 
   @@index([pnrId], map: "idx_agent_assignments_pnr")
   @@index([agentId], map: "idx_agent_assignments_agent")
@@ -93,6 +116,45 @@ model AgentAssignment {
 
 /// Money actually received from an agent against one assignment (phase 7).
 /// Outstanding is the agent's calculated total minus these rows — never stored.
+/// Part of a booking's seats on other dates, kept inside the booking (Phase 9
+/// Step 6). One holder: an agent's assignment, or null = the company's seats.
+model PnrSplit {
+  id                     String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  pnrId                  String           @map("pnr_id") @db.Uuid
+  pnr                    Pnr              @relation(fields: [pnrId], references: [id], onDelete: Cascade)
+  assignmentId           String?          @map("assignment_id") @db.Uuid
+  assignment             AgentAssignment? @relation(fields: [assignmentId], references: [id])
+  seats                  Int
+  /// The airline's new code, normalised; optional and unique when given.
+  pnrCode                String?          @map("pnr_code")
+  outboundDate           DateTime         @map("outbound_date") @db.Date
+  inboundDate            DateTime?        @map("inbound_date") @db.Date
+  ticketIssuanceDeadline DateTime?        @map("ticket_issuance_deadline") @db.Date
+  ticketsIssued          Int?             @map("tickets_issued")
+  balanceTickets         Int?             @map("balance_tickets")
+  createdBy              String?          @map("created_by") @db.Uuid
+  createdAt              DateTime         @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([pnrId], map: "idx_pnr_splits_pnr")
+  @@map("pnr_splits")
+}
+
+/// Money paid back to an agent after a cancellation (Phase 9 Step 5).
+model AgentPayback {
+  id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  assignmentId String          @map("assignment_id") @db.Uuid
+  assignment   AgentAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  amount       Decimal         @db.Decimal(14, 2)
+  paidOn       DateTime        @map("paid_on") @db.Date
+  /// Payment reference. Shown to staff, never written to a log line.
+  reference    String?
+  createdBy    String?         @map("created_by") @db.Uuid
+  createdAt    DateTime        @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([assignmentId], map: "idx_agent_paybacks_assignment")
+  @@map("agent_paybacks")
+}
+
 model AgentRecovery {
   id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   assignmentId String          @map("assignment_id") @db.Uuid
@@ -147,6 +209,7 @@ model Pnr {
   outboundArrivalCity   String?   @map("outbound_arrival_city")
   outboundDepartureTime DateTime? @map("outbound_departure_time") @db.Time
   outboundArrivalTime   DateTime? @map("outbound_arrival_time") @db.Time
+  outboundArrivalDate   DateTime? @map("outbound_arrival_date") @db.Date
   outboundFlightCode    String?   @map("outbound_flight_code")
   outboundBaggagePieces Int?      @map("outbound_baggage_pieces")
   outboundBaggageKg     Int?      @map("outbound_baggage_kg")
@@ -155,6 +218,7 @@ model Pnr {
   inboundArrivalCity    String?   @map("inbound_arrival_city")
   inboundDepartureTime  DateTime? @map("inbound_departure_time") @db.Time
   inboundArrivalTime    DateTime? @map("inbound_arrival_time") @db.Time
+  inboundArrivalDate    DateTime? @map("inbound_arrival_date") @db.Date
   inboundFlightCode     String?   @map("inbound_flight_code")
   inboundBaggagePieces  Int?      @map("inbound_baggage_pieces")
   inboundBaggageKg      Int?      @map("inbound_baggage_kg")
@@ -164,6 +228,8 @@ model Pnr {
   fare            Decimal     @db.Decimal(12, 2)
   totalEmdValue   Decimal?    @map("total_emd_value") @db.Decimal(14, 2)
   status          String      @default("active")
+  /// Penalty paid on a cancelled booking (Phase 9 Step 5); null unless cancelled.
+  penaltyPaid     Boolean?    @map("penalty_paid")
   rawAirlineText  String?     @map("raw_airline_text")
   createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz
   updatedAt       DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
@@ -175,6 +241,8 @@ model Pnr {
   parentAllocations Allocation[] @relation("ParentAllocations")
   childAllocations  Allocation[] @relation("ChildAllocations")
   agentAssignments  AgentAssignment[]
+  /// Splits kept inside this booking (Phase 9 Step 6).
+  splits            PnrSplit[]
 
   @@index([parentPnrId], map: "idx_pnrs_parent")
   @@index([status], map: "idx_pnrs_status")
@@ -194,6 +262,7 @@ model EmdRound {
   emdAmount    Decimal   @map("emd_amount") @db.Decimal(14, 2)
   deadlineDate DateTime? @map("deadline_date") @db.Date
   deadlineTime DateTime? @map("deadline_time") @db.Time
+  // issued | refund_requested | forfeited | refunded (db check; Phase 9 Steps 3, 5).
   status       String    @default("issued")
   refundAmount Decimal?  @map("refund_amount") @db.Decimal(14, 2)
   refundDate   DateTime? @map("refund_date") @db.Date
@@ -220,8 +289,13 @@ model Ticketing {
   nameUpdateDeadline     DateTime? @map("name_update_deadline") @db.Date
   ticketIssuanceDeadline DateTime? @map("ticket_issuance_deadline") @db.Date
   status                 String?
+  // Phase 9 Step 4: balance is typed, tickets issued = seats − balance.
   ticketsIssued          Int?      @map("tickets_issued")
   balanceTickets         Int?      @map("balance_tickets")
+  /// The penalty on the company's own unissued seats, with its license.
+  companyPenaltyAmount   Decimal?  @map("company_penalty_amount") @db.Decimal(14, 2)
+  penaltyLicenseId       String?   @map("penalty_license_id") @db.Uuid
+  penaltyLicense         License?  @relation(fields: [penaltyLicenseId], references: [id])
 
   @@map("ticketing")
 }
@@ -266,6 +340,8 @@ model FlightStop {
   flightCode    String?   @map("flight_code")
   arrivalTime   DateTime? @map("arrival_time") @db.Time
   departureTime DateTime? @map("departure_time") @db.Time
+  arrivalDate   DateTime? @map("arrival_date") @db.Date
+  departureDate DateTime? @map("departure_date") @db.Date
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz
 
   @@unique([pnrId, leg, position])

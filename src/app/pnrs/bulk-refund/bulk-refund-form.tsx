@@ -20,7 +20,7 @@ type FetchedRound = {
     pnr: string;
     investorCompany: string;
   };
-  license: { name: string } | null;
+  license: { name: string; code: string | null } | null;
 };
 
 type RefundState = {
@@ -241,7 +241,7 @@ export default function BulkRefundForm({ initialPnrs = [] }: { initialPnrs?: str
                               Round {round.roundNumber}
                               {round.emdNumber && <div className="text-[10px] text-stone-400 font-mono mt-0.5">{round.emdNumber}</div>}
                               {round.license?.name && (
-                                <div className="text-[10px] text-brand-dark font-medium mt-0.5">Paid by: {round.license.name}</div>
+                                <div className="text-[10px] text-brand-dark font-medium mt-0.5">Paid by: {round.license.code ?? round.license.name}</div>
                               )}
                             </td>
                             <td className="px-6 py-3 font-medium text-stone-600">

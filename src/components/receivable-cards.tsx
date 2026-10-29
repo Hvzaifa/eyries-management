@@ -4,7 +4,7 @@ import { SEAT_TYPE_LABELS, type ReceivableSummary, type SeatType } from '@/lib/a
 /** What each seat type means, in the owner's words (2026-10-05). */
 const SEAT_TYPE_HINTS: Record<SeatType, string> = {
   umrah: 'Return seats, Saudi Arabia',
-  oneway: 'No return, employment or any destination',
+  oneway: 'No return: employment or any destination',
   tour: 'Return seats, outside Saudi Arabia',
   other: 'Segment not set',
 };
@@ -53,7 +53,13 @@ export default function ReceivableCards({ summary, showMargin }: { summary: Rece
         <Total
           label="Balance receivable"
           value={summary.balance}
-          hint={summary.credit > 0 ? `plus ${formatPkr(summary.credit)} paid in advance (credit)` : 'still to collect'}
+          hint={[
+            summary.credit > 0 ? `plus ${formatPkr(summary.credit)} paid in advance (credit)` : 'still to collect',
+            summary.payBack > 0 ? `${formatPkr(summary.payBack)} to pay back on cancelled bookings` : null,
+            summary.notInSystem > 0 ? `incl. ${formatPkr(summary.notInSystem)} on bookings not yet in the system` : null,
+          ]
+            .filter(Boolean)
+            .join(' · ')}
           strong
         />
         {showMargin && <Total label="Margin" value={summary.margin} hint="charge − discount · Head Office only" />}

@@ -1,6 +1,7 @@
 import { prisma } from './prisma';
 import { iataPaymentState } from './iata-payments';
 import { licenseOfRound, type IataDueRound } from './iata-by-license';
+import { lookupLabel } from '@/lib/lookups';
 
 /**
  * What the company still owes IATA, read-only.
@@ -33,7 +34,7 @@ export async function findIataDueRounds(todayIso: string): Promise<IataDueRound[
     },
     orderBy: { issuanceDate: 'asc' },
     include: {
-      license: { select: { id: true, name: true } },
+      license: { select: { id: true, name: true, code: true } },
       pnr: {
         select: {
           id: true,
@@ -42,8 +43,8 @@ export async function findIataDueRounds(todayIso: string): Promise<IataDueRound[
           seats: true,
           outboundDate: true,
           airline: { select: { code: true } },
-          branch: { select: { name: true } },
-          license: { select: { id: true, name: true } },
+          branch: { select: { name: true, code: true } },
+          license: { select: { id: true, name: true, code: true } },
         },
       },
     },
@@ -63,7 +64,9 @@ export async function findIataDueRounds(todayIso: string): Promise<IataDueRound[
     // A round refunded inside its billing window is not owed — the bill moved
     // to whichever round replaced it, and listing both would count it twice.
     if (!state.owed) return [];
-    const license = licenseOfRound(r.license, r.pnr.license);
+    // Listed by code, like every other license label (2026-10-20).
+    const asRef = (l: { id: string; name: string; code: string | null } | null) => (l ? { id: l.id, name: lookupLabel(l)! } : null);
+    const license = licenseOfRound(asRef(r.license), asRef(r.pnr.license));
     return [{
       roundId: r.id,
       pnrId: r.pnr.id,
@@ -74,7 +77,7 @@ export async function findIataDueRounds(todayIso: string): Promise<IataDueRound[
       emdAmount: Number(r.emdAmount),
       issuanceDate,
       airlineCode: r.pnr.airline?.code ?? null,
-      branchName: r.pnr.branch?.name ?? null,
+      branchName: lookupLabel(r.pnr.branch),
       licenseId: license?.id ?? null,
       licenseName: license?.name ?? null,
       seats: r.pnr.seats,
@@ -89,5 +92,7 @@ export async function findIataDueRounds(todayIso: string): Promise<IataDueRound[
 
 /** Every license, for the page's buttons — including those owing nothing. */
 export async function listLicenses() {
-  return prisma.license.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true } });
+  const rows = await prisma.license.findMany({ select: { id: true, name: true, code: true } });
+  // Shown by code (2026-10-20); `licenseTabs` orders them.
+  return rows.map((l) => ({ id: l.id, name: lookupLabel(l)! }));
 }

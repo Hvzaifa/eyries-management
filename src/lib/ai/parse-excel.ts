@@ -6,11 +6,14 @@ import {
   MAPPING_RESPONSE_SCHEMA,
   MAX_FORM_ROWS,
   applyMapping,
+  checkMappingValues,
+  columnProfiles,
+  guessHeaderRow,
   heuristicMapping,
   mappingPrompt,
-  sampleForPrompt,
   validateMapping,
   type ColumnMapping,
+  type KnownValues,
 } from './excel-mapping';
 import { todayIsoInPkt } from '@/lib/urgency';
 
@@ -33,9 +36,13 @@ export interface ExcelParseResult {
 /**
  * An uploaded Excel or CSV file as booking drafts (rewritten 2026-10-05).
  *
- * One AI request reads the top rows and returns which column is which field —
- * whatever the headers are called, a totals row on top, round columns repeated
- * per round. The values are then copied by `applyMapping`, never by the AI.
+ * One AI request returns which column is which field, whatever the layout
+ * (2026-10-20). It is shown every column's header with example values and how
+ * often it is filled, what each field means, and the licenses, branches,
+ * airlines and segments this system knows — so a column of "TA-ISB-BSP"
+ * values is the license whatever it is called. Flights written sector by
+ * sector are mapped as sectors and assembled by `applyMapping`. The values are
+ * then copied by `applyMapping`, never by the AI.
  * If no AI answers, or its map is unusable, the fixed dictionary maps the
  * columns instead, so an upload still works on a bad day.
  *
@@ -46,6 +53,7 @@ export interface ExcelParseResult {
 export async function parseExcelFile(
   buffer: ArrayBuffer,
   filename: string,
+  known?: KnownValues,
   todayIso: string = todayIsoInPkt()
 ): Promise<ExcelParseResult> {
   const wb = xlsx.read(buffer, { type: 'array' });
@@ -59,20 +67,26 @@ export async function parseExcelFile(
     .sheet_to_json<unknown[]>(sheet, { header: 1, raw: false, defval: '', blankrows: true })
     .map((row) => row.map((c) => String(c ?? '')));
   const width = Math.max(0, ...formattedRows.slice(0, 20).map((r) => r.length));
+  const notice = (totalRows: number) =>
+    totalRows > MAX_FORM_ROWS
+      ? `This sheet has ${totalRows} bookings; the first ${MAX_FORM_ROWS} are loaded for review here. Upload the rest as a separate sheet.`
+      : null;
 
   let mapping: ColumnMapping | null = null;
   let method = 'excel: columns mapped by dictionary';
   let confidence: 'high' | 'medium' = 'medium';
+  const headerRow = guessHeaderRow(formattedRows);
   try {
     mapping = await callAi(
       {
-        system: mappingPrompt(),
-        user: `File: ${filename}\n\n${sampleForPrompt(formattedRows)}`,
+        system: mappingPrompt(known),
+        user: `File: ${filename}\nColumns (header row ${headerRow + 1}):\n${columnProfiles(formattedRows, headerRow)}`,
         schema: MAPPING_RESPONSE_SCHEMA,
         schemaName: 'column_mapping',
       },
       (content, attempt) => {
-        const parsed = validateMapping(JSON.parse(content.replace(/<think>[\s\S]*?<\/think>/g, '').trim()), width, formattedRows.length);
+        const valid = validateMapping(JSON.parse(content.replace(/<think>[\s\S]*?<\/think>/g, '').trim()), width, headerRow);
+        const parsed = valid && checkMappingValues(valid, formattedRows);
         if (!parsed) throw new Error('The column map had no usable PNR column.');
         method = `excel: columns mapped by ${attempt.provider}/${attempt.model}`;
         confidence = 'high';
@@ -98,9 +112,6 @@ export async function parseExcelFile(
   return {
     drafts: drafts.map((d) => flagPastDates(d, todayIso)),
     totalRows,
-    notice:
-      totalRows > MAX_FORM_ROWS
-        ? `This sheet has ${totalRows} bookings; the first ${MAX_FORM_ROWS} are loaded for review here. Upload the rest as a separate sheet.`
-        : null,
+    notice: notice(totalRows),
   };
 }

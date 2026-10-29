@@ -4,6 +4,7 @@ import {
   citiesFromSector,
   isAirportCode,
   isFlightCode,
+  isIsoDate,
   isTime,
   isTripType,
   BAGGAGE_MAX_KG,
@@ -20,11 +21,13 @@ export interface DraftFlightValues {
   outboundArrivalCity: string;
   outboundDepartureTime: string;
   outboundArrivalTime: string;
+  outboundArrivalDate: string;
   outboundFlightCode: string;
   inboundDepartureCity: string;
   inboundArrivalCity: string;
   inboundDepartureTime: string;
   inboundArrivalTime: string;
+  inboundArrivalDate: string;
   inboundFlightCode: string;
   outboundBaggagePieces: string;
   outboundBaggageKg: string;
@@ -63,6 +66,17 @@ export function draftFlightValues(draft: ParsedBookingDraft): {
     const v = (draft[key].value ?? '').trim();
     return isTime(v) ? { value: v, confidence: draft[key].confidence } : { value: '', confidence: 'low' as const };
   };
+  // A landing or stop date before its flight departs is not one: the parser
+  // reads loosely, so a model's "+1" arrives as 2000-12-31.
+  const departs = { outbound: draft.outboundDate.value ?? '', inbound: draft.inboundDate.value ?? '' };
+  const onOrAfter = (leg: 'outbound' | 'inbound', v: string | null | undefined) => {
+    const d = (v ?? '').trim();
+    return isIsoDate(d) && d >= departs[leg] ? d : '';
+  };
+  const date = (key: Key & `${string}ArrivalDate`) => {
+    const v = onOrAfter(key.startsWith('inbound') ? 'inbound' : 'outbound', draft[key].value);
+    return v ? { value: v, confidence: draft[key].confidence } : { value: '', confidence: 'low' as const };
+  };
   const code = (key: Key & `${string}FlightCode`) => {
     const v = normalizeFlightCode(draft[key].value ?? '');
     return isFlightCode(v) ? { value: v, confidence: draft[key].confidence } : { value: '', confidence: 'low' as const };
@@ -83,7 +97,15 @@ export function draftFlightValues(draft: ParsedBookingDraft): {
         const city = normalizeAirportCode(st.city ?? '');
         const code = normalizeFlightCode(st.flightCode ?? '');
         const t = (v: string | null) => (v && isTime(v.trim()) ? v.trim() : '');
-        return { city, flightCode: isFlightCode(code) ? code : '', arrivalTime: t(st.arrivalTime), departureTime: t(st.departureTime) };
+        const d = (v: string | null | undefined) => onOrAfter(key === 'inboundStops' ? 'inbound' : 'outbound', v);
+        return {
+          city,
+          flightCode: isFlightCode(code) ? code : '',
+          arrivalTime: t(st.arrivalTime),
+          departureTime: t(st.departureTime),
+          arrivalDate: d(st.arrivalDate),
+          departureDate: d(st.departureDate),
+        };
       })
       .filter((st) => isAirportCode(st.city))
       .slice(0, MAX_STOPS);
@@ -106,11 +128,13 @@ export function draftFlightValues(draft: ParsedBookingDraft): {
     outboundArrivalCity: city('outboundArrivalCity'),
     outboundDepartureTime: time('outboundDepartureTime'),
     outboundArrivalTime: time('outboundArrivalTime'),
+    outboundArrivalDate: date('outboundArrivalDate'),
     outboundFlightCode: code('outboundFlightCode'),
     inboundDepartureCity: city('inboundDepartureCity'),
     inboundArrivalCity: city('inboundArrivalCity'),
     inboundDepartureTime: time('inboundDepartureTime'),
     inboundArrivalTime: time('inboundArrivalTime'),
+    inboundArrivalDate: date('inboundArrivalDate'),
     inboundFlightCode: code('inboundFlightCode'),
     outboundBaggagePieces: count('outboundBaggagePieces', 0, BAGGAGE_MAX_PIECES),
     outboundBaggageKg: count('outboundBaggageKg', 1, BAGGAGE_MAX_KG),

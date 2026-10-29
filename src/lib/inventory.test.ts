@@ -5,6 +5,7 @@ import {
   liveAgentSeats,
   seatLedger,
   validateAssign,
+  paidSeatsLock,
   validateMove,
   validateRelease,
   validateSeatsChange,
@@ -208,5 +209,16 @@ describe('holderFilterKeys', () => {
 
   it('includes the bot when it holds seats', () => {
     expect(holderFilterKeys(ledgerOf(30, [], 30), [])).toEqual(['B2C / Bot']);
+  });
+});
+
+describe('paidSeatsLock — paid seats stay with the agent (owner, 2026-10-23)', () => {
+  it('any payment locks the seats against taking back or moving', () => {
+    expect(paidSeatsLock('QFC Group', 1)).toBe('QFC Group has paid on these seats, so they cannot be taken back or moved.');
+    expect(paidSeatsLock('QFC Group', 3)).not.toBeNull();
+  });
+
+  it('seats with no payment are free to take back or move', () => {
+    expect(paidSeatsLock('QFC Group', 0)).toBeNull();
   });
 });

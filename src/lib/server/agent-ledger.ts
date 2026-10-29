@@ -3,7 +3,9 @@ import { pnrBranchFilter, type AuthUser } from '@/lib/auth';
 import { agentPageFilter } from '@/lib/agents';
 import { duesForAssignment, type AgentDues } from '@/lib/agent-dues';
 import { nextEmdSuggestion } from '@/lib/emd';
-import { RECEIVABLE_PNR_STATUSES, seatTypeOf, type ReceivableLine } from '@/lib/agent-receivables';
+import type { Prisma } from '@prisma/client';
+import { RECEIVABLE_PNR_STATUSES, seatTypeOf, unbookedRemaining, type ReceivableLine } from '@/lib/agent-receivables';
+import { lookupLabel } from '@/lib/lookups';
 
 /**
  * Agents and their money on each booking, read once for both Agents pages.
@@ -36,11 +38,20 @@ export interface AgentWithLines {
   b2bCode: string | null;
   contactEmails: string[];
   contactPhone: string | null;
+  dtsCode: string | null;
+  address: string | null;
+  iataNumber: string | null;
   active: boolean;
   createdAt: Date;
   createdByBranchId: string | null;
   createdByBranchName: string | null;
   lines: AgentBookingLine[];
+  /**
+   * Owed on bookings not yet in the system (owner, 2026-10-29): the stored
+   * excess from the ageing report, less the receivable added since. Measured
+   * against the agent's bookings in every branch, whoever is looking.
+   */
+  notInSystem: number;
 }
 
 const iso = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
@@ -51,16 +62,40 @@ export async function loadAgentLedger(user: AuthUser, todayIso: string, agentId?
   const pnrScope = pnrBranchFilter(user);
   if (agentScope === null || pnrScope === null) return [];
 
+  const agents = await loadLedger({ ...(agentId ? { id: agentId } : {}), ...agentScope }, pnrScope, todayIso);
+
+  // The excess is the agent's, not a branch's: what has been added since is
+  // measured across every branch, so a branch sees the same figure Head Office
+  // does (owner, 2026-10-29).
+  const withExcess = agents.filter((a) => a.unbookedBalance !== null);
+  const everywhere =
+    withExcess.length === 0 || Object.keys(pnrScope).length === 0
+      ? agents
+      : await loadLedger({ id: { in: withExcess.map((a) => a.id) } }, {}, todayIso);
+  const receivableNow = new Map(everywhere.map((a) => [a.id, a.lines.reduce((s, l) => s + Math.round(l.receivable * 100), 0) / 100]));
+
+  return agents.map(({ unbookedBalance, unbookedBaseline, ...a }) => ({
+    ...a,
+    notInSystem: unbookedRemaining({ unbookedBalance, baseline: unbookedBaseline, receivableNow: receivableNow.get(a.id) ?? 0 }),
+  }));
+}
+
+async function loadLedger(
+  agentWhere: Prisma.AgentWhereInput,
+  pnrScope: Prisma.PnrWhereInput,
+  todayIso: string
+): Promise<(Omit<AgentWithLines, 'notInSystem'> & { unbookedBalance: number | null; unbookedBaseline: number | null })[]> {
   const agents = await prisma.agent.findMany({
-    where: { ...(agentId ? { id: agentId } : {}), ...agentScope },
+    where: agentWhere,
     orderBy: [{ active: 'desc' }, { name: 'asc' }],
     include: {
-      createdByBranch: { select: { name: true } },
+      createdByBranch: { select: { name: true, code: true } },
       assignments: {
         where: { releasedAt: null, pnr: { ...pnrScope, status: { in: RECEIVABLE_PNR_STATUSES } } },
         orderBy: { pnr: { srNo: 'asc' } },
         include: {
           recoveries: { select: { amount: true } },
+          paybacks: { select: { amount: true } },
           pnr: {
             select: {
               id: true,
@@ -75,7 +110,7 @@ export async function loadAgentLedger(user: AuthUser, todayIso: string, agentId?
               requestDate: true,
               outboundDate: true,
               branchId: true,
-              branch: { select: { name: true } },
+              branch: { select: { name: true, code: true } },
               airline: { select: { code: true } },
               emdRounds: { select: { roundNumber: true, status: true, emdAmount: true, deadlineDate: true } },
               ticketing: { select: { ticketIssuanceDeadline: true } },
@@ -92,17 +127,27 @@ export async function loadAgentLedger(user: AuthUser, todayIso: string, agentId?
     b2bCode: a.b2bCode,
     contactEmails: a.contactEmails,
     contactPhone: a.contactPhone,
+    dtsCode: a.dtsCode,
+    address: a.address,
+    iataNumber: a.iataNumber,
     active: a.active,
     createdAt: a.createdAt,
     createdByBranchId: a.createdByBranchId,
-    createdByBranchName: a.createdByBranch?.name ?? null,
+    createdByBranchName: lookupLabel(a.createdByBranch),
+    unbookedBalance: a.unbookedBalance === null ? null : Number(a.unbookedBalance),
+    unbookedBaseline: a.unbookedBaseline === null ? null : Number(a.unbookedBaseline),
     lines: a.assignments.map((asg) => {
       const p = asg.pnr;
       // The agent's share of the next EMD, from the airline's own policy — the
       // "next round to collect" line of the per-round schedule. Null when no
       // policy covers the airline, so no guessed line appears.
+      //
+      // A requested round still counts as issued here (Phase 9 Step 3): asking
+      // for its refund ends the money held, not the fact that it was issued, so
+      // it must not bring the same EMD back as one to collect. A refunded round
+      // still does not count — rounds 3–4 re-issue refunded rounds 1–2.
       const upcoming = nextEmdSuggestion({
-        roundsIssued: p.emdRounds.filter((r) => r.status === 'issued').length,
+        roundsIssued: p.emdRounds.filter((r) => r.status !== 'refunded').length,
         seats: p.seats,
         fare: Number(p.fare),
         airlineCode: p.airline?.code ?? null,
@@ -130,6 +175,8 @@ export async function loadAgentLedger(user: AuthUser, todayIso: string, agentId?
         })),
         ticketIssuanceDeadline: iso(p.ticketing?.ticketIssuanceDeadline ?? null),
         upcomingRoundAmount: upcoming.amount,
+        penaltyAmount: asg.penaltyAmount === null ? null : Number(asg.penaltyAmount),
+        cancelled: p.status === 'cancelled' ? { paybacks: asg.paybacks.map((b) => Number(b.amount)) } : undefined,
       });
       return {
         assignmentId: asg.id,
@@ -139,7 +186,7 @@ export async function loadAgentLedger(user: AuthUser, todayIso: string, agentId?
         pnrStatus: p.status,
         pnrSeats: p.seats,
         pnrBranchId: p.branchId,
-        branchName: p.branch?.name ?? null,
+        branchName: lookupLabel(p.branch),
         sector: p.sector,
         outboundDate: iso(p.outboundDate),
         airlineCode: p.airline?.code ?? null,
@@ -149,6 +196,7 @@ export async function loadAgentLedger(user: AuthUser, todayIso: string, agentId?
         recovered: dues.final.recovered,
         balance: dues.final.outstanding,
         credit: dues.final.credit,
+        payBack: dues.final.toPayBack,
         margin,
         dues,
       };

@@ -169,17 +169,25 @@ export function clampEmd2Deadline(
 }
 
 /**
- * The two statuses an EMD round can hold (owner ruling, 2026-09-21).
+ * The statuses an EMD round can hold: `issued` → `refund_requested` →
+ * `refunded` (Phase 9 Step 3, A1, reversing part of 2026-09-21), and
+ * `forfeited` when the booking is cancelled (Step 5, B3): the airline keeps it
+ * until the penalty is paid, then it can be refunded.
  *
- * A round is **issued** — which is what secures the PNR — until the airline
- * **refunds** it. `paid`, `refund_requested` and `expired` were removed: when an
- * EMD is paid is governed by the IATA calendar, which this system does not model
- * yet, so `paid` was a fact nobody could place in time.
+ * A round is **issued** — which is what secures the PNR — until a refund is
+ * requested or recorded. `refund_requested` is the one status brought back: a
+ * person asked for the refund and Head Office has not recorded it yet. It never
+ * goes back to `issued`. `paid` and `expired` stay removed: payment is its own
+ * field (`payment_date`), governed by the IATA calendar.
  */
-export const EMD_STATUSES = ['issued', 'refunded'] as const;
+export const EMD_STATUSES = ['issued', 'refund_requested', 'forfeited', 'refunded'] as const;
 export type EmdStatus = (typeof EMD_STATUSES)[number];
 
-/** EMD the airline is holding: everything issued and not yet refunded. */
+/**
+ * EMD the airline is holding: every round issued and neither requested back nor
+ * refunded. A requested round no longer counts as held (A1), so it leaves the
+ * dashboard's held totals and the agents' EMD shares.
+ */
 export const HELD_EMD_STATUS: EmdStatus = 'issued';
 
 /**

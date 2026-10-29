@@ -8,6 +8,7 @@ import { isHeadOffice, type AuthUser } from '@/lib/auth';
 import { nextEmdSuggestion } from '@/lib/emd';
 import { todayIsoInPkt } from '@/lib/urgency';
 import { MAX_BULK_EMD_ISSUES, type BulkEmdCandidate } from '@/lib/bulk-emd';
+import { lookupLabel } from '@/lib/lookups';
 
 /**
  * The bookings behind a set of ids, with everything the issuance form needs.
@@ -37,8 +38,8 @@ export async function getBulkEmdCandidates(
     orderBy: { srNo: 'asc' },
     include: {
       airline: { select: { code: true } },
-      branch: { select: { name: true } },
-      license: { select: { name: true } },
+      branch: { select: { name: true, code: true } },
+      license: { select: { name: true, code: true } },
       emdRounds: { select: { id: true } },
     },
   });
@@ -67,8 +68,8 @@ export async function getBulkEmdCandidates(
       pnrCode: p.pnr,
       srNo: p.srNo,
       airlineCode: p.airline?.code ?? null,
-      branchName: p.branch?.name ?? null,
-      licenseName: p.license?.name ?? null,
+      branchName: lookupLabel(p.branch),
+      licenseName: lookupLabel(p.license),
       seats: p.seats,
       fare: Number(p.fare),
       totalEmdValue: p.totalEmdValue === null ? 0 : Number(p.totalEmdValue),

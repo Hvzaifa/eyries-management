@@ -5,6 +5,7 @@ import { Plus, X, AlertTriangle } from 'lucide-react';
 import { createEmdRound } from '../actions/emd';
 import { formatEmdNumberInput, formatPkr } from '@/lib/format';
 import { emdAmountFor } from '@/lib/emd';
+import { lookupOptionText } from '@/lib/lookups';
 
 export default function AddRoundButton({
   pnrId,
@@ -15,7 +16,7 @@ export default function AddRoundButton({
   suggestedDeadline,
 }: {
   pnrId: string;
-  licenses: { id: string; name: string }[];
+  licenses: { id: string; name: string; code: string | null }[];
   /** The booking's seats and fare — what the EMD amount is calculated from. */
   seats: number;
   fare: number;
@@ -165,7 +166,7 @@ export default function AddRoundButton({
                 <select name="round_license_id" className={`${inputCls} cursor-pointer`}>
                   <option value="">— (Same as PNR) —</option>
                   {licenses.map(l => (
-                    <option key={l.id} value={l.id}>{l.name}</option>
+                    <option key={l.id} value={l.id}>{lookupOptionText(l)}</option>
                   ))}
                 </select>
               </div>

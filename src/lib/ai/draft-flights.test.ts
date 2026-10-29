@@ -30,11 +30,13 @@ describe('draftFlightValues', () => {
       outboundArrivalCity: 'JED',
       outboundDepartureTime: '08:30',
       outboundArrivalTime: '',
+      outboundArrivalDate: '',
       outboundFlightCode: 'SV727',
       inboundDepartureCity: 'MED',
       inboundArrivalCity: 'ISB',
       inboundDepartureTime: '14:05',
       inboundArrivalTime: '',
+      inboundArrivalDate: '',
       inboundFlightCode: 'SV726',
       outboundBaggagePieces: '2',
       outboundBaggageKg: '23',
@@ -123,8 +125,8 @@ describe('draftFlightValues — stops', () => {
       })
     );
     expect(values.outboundStops).toEqual([
-      { city: 'DXB', flightCode: 'EK612', arrivalTime: '10:05', departureTime: '13:40' },
-      { city: 'RUH', flightCode: '', arrivalTime: '', departureTime: '' },
+      { city: 'DXB', flightCode: 'EK612', arrivalTime: '10:05', departureTime: '13:40', arrivalDate: '', departureDate: '' },
+      { city: 'RUH', flightCode: '', arrivalTime: '', departureTime: '', arrivalDate: '', departureDate: '' },
     ]);
     expect(confidence.outboundStops).toBe('medium');
     expect(values.inboundStops).toEqual([]);
@@ -139,5 +141,29 @@ describe('draftFlightValues — stops', () => {
       })
     );
     expect(values.inboundStops).toEqual([]);
+  });
+});
+
+describe('draftFlightValues — arrival dates (Phase 9 Step 1)', () => {
+  it('keeps a real arrival date, and blanks anything else at low confidence', () => {
+    const { values, confidence } = draftFlightValues(
+      draft({
+        tripType: { value: 'round_trip', confidence: 'high' },
+        outboundDate: { value: '2026-06-30', confidence: 'high' },
+        inboundDate: { value: '2026-07-20', confidence: 'high' },
+        outboundArrivalDate: { value: '2026-07-01', confidence: 'medium' },
+        // The parser reads "+1" as 2000-12-31: before the flight, so dropped.
+        inboundArrivalDate: { value: '+1', confidence: 'high' },
+        outboundStops: {
+          value: [{ city: 'DXB', flightCode: null, arrivalTime: '01:00', departureTime: '03:00', arrivalDate: '2026-07-01', departureDate: 'next day' }],
+          confidence: 'high',
+        },
+      })
+    );
+    expect(values.outboundArrivalDate).toBe('2026-07-01');
+    expect(confidence.outboundArrivalDate).toBe('medium');
+    expect(values.inboundArrivalDate).toBe('');
+    expect(confidence.inboundArrivalDate).toBe('low');
+    expect(values.outboundStops[0]).toMatchObject({ arrivalDate: '2026-07-01', departureDate: '' });
   });
 });

@@ -31,6 +31,7 @@
  * (CLAUDE.md rule 4).
  */
 
+import { cancelledAgentMoney } from './cancellation';
 import {
   agentBalance,
   agentMargin,
@@ -55,7 +56,9 @@ export const AGENT_NOTICE_DAYS_BEFORE = 3;
  * With statuses reduced to two (2026-09-21) this is simply `issued`: the EMD is
  * a guarantee the airline holds against the booking, whoever has paid what for
  * it. `refunded` is out — that money came back, which is exactly what makes an
- * extension cycle work.
+ * extension cycle work. `refund_requested` is out too (Phase 9 Step 3, A1): a
+ * requested round is no longer money held, so the agent's EMD share drops when
+ * a round is requested and what they paid towards it stands as credit.
  *
  * **The deadline these are measured against is an ISSUANCE deadline**, not a
  * payment one (owner correction, 2026-09-21) — the date by which the next EMD,
@@ -281,6 +284,14 @@ export interface FinalBalance {
   /** Total − recovered. Never negative; an overpayment is `credit`. */
   outstanding: number;
   credit: number;
+  /**
+   * On a **cancelled** booking (Phase 9 Step 5): what has been paid back, and
+   * what is still to pay back — paid less the penalty less paybacks. `total` is
+   * then the penalty alone, `outstanding` the penalty not covered, and `credit`
+   * is 0. Both 0 on any other booking.
+   */
+  paidBack: number;
+  toPayBack: number;
   /** The booking's ticket-issuance deadline, as recorded. */
   ticketIssuanceDeadline: string | null;
   /**
@@ -299,12 +310,43 @@ export function finalBalanceDue(input: {
   terms: AgentTerms;
   recoveries: number[];
   ticketIssuanceDeadline: string | null;
+  /**
+   * The penalty for this agent's unissued seats (Phase 9 Step 4). Part of the
+   * balance, under the same due date, so once entered after that date it reads
+   * as overdue until paid (owner, 2026-10-28).
+   */
+  penalty?: number | null;
+  /**
+   * The booking is cancelled (Phase 9 Step 5): the agent owes only their
+   * penalty; whatever they paid beyond it is paid back. `paybacks` are the
+   * amounts already returned.
+   */
+  cancelled?: { paybacks: number[] };
 }): FinalBalance {
+  if (input.cancelled) {
+    const m = cancelledAgentMoney({
+      recoveries: input.recoveries,
+      penalty: input.penalty ?? null,
+      paybacks: input.cancelled.paybacks,
+    });
+    return {
+      total: m.penalty,
+      recovered: m.paid,
+      outstanding: m.owes,
+      credit: 0,
+      paidBack: m.paidBack,
+      toPayBack: m.toPayBack,
+      ticketIssuanceDeadline: input.ticketIssuanceDeadline,
+      // Nothing is chased by date on a cancelled booking.
+      dueDate: null,
+    };
+  }
   const balance = agentBalance({
     seats: input.seats,
     pricing: input.pricing,
     terms: input.terms,
     recoveries: input.recoveries,
+    penalty: input.penalty,
   });
 
   return {
@@ -312,6 +354,8 @@ export function finalBalanceDue(input: {
     recovered: balance.recovered,
     outstanding: balance.outstanding,
     credit: balance.credit,
+    paidBack: 0,
+    toPayBack: 0,
     ticketIssuanceDeadline: input.ticketIssuanceDeadline,
     dueDate: shiftIsoDays(input.ticketIssuanceDeadline, -AGENT_NOTICE_DAYS_BEFORE),
   };
@@ -354,6 +398,10 @@ export function agentDues(input: {
   ticketIssuanceDeadline: string | null;
   /** The next round's EMD amount from the airline policy, when one is known. */
   upcomingRoundAmount?: number | null;
+  /** `agent_assignments.penalty_amount`, added to the balance (Phase 9 Step 4). */
+  penalty?: number | null;
+  /** Set on a cancelled booking, with the paybacks made (Phase 9 Step 5). */
+  cancelled?: { paybacks: number[] };
 }): AgentDues {
   const recovered = input.recoveries.reduce(
     (sum, r) => sum + (Number.isFinite(r) ? toPaisa(r) : 0),
@@ -380,6 +428,8 @@ export function agentDues(input: {
     terms: input.terms,
     recoveries: input.recoveries,
     ticketIssuanceDeadline: input.ticketIssuanceDeadline,
+    penalty: input.penalty,
+    cancelled: input.cancelled,
   });
 
   // Which obligation comes first is settled by the shape of the deal, not by
@@ -432,6 +482,10 @@ export interface AssignmentFacts {
   ticketIssuanceDeadline: string | null;
   /** The next round's EMD amount from the airline policy, when one is known. */
   upcomingRoundAmount?: number | null;
+  /** `agent_assignments.penalty_amount` (Phase 9 Step 4). */
+  penaltyAmount?: number | null;
+  /** The booking is cancelled, with the paybacks made (Phase 9 Step 5). */
+  cancelled?: { paybacks: number[] };
 }
 
 /**
@@ -469,12 +523,16 @@ export function duesForAssignment(f: AssignmentFacts): {
     recoveries: f.recoveries,
     rounds: f.rounds,
     ticketIssuanceDeadline: f.ticketIssuanceDeadline,
-    upcomingRoundAmount: f.upcomingRoundAmount ?? null,
+    // A cancelled booking has no next round to collect.
+    upcomingRoundAmount: f.cancelled ? null : (f.upcomingRoundAmount ?? null),
+    penalty: f.penaltyAmount ?? null,
+    cancelled: f.cancelled,
   });
 
   // Charge − discount. Tax is NEVER margin (ruling 15) — it is collected for
-  // the government and passes straight through.
-  const margin = agentMargin({ seats: f.agentSeats, pricing, terms });
+  // the government and passes straight through. A cancelled booking sold
+  // nothing, so it earns none.
+  const margin = f.cancelled ? 0 : agentMargin({ seats: f.agentSeats, pricing, terms });
 
   return { dues, margin, terms };
 }

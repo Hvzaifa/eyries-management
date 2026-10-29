@@ -10,8 +10,10 @@ import { RotateCcw } from 'lucide-react';
 /**
  * Two lists, chosen by the buttons at the top (owner, 2026-09-28):
  * - **Refunds recorded** — rounds marked refunded (the `refunded_emd_rounds` view).
- * - **To be refunded** — rounds issued, paid to IATA and not yet refunded. These
- *   no longer keep a booking on the dashboard; this is where they are worked.
+ * - **To be refunded** — rounds paid to IATA whose refund is due: the ticket
+ *   deadline passed at least a day ago, or every ticket is issued (Phase 9
+ *   Step 3, A6). Until then they keep the booking on the dashboard. Rounds
+ *   marked refund requested stay here, labelled, until the refund is recorded.
  */
 export default async function RefundsPage({
   searchParams,
@@ -40,7 +42,7 @@ export default async function RefundsPage({
           </h1>
           <p className="text-sm text-stone-500 mt-0.5">
             {pending
-              ? 'EMD rounds issued and paid to IATA, still waiting on their refund.'
+              ? 'EMDs paid to IATA whose ticket deadline has passed, or whose tickets are all issued. Mark them refund requested; Head Office records the refund.'
               : 'Every EMD round marked as refunded.'}
           </p>
         </div>
@@ -97,7 +99,7 @@ export default async function RefundsPage({
                         </Link>
                       </td>
                       <td className="px-4 py-3 text-stone-600">
-                        {row.branch_name ?? '—'}
+                        {row.branch_code ?? row.branch_name ?? '—'}
                       </td>
                       <td className="px-4 py-3 font-mono text-stone-500">
                         {row.airline_code ?? '—'}

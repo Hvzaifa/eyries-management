@@ -184,14 +184,19 @@ describe('isDashboardWork — what the dashboard lists', () => {
     emdsComplete: false,
     nextIataPayment: null,
     iataUndated: false,
+    paidAwaitingRefund: false,
     ...over,
   });
   it('an EMD still to issue', () => expect(isDashboardWork(r({}))).toBe(true));
+  it('flagged for a cancellation decision: stays (Phase 9 Step 5)', () =>
+    expect(isDashboardWork(r({ emdsComplete: true, cancellationFlag: { trigger: 'ticketing', deadline: '2026-12-10' } }))).toBe(true));
+  it('every EMD issued and paid, refund not due yet: stays (Phase 9 Step 3, A6)', () =>
+    expect(isDashboardWork(r({ emdsComplete: true, paidAwaitingRefund: true }))).toBe(true));
   it('every EMD issued, but an IATA payment not recorded', () =>
     expect(isDashboardWork(r({ emdsComplete: true, nextIataPayment: '2026-10-07' }))).toBe(true));
   it('owed to IATA outside the loaded calendar still counts', () =>
     expect(isDashboardWork(r({ emdsComplete: true, iataUndated: true }))).toBe(true));
-  it('every EMD issued and paid: left for the Refunds page', () =>
+  it('every EMD issued and paid, refund due: left for the Refunds page', () =>
     expect(isDashboardWork(r({ emdsComplete: true }))).toBe(false));
   it('cancelled and completed bookings are not dashboard work', () => {
     expect(isDashboardWork(r({ status: 'cancelled' }))).toBe(false);

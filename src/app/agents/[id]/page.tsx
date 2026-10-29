@@ -1,7 +1,7 @@
 import { requirePageUser } from '@/lib/server/session';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Building2, ChevronDown, LayoutGrid, List, Mail, Phone } from 'lucide-react';
+import { ArrowLeft, Building2, ChevronDown, LayoutGrid, List, Mail, MapPin, Phone } from 'lucide-react';
 import AppHeader from '@/components/app-header';
 import ReceivableCards, { SEAT_TYPE_DOTS } from '@/components/receivable-cards';
 import AgentRoundSchedule from '@/components/agent-round-schedule';
@@ -42,7 +42,7 @@ export default async function AgentDetailPage({
   if (!agent) notFound();
 
   const isHQ = isHeadOffice(authUser);
-  const summary = summarizeReceivables(agent.lines);
+  const summary = summarizeReceivables(agent.lines, agent.notInSystem);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -74,6 +74,8 @@ export default async function AgentDetailPage({
               </div>
               <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm text-stone-500">
                 {agent.b2bCode && <span className="font-mono text-[13px]">{agent.b2bCode}</span>}
+                {agent.dtsCode && <span className="text-[13px]">DTS <span className="font-mono">{agent.dtsCode}</span></span>}
+                {agent.iataNumber && <span className="text-[13px]">IATA <span className="font-mono">{agent.iataNumber}</span></span>}
                 <span className="inline-flex items-center gap-1.5">
                   <Building2 className="w-3.5 h-3.5 text-stone-400" />
                   Added by {agent.createdByBranchName ?? 'Head Office'}
@@ -92,6 +94,12 @@ export default async function AgentDetailPage({
                     {agent.contactPhone}
                   </span>
                 )}
+                {agent.address && (
+                  <span className="inline-flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-stone-400" />
+                    {agent.address}
+                  </span>
+                )}
               </div>
             </div>
             {canEditAgent(authUser, agent.createdByBranchId) && (
@@ -102,6 +110,9 @@ export default async function AgentDetailPage({
                   b2bCode: agent.b2bCode,
                   contactEmails: agent.contactEmails,
                   contactPhone: agent.contactPhone,
+                  dtsCode: agent.dtsCode,
+                  address: agent.address,
+                  iataNumber: agent.iataNumber,
                   active: agent.active,
                 }}
               />
@@ -123,6 +134,15 @@ export default async function AgentDetailPage({
             {isHQ ? '' : ` on ${authUser.branchName ?? 'your branch'}`} · active and completed
           </p>
         </div>
+
+        {/* Owed beyond every booking the system holds for this agent (ageing
+            report, 2026-10-29). It is used up as the missing bookings are added. */}
+        {agent.notInSystem > 0 && (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-3 text-xs text-amber-800">
+            <strong>{formatPkr(agent.notInSystem)}</strong> is owed on bookings not yet in the system (Branch-Wise Client
+            Ageing Report). It is included in the balance below and is used up as those bookings are added.
+          </div>
+        )}
 
         {agent.lines.length === 0 ? (
           <div className="rounded-2xl border border-stone-200 bg-white p-12 text-center text-sm text-stone-400 shadow-sm">
@@ -233,7 +253,9 @@ function PnrTable({
                 <td className="px-4 pt-3.5 pb-1 text-right tabular-nums whitespace-nowrap text-stone-800">{formatPkr(l.receivable)}</td>
                 <td className="px-4 pt-3.5 pb-1 text-right tabular-nums whitespace-nowrap text-stone-600">{formatPkr(l.recovered)}</td>
                 <td className="px-4 pt-3.5 pb-1 text-right tabular-nums whitespace-nowrap font-semibold text-stone-900">
-                  {l.credit > 0 ? (
+                  {(l.payBack ?? 0) > 0 ? (
+                    <span className="text-sky-700">{formatPkr(l.payBack ?? 0)} to pay back</span>
+                  ) : l.credit > 0 ? (
                     <span className="text-emerald-700">{formatPkr(l.credit)} cr</span>
                   ) : l.balance === 0 ? (
                     <span className="text-emerald-700">Settled</span>

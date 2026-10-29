@@ -80,3 +80,11 @@ describe('tableToBookings / parseRawLlmJson — the table reply (2026-10-05)', (
   });
 });
 
+
+describe('flagPastDates — the ticketing deadline', () => {
+  it('marks a past ticket issuance deadline for checking', () => {
+    const d = flagPastDates(draft({ ticketIssuanceDeadline: { value: '2023-11-12', confidence: 'high' } }), '2026-10-20');
+    expect(d.ticketIssuanceDeadline).toMatchObject({ value: '2023-11-12', confidence: 'low' });
+    expect(d.ticketIssuanceDeadline.notes).toBe('Ticket issuance deadline 2023-11-12 is in the past — check the year.');
+  });
+});
